@@ -20,7 +20,7 @@ SAW.Application/
 ├── Features/                    ← Use cases, chia theo domain
 │   └── <Feature>/
 │       ├── DTOs/                ← Data Transfer Objects
-│       ├── Queries/             ← Truy vấn dữ liệu (GET)
+│       ├── Queries/             ← Truy vấn dữ liệu (GET) ví dụ như AuthQueriesService
 │       └── Commands/            ← Thay đổi dữ liệu (POST/PUT/DELETE)
 │
 ├── Repositories/                ← Interface repositories (contracts)
