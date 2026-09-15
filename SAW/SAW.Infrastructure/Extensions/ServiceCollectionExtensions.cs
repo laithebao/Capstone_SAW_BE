@@ -2,6 +2,10 @@ using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
 using SAW.Infrastructure.Persistence;
+using SAW.Application.Abstractions.Authentication;
+using SAW.Application.Abstractions.Persistence;
+using SAW.Infrastructure.Authentication;
+using SAW.Infrastructure.Repositories;
 
 namespace SAW.Infrastructure.Extensions;
 
@@ -24,6 +28,10 @@ public static class ServiceCollectionExtensions
                         errorNumbersToAdd: null);
                 }
             ));
+
+        services.AddScoped<IAccountRepository, AccountRepository>();
+        services.AddSingleton<IPasswordHasher, Pbkdf2PasswordHasher>();
+        services.AddSingleton<IAccessTokenGenerator, JwtAccessTokenGenerator>();
 
         return services;
     }
