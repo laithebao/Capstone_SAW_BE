@@ -1,4 +1,4 @@
-namespace SAW.Application.Abstractions.Authentication;
+namespace SAW.Application.Repositories;
 
 public interface IPasswordHasher
 {

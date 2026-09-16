@@ -8,7 +8,7 @@ public class DistributorConfiguration : IEntityTypeConfiguration<Distributor>
 {
     public void Configure(EntityTypeBuilder<Distributor> builder)
     {
-        builder.ToTable("DISTRIBUTOR");
+        builder.ToTable("DISTRIBUTOR", table => table.UseSqlOutputClause(false));
         builder.HasKey(x => x.DistributorId);
         builder.Property(x => x.DistributorId).HasColumnName("DistributorID").UseIdentityColumn();
         builder.Property(x => x.AccountId).HasColumnName("AccountID").IsRequired();

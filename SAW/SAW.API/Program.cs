@@ -1,6 +1,7 @@
 using System.Text;
 using Microsoft.AspNetCore.Authentication.JwtBearer;
 using Microsoft.IdentityModel.Tokens;
+using Microsoft.OpenApi.Models;
 using SAW.API.Middleware;
 using SAW.Application.Extensions;
 using SAW.Infrastructure.Extensions;
@@ -16,46 +17,61 @@ namespace SAW.API
             // Add services to the container.
 
             builder.Services.AddControllers();
-            // Learn more about configuring Swagger/OpenAPI at https://aka.ms/aspnetcore/swashbuckle
-            builder.Services.AddEndpointsApiExplorer();
-            builder.Services.AddSwaggerGen();
-
-            const string frontendCorsPolicy = "Frontend";
             var allowedOrigins = builder.Configuration
                 .GetSection("Cors:AllowedOrigins")
                 .Get<string[]>() ?? ["http://localhost:5173"];
-
-            builder.Services.AddCors(options =>
+            builder.Services.AddCors(options => options.AddPolicy("Frontend", policy => policy
+                .WithOrigins(allowedOrigins)
+                .AllowAnyHeader()
+                .AllowAnyMethod()));
+            // Learn more about configuring Swagger/OpenAPI at https://aka.ms/aspnetcore/swashbuckle
+            builder.Services.AddEndpointsApiExplorer();
+            builder.Services.AddSwaggerGen(options =>
             {
-                options.AddPolicy(frontendCorsPolicy, policy =>
-                    policy.WithOrigins(allowedOrigins)
-                        .AllowAnyHeader()
-                        .AllowAnyMethod());
+                options.AddSecurityDefinition("Bearer", new OpenApiSecurityScheme
+                {
+                    Name = "Authorization",
+                    Type = SecuritySchemeType.Http,
+                    Scheme = "bearer",
+                    BearerFormat = "JWT",
+                    In = ParameterLocation.Header,
+                    Description = "Enter the access token returned by the login API."
+                });
+                options.AddSecurityRequirement(new OpenApiSecurityRequirement
+                {
+                    {
+                        new OpenApiSecurityScheme
+                        {
+                            Reference = new OpenApiReference
+                            {
+                                Type = ReferenceType.SecurityScheme,
+                                Id = "Bearer"
+                            }
+                        },
+                        Array.Empty<string>()
+                    }
+                });
             });
 
-            var jwtIssuer = builder.Configuration["Jwt:Issuer"]
-                ?? throw new InvalidOperationException("Jwt:Issuer is required.");
-            var jwtAudience = builder.Configuration["Jwt:Audience"]
-                ?? throw new InvalidOperationException("Jwt:Audience is required.");
             var jwtKey = builder.Configuration["Jwt:Key"]
-                ?? throw new InvalidOperationException("Jwt:Key is required.");
-
-            builder.Services
-                .AddAuthentication(JwtBearerDefaults.AuthenticationScheme)
+                ?? throw new InvalidOperationException("Jwt:Key is missing.");
+            builder.Services.AddAuthentication(JwtBearerDefaults.AuthenticationScheme)
                 .AddJwtBearer(options =>
                 {
                     options.TokenValidationParameters = new TokenValidationParameters
                     {
                         ValidateIssuer = true,
-                        ValidIssuer = jwtIssuer,
                         ValidateAudience = true,
-                        ValidAudience = jwtAudience,
                         ValidateLifetime = true,
                         ValidateIssuerSigningKey = true,
+                        ValidIssuer = builder.Configuration["Jwt:Issuer"],
+                        ValidAudience = builder.Configuration["Jwt:Audience"],
                         IssuerSigningKey = new SymmetricSecurityKey(Encoding.UTF8.GetBytes(jwtKey)),
-                        ClockSkew = TimeSpan.FromSeconds(30),
+                        NameClaimType = "name",
+                        RoleClaimType = System.Security.Claims.ClaimTypes.Role,
+                        ClockSkew = TimeSpan.Zero
                     };
-                });
+            });
             builder.Services.AddAuthorization();
 
             // ── Global Exception Handler ───────────────────────────────────
@@ -64,7 +80,7 @@ namespace SAW.API
 
             builder.Services.AddApplication();
             builder.Services.AddInfrastructure(builder.Configuration);
-            
+
             var app = builder.Build();
 
             // Configure the HTTP request pipeline.
@@ -79,7 +95,8 @@ namespace SAW.API
 
             app.UseHttpsRedirection();
 
-            app.UseCors(frontendCorsPolicy);
+            app.UseCors("Frontend");
+
             app.UseAuthentication();
             app.UseAuthorization();
 
