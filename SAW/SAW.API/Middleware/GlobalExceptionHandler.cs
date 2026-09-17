@@ -79,9 +79,9 @@ public sealed class GlobalExceptionHandler : IExceptionHandler
                 ApiResponse<object>.Forbidden(ex.Message)),
 
             // 401 - Unauthorized (khi throw từ business logic)
-            UnauthorizedAccessException => (
+            UnauthorizedAccessException ex => (
                 StatusCodes.Status401Unauthorized,
-                ApiResponse<object>.Unauthorized()),
+                ApiResponse<object>.Unauthorized(ex.Message)),
 
             // 500 - mọi exception không xác định
             _ => (

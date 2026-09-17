@@ -81,6 +81,7 @@ public sealed class AuthCommandService(
             account = new Account
             {
                 RoleId = role.RoleId,
+                Role = role,
                 Username = $"google_{suffix}",
                 Email = identity.Email,
                 PasswordHash = passwordHasher.Hash(tokenService.CreateOpaqueToken()),

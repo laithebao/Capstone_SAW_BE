@@ -32,7 +32,11 @@ public static class ServiceCollectionExtensions
         services.AddScoped<IAuthRepository, AuthRepository>();
         services.AddSingleton<IPasswordHasher, BcryptPasswordHasher>();
         services.AddSingleton<ITokenService, JwtTokenService>();
-        services.AddSingleton<IEmailSender, SmtpEmailSender>();
+        var emailDeliveryMode = configuration["Email:DeliveryMode"];
+        if (string.Equals(emailDeliveryMode, "Log", StringComparison.OrdinalIgnoreCase))
+            services.AddSingleton<IEmailSender, LogEmailSender>();
+        else
+            services.AddSingleton<IEmailSender, SmtpEmailSender>();
         services.AddSingleton<IGoogleIdentityService, GoogleIdentityService>();
 
         return services;
