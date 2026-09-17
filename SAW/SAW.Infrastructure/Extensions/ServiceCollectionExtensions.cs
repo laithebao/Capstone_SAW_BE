@@ -6,6 +6,10 @@ using SAW.Application.Features.Authentication.Commands;
 using SAW.Application.Repositories;
 using SAW.Infrastructure.Authentication;
 using SAW.Infrastructure.Repositories;
+using SAW.Application.Features.CropTypes;
+using SAW.Application.Features.UserAccess;
+using SAW.Application.Features.AdminDashboard;
+using SAW.Application.Features.InspectionStandards;
 
 namespace SAW.Infrastructure.Extensions;
 
@@ -30,6 +34,10 @@ public static class ServiceCollectionExtensions
             ));
 
         services.AddScoped<IAuthRepository, AuthRepository>();
+        services.AddScoped<ICropTypeRepository, CropTypeRepository>();
+        services.AddScoped<IUserAccessRepository, UserAccessRepository>();
+        services.AddScoped<IAdminDashboardRepository, AdminDashboardRepository>();
+        services.AddScoped<IInspectionStandardRepository, InspectionStandardRepository>();
         services.AddSingleton<IPasswordHasher, BcryptPasswordHasher>();
         services.AddSingleton<ITokenService, JwtTokenService>();
         var emailDeliveryMode = configuration["Email:DeliveryMode"];
