@@ -3,7 +3,7 @@ using System.ComponentModel.DataAnnotations;
 namespace SAW.Application.Features.Authentication.DTOs;
 
 public sealed record LoginRequest(
-    [Required, MaxLength(255)] string UsernameOrEmail,
+    [Required, MaxLength(255)] string Identifier,
     [Required] string Password);
 
 public sealed record RegisterRequest(

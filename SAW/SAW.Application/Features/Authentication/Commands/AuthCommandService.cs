@@ -17,7 +17,7 @@ public sealed class AuthCommandService(
 
     public async Task<AuthResponse> LoginAsync(LoginRequest request, string? ipAddress, CancellationToken cancellationToken)
     {
-        var account = await repository.GetAccountByIdentifierAsync(request.UsernameOrEmail.Trim(), cancellationToken);
+        var account = await repository.GetAccountByIdentifierAsync(request.Identifier.Trim(), cancellationToken);
         if (account is null) throw new UnauthorizedAccessException("Incorrect user name or password. Please check again.");
 
         var now = DateTime.UtcNow;
@@ -44,7 +44,8 @@ public sealed class AuthCommandService(
         account.LastLoginAt = now;
         account.UpdatedAt = now;
 
-        var accessToken = tokenService.CreateAccessToken(account.AccountId, account.Username, account.Email, account.RoleId);
+        var accessToken = tokenService.CreateAccessToken(
+            account.AccountId, account.Username, account.Email, account.RoleId, account.Role.RoleCode);
         var rawRefreshToken = tokenService.CreateOpaqueToken();
         var refreshTokenExpiresAt = now.AddDays(tokenService.RefreshTokenDays);
         repository.AddRefreshToken(new RefreshToken
@@ -58,8 +59,7 @@ public sealed class AuthCommandService(
         });
         await repository.SaveChangesAsync(cancellationToken);
 
-        return new AuthResponse(account.AccountId, account.Username, account.Email, account.FullName,
-            account.RoleId, accessToken.Token, accessToken.ExpiresAt, rawRefreshToken, refreshTokenExpiresAt);
+        return CreateAuthResponse(account, accessToken, rawRefreshToken, refreshTokenExpiresAt);
     }
 
     public async Task<GoogleLoginResponse> GoogleLoginAsync(
@@ -81,6 +81,7 @@ public sealed class AuthCommandService(
             account = new Account
             {
                 RoleId = role.RoleId,
+                Role = role,
                 Username = $"google_{suffix}",
                 Email = identity.Email,
                 PasswordHash = passwordHasher.Hash(tokenService.CreateOpaqueToken()),
@@ -132,7 +133,7 @@ public sealed class AuthCommandService(
 
         var accessToken = tokenService.CreateAccessToken(
             currentToken.AccountId, currentToken.Account.Username, currentToken.Account.Email,
-            currentToken.Account.RoleId);
+            currentToken.Account.RoleId, currentToken.Account.Role.RoleCode);
         var rawRefreshToken = tokenService.CreateOpaqueToken();
         var refreshTokenExpiresAt = now.AddDays(tokenService.RefreshTokenDays);
 
@@ -151,8 +152,7 @@ public sealed class AuthCommandService(
         await repository.SaveChangesAsync(cancellationToken);
 
         var account = currentToken.Account;
-        return new AuthResponse(account.AccountId, account.Username, account.Email, account.FullName,
-            account.RoleId, accessToken.Token, accessToken.ExpiresAt, rawRefreshToken, refreshTokenExpiresAt);
+        return CreateAuthResponse(account, accessToken, rawRefreshToken, refreshTokenExpiresAt);
     }
 
     public async Task<RegistrationResponse> RegisterAsync(RegisterRequest request, CancellationToken cancellationToken)
@@ -303,7 +303,8 @@ public sealed class AuthCommandService(
         var now = DateTime.UtcNow;
         account.LastLoginAt = now;
         account.UpdatedAt = now;
-        var accessToken = tokenService.CreateAccessToken(account.AccountId, account.Username, account.Email, account.RoleId);
+        var accessToken = tokenService.CreateAccessToken(
+            account.AccountId, account.Username, account.Email, account.RoleId, account.Role.RoleCode);
         var rawRefreshToken = tokenService.CreateOpaqueToken();
         var refreshTokenExpiresAt = now.AddDays(tokenService.RefreshTokenDays);
         repository.AddRefreshToken(new RefreshToken
@@ -316,9 +317,20 @@ public sealed class AuthCommandService(
             CreatedByIp = ipAddress
         });
         await repository.SaveChangesAsync(cancellationToken);
-        return new AuthResponse(account.AccountId, account.Username, account.Email, account.FullName,
-            account.RoleId, accessToken.Token, accessToken.ExpiresAt, rawRefreshToken, refreshTokenExpiresAt);
+        return CreateAuthResponse(account, accessToken, rawRefreshToken, refreshTokenExpiresAt);
     }
+
+    private static AuthResponse CreateAuthResponse(
+        Account account,
+        AccessTokenResult accessToken,
+        string refreshToken,
+        DateTime refreshTokenExpiresAt) =>
+        new(
+            new AuthenticatedUser(account.AccountId, account.FullName, account.Email, account.Role.RoleCode),
+            accessToken.Token,
+            accessToken.ExpiresAt,
+            refreshToken,
+            refreshTokenExpiresAt);
 
     private static void ValidatePassword(string password)
     {
