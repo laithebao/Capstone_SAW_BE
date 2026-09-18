@@ -6,6 +6,7 @@ using SAW.Application.Features.CropTypes;
 using SAW.Application.Features.UserAccess;
 using SAW.Application.Features.AdminDashboard;
 using SAW.Application.Features.InspectionStandards;
+using SAW.Application.Features.AuditLogs;
 
 namespace SAW.Application.Extensions;
 
@@ -23,6 +24,7 @@ public static class ServiceCollectionExtensions
         services.AddScoped<IUserAccessService, UserAccessService>();
         services.AddScoped<IAdminDashboardService, AdminDashboardService>();
         services.AddScoped<IInspectionStandardService, InspectionStandardService>();
+        services.AddScoped<IAuditLogService, AuditLogService>();
 
         return services;
     }
