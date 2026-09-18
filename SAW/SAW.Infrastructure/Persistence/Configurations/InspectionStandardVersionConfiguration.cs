@@ -8,7 +8,7 @@ public class InspectionStandardVersionConfiguration : IEntityTypeConfiguration<I
 {
     public void Configure(EntityTypeBuilder<InspectionStandardVersion> builder)
     {
-        builder.ToTable("INSPECTION_STANDARD_VERSION");
+        builder.ToTable("INSPECTION_STANDARD_VERSION", tb => tb.HasTrigger("TR_INSPECTION_STANDARD_VERSION_PUBLISH_ENFORCE"));
         builder.HasKey(x => x.InspectionStandardVersionId);
         builder.Property(x => x.InspectionStandardVersionId).HasColumnName("InspectionStandardVersionID").UseIdentityColumn();
         builder.Property(x => x.InspectionStandardSetId).HasColumnName("InspectionStandardSetID").IsRequired();
