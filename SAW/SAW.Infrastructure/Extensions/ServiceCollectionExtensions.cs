@@ -10,6 +10,7 @@ using SAW.Application.Features.CropTypes;
 using SAW.Application.Features.UserAccess;
 using SAW.Application.Features.AdminDashboard;
 using SAW.Application.Features.InspectionStandards;
+using SAW.Application.Features.AuditLogs;
 
 namespace SAW.Infrastructure.Extensions;
 
@@ -19,6 +20,7 @@ public static class ServiceCollectionExtensions
         this IServiceCollection services,
         IConfiguration configuration)
     {
+        services.AddHttpContextAccessor();
         services.AddDbContext<AppDbContext>(options =>
             options.UseSqlServer(
                 configuration.GetConnectionString("DefaultConnection"),
@@ -38,6 +40,7 @@ public static class ServiceCollectionExtensions
         services.AddScoped<IUserAccessRepository, UserAccessRepository>();
         services.AddScoped<IAdminDashboardRepository, AdminDashboardRepository>();
         services.AddScoped<IInspectionStandardRepository, InspectionStandardRepository>();
+        services.AddScoped<IAuditLogRepository, AuditLogRepository>();
         services.AddSingleton<IPasswordHasher, BcryptPasswordHasher>();
         services.AddSingleton<ITokenService, JwtTokenService>();
         var emailDeliveryMode = configuration["Email:DeliveryMode"];
