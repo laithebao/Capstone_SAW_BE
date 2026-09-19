@@ -13,11 +13,11 @@ namespace SAW.Application.Features.Suppliers.Commands;
 public class SupplierBatchCommandService : ISupplierBatchCommandService
 {
     private readonly IProductBatchRepository _productBatchRepository;
-    private readonly ISupplierRepository _supplierRepository; // Thêm khai báo repository
+    private readonly ISupplierRepository _supplierRepository;
 
     public SupplierBatchCommandService(
         IProductBatchRepository productBatchRepository,
-        ISupplierRepository supplierRepository) // Inject qua Constructor
+        ISupplierRepository supplierRepository)
     {
         _productBatchRepository = productBatchRepository;
         _supplierRepository = supplierRepository;
@@ -83,7 +83,7 @@ public class SupplierBatchCommandService : ISupplierBatchCommandService
             throw new ArgumentException("Declared quantity must be greater than 0.");
         }
 
-        // 6. Sinh mã lô hàng tự động (Ví dụ: LH-20260919-01)
+        // 6. Sinh mã lô hàng tự động
         var batchCode = await _productBatchRepository.GenerateBatchCodeAsync(cancellationToken);
 
         // 7. Tạo Entity ProductBatch
@@ -310,7 +310,7 @@ public class SupplierBatchCommandService : ISupplierBatchCommandService
             BatchId = batch.ProductBatchId,
             BatchCode = batch.BatchCode,
             ProductName = batch.ProductName,
-            CropTypeName = batch.CropType?.CropName ?? string.Empty, 
+            CropTypeName = batch.CropType?.CropName ?? string.Empty,
             Origin = batch.Origin,
             HarvestDate = batch.HarvestDate,
             DeclaredQuantity = batch.DeclaredQuantity,
@@ -327,6 +327,53 @@ public class SupplierBatchCommandService : ISupplierBatchCommandService
             CreatedAt = batch.CreatedAt,
             StatusHistory = historyDtos
         };
+    }
+
+    public async Task CancelBatchAsync(long batchId, int currentAccountId, CancellationToken cancellationToken = default)
+    {
+        // 1. Kiểm tra Hồ sơ Nhà cung cấp từ currentAccountId
+        var supplier = await _supplierRepository.GetEntityByAccountIdAsync(currentAccountId, cancellationToken);
+        if (supplier == null)
+        {
+            throw new UnauthorizedAccessException("You are not allowed to cancel this batch.");
+        }
+
+        // 2. Tìm lô hàng theo BatchId
+        var existingBatch = await _productBatchRepository.GetBatchByIdAsync(batchId, cancellationToken);
+        if (existingBatch == null)
+        {
+            throw new KeyNotFoundException("Product batch not found.");
+        }
+
+        // 3. Kiểm tra lô hàng có thuộc sở hữu của Nhà cung cấp này không
+        if (existingBatch.SupplierId != supplier.SupplierId)
+        {
+            throw new UnauthorizedAccessException("You are not allowed to cancel this batch.");
+        }
+
+        // 4. Kiểm tra trạng thái lô hàng (chỉ cho phép hủy khi đang SUBMITTED)
+        if (existingBatch.BatchStatus != "SUBMITTED")
+        {
+            throw new InvalidOperationException("This batch cannot be cancelled at its current status.");
+        }
+
+        // 5. Cập nhật trạng thái lô hàng thành CANCELLED
+        var oldStatus = existingBatch.BatchStatus;
+        existingBatch.BatchStatus = "CANCELLED";
+
+        // 6. Ghi nhận lịch sử thay đổi trạng thái
+        var statusHistory = new BatchStatusHistory
+        {
+            ProductBatchId = existingBatch.ProductBatchId,
+            OldStatus = oldStatus,
+            NewStatus = "CANCELLED",
+            ChangedByAccountId = currentAccountId,
+            ChangeReason = "Hủy khai báo lô hàng từ phía Nhà cung cấp.",
+            ChangedAt = DateTime.UtcNow
+        };
+
+        // 7. Lưu xuống DB qua Repository
+        await _productBatchRepository.UpdateProductBatchAsync(existingBatch, statusHistory, cancellationToken);
     }
 
     private static string GetStatusDisplayName(string status) => status switch

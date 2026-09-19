@@ -14,5 +14,5 @@ public interface ISupplierBatchCommandService
     Task<SupplierBatchItemResponse> DeclareBatchAsync(int currentAccountId, DeclareProductBatchRequest request, CancellationToken cancellationToken = default);
     Task<SupplierBatchItemResponse> UpdateDeclaredBatchAsync(long batchId, int currentAccountId, UpdateProductBatchRequest request, CancellationToken cancellationToken = default);
     Task<SupplierBatchStatusResponse> GetBatchStatusDetailAsync(long batchId, int currentAccountId, CancellationToken cancellationToken = default);
-
+    Task CancelBatchAsync(long batchId, int currentAccountId, CancellationToken cancellationToken = default);
 }

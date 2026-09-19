@@ -167,4 +167,32 @@ public class SupplierBatchesController : ControllerBase
             return StatusCode(500, new { message = "Failed to retrieve batch information." });
         }
     }
+
+    [HttpPost("{id:long}/cancel")]
+    public async Task<IActionResult> CancelBatch([FromRoute] long id, CancellationToken cancellationToken)
+    {
+        try
+        {
+            var accountId = GetCurrentAccountId();
+            await _supplierBatchCommandService.CancelBatchAsync(id, accountId, cancellationToken);
+
+            return Ok(new { message = "Product batch cancelled successfully." });
+        }
+        catch (KeyNotFoundException ex)
+        {
+            return NotFound(new { message = ex.Message }); // "Product batch not found."
+        }
+        catch (UnauthorizedAccessException ex)
+        {
+            return StatusCode(403, new { message = ex.Message }); // "You are not allowed to cancel this batch."
+        }
+        catch (InvalidOperationException ex)
+        {
+            return BadRequest(new { message = ex.Message }); // "This batch cannot be cancelled at its current status."
+        }
+        catch (Exception)
+        {
+            return StatusCode(500, new { message = "Failed to cancel product batch." });
+        }
+    }
 }
