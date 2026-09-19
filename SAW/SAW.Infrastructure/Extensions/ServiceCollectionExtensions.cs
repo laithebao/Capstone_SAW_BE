@@ -6,6 +6,11 @@ using SAW.Application.Features.Authentication.Commands;
 using SAW.Application.Repositories;
 using SAW.Infrastructure.Authentication;
 using SAW.Infrastructure.Repositories;
+using SAW.Application.Features.CropTypes;
+using SAW.Application.Features.UserAccess;
+using SAW.Application.Features.AdminDashboard;
+using SAW.Application.Features.InspectionStandards;
+using SAW.Application.Features.AuditLogs;
 using SAW.Application.Repositories.Suppliers;
 using SAW.Infrastructure.Repositories.Suppliers;
 
@@ -17,6 +22,7 @@ public static class ServiceCollectionExtensions
         this IServiceCollection services,
         IConfiguration configuration)
     {
+        services.AddHttpContextAccessor();
         services.AddDbContext<AppDbContext>(options =>
             options.UseSqlServer(
                 configuration.GetConnectionString("DefaultConnection"),
@@ -32,9 +38,18 @@ public static class ServiceCollectionExtensions
             ));
 
         services.AddScoped<IAuthRepository, AuthRepository>();
+        services.AddScoped<ICropTypeRepository, CropTypeRepository>();
+        services.AddScoped<IUserAccessRepository, UserAccessRepository>();
+        services.AddScoped<IAdminDashboardRepository, AdminDashboardRepository>();
+        services.AddScoped<IInspectionStandardRepository, InspectionStandardRepository>();
+        services.AddScoped<IAuditLogRepository, AuditLogRepository>();
         services.AddSingleton<IPasswordHasher, BcryptPasswordHasher>();
         services.AddSingleton<ITokenService, JwtTokenService>();
-        services.AddSingleton<IEmailSender, SmtpEmailSender>();
+        var emailDeliveryMode = configuration["Email:DeliveryMode"];
+        if (string.Equals(emailDeliveryMode, "Log", StringComparison.OrdinalIgnoreCase))
+            services.AddSingleton<IEmailSender, LogEmailSender>();
+        else
+            services.AddSingleton<IEmailSender, SmtpEmailSender>();
         services.AddSingleton<IGoogleIdentityService, GoogleIdentityService>();
 
         services.AddScoped<ISupplierRepository, SupplierRepository>();

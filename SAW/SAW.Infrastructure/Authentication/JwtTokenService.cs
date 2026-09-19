@@ -28,7 +28,7 @@ public sealed class JwtTokenService : ITokenService
         RefreshTokenDays = configuration.GetValue("Jwt:RefreshTokenDays", 7);
     }
 
-    public AccessTokenResult CreateAccessToken(int accountId, string username, string email, int roleId)
+    public AccessTokenResult CreateAccessToken(int accountId, string username, string email, int roleId, string roleCode)
     {
         var now = DateTime.UtcNow;
         var expiresAt = now.AddMinutes(_accessTokenMinutes);
@@ -41,7 +41,8 @@ public sealed class JwtTokenService : ITokenService
             new Claim(JwtRegisteredClaimNames.Jti, jwtId),
             new Claim("account_id", accountId.ToString()),
             new Claim("name", username),
-            new Claim("role_id", roleId.ToString())
+            new Claim("role_id", roleId.ToString()),
+            new Claim(ClaimTypes.Role, roleCode)
         };
         var credentials = new SigningCredentials(new SymmetricSecurityKey(_key), SecurityAlgorithms.HmacSha256);
         var token = new JwtSecurityToken(_issuer, _audience, claims, now, expiresAt, credentials);

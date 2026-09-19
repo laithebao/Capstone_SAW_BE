@@ -3,8 +3,17 @@
 ##
 ## Get latest from `dotnet new gitignore`
 
-# dotenv files
+# Local environment and secrets
 .env
+.env.*
+!.env.example
+
+# Database scripts and local database exports
+*.sql
+*.sqlproj.user
+*.bak
+*.bacpac
+*.dacpac
 
 # User-specific files
 *.rsuser
@@ -483,6 +492,28 @@ $RECYCLE.BIN/
 # Vim temporary swap files
 *.swp
 
-# Bỏ qua các file cấu hình môi trường local
-appsettings.Development.json
-appsettings.*.json
+# ASP.NET configuration may contain connection strings, JWT keys or credentials.
+# Keep only the sanitized example file in source control.
+**/appsettings.json
+**/appsettings.*.json
+!**/appsettings.example.json
+!**/appsettings.*.example.json
+
+# Local secret/configuration files
+secrets.json
+*.secrets.json
+**/secrets/
+**/Properties/serviceDependencies*.json
+**/Properties/ServiceDependencies/
+
+# Certificates, signing keys and local development credentials
+*.pfx
+*.p12
+*.pem
+*.key
+*.cer
+*.crt
+*.jks
+*.keystore
+
+# Local database backups and generated deployment artifacts

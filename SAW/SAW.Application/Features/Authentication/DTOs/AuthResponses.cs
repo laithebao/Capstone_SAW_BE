@@ -1,15 +1,17 @@
 namespace SAW.Application.Features.Authentication.DTOs;
 
 public sealed record AuthResponse(
-    int AccountId,
-    string Username,
-    string Email,
-    string FullName,
-    int RoleId,
+    AuthenticatedUser User,
     string AccessToken,
-    DateTime AccessTokenExpiresAt,
+    DateTime ExpiresAt,
     string RefreshToken,
     DateTime RefreshTokenExpiresAt);
+
+public sealed record AuthenticatedUser(
+    int Id,
+    string Name,
+    string Email,
+    string Role);
 
 public sealed record RegistrationResponse(int AccountId, string Username, string Email, int RoleId);
 

@@ -17,13 +17,13 @@ namespace SAW.API
             // Add services to the container.
 
             builder.Services.AddControllers();
-            builder.Services.AddCors(options =>
-            {
-                options.AddPolicy("Frontend", policy => policy
-                    .WithOrigins("http://localhost:5173")
-                    .AllowAnyHeader()
-                    .AllowAnyMethod());
-            });
+            var allowedOrigins = builder.Configuration
+                .GetSection("Cors:AllowedOrigins")
+                .Get<string[]>() ?? ["http://localhost:5173"];
+            builder.Services.AddCors(options => options.AddPolicy("Frontend", policy => policy
+                .WithOrigins(allowedOrigins)
+                .AllowAnyHeader()
+                .AllowAnyMethod()));
             // Learn more about configuring Swagger/OpenAPI at https://aka.ms/aspnetcore/swashbuckle
             builder.Services.AddEndpointsApiExplorer();
             builder.Services.AddSwaggerGen(options =>
@@ -68,10 +68,11 @@ namespace SAW.API
                         ValidAudience = builder.Configuration["Jwt:Audience"],
                         IssuerSigningKey = new SymmetricSecurityKey(Encoding.UTF8.GetBytes(jwtKey)),
                         NameClaimType = "name",
-                        RoleClaimType = "role_id",
+                        RoleClaimType = System.Security.Claims.ClaimTypes.Role,
                         ClockSkew = TimeSpan.Zero
                     };
-                });
+            });
+            builder.Services.AddAuthorization();
 
             // ── Global Exception Handler ───────────────────────────────────
             builder.Services.AddExceptionHandler<GlobalExceptionHandler>();
