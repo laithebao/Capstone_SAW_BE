@@ -8,7 +8,7 @@ public class BatchStatusHistoryConfiguration : IEntityTypeConfiguration<BatchSta
 {
     public void Configure(EntityTypeBuilder<BatchStatusHistory> builder)
     {
-        builder.ToTable("BATCH_STATUS_HISTORY");
+        builder.ToTable("BATCH_STATUS_HISTORY", tb => tb.UseSqlOutputClause(false));
         builder.HasKey(x => x.BatchStatusHistoryId);
         builder.Property(x => x.BatchStatusHistoryId).HasColumnName("BatchStatusHistoryID").UseIdentityColumn();
         builder.Property(x => x.ProductBatchId).HasColumnName("ProductBatchID").IsRequired();

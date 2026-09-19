@@ -1,11 +1,9 @@
-﻿using Microsoft.AspNetCore.Mvc;
-
-using System.Security.Claims;
-using Microsoft.AspNetCore.Authorization;
+﻿using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
+using Microsoft.Extensions.Logging;
 using SAW.Application.Features.Suppliers.Commands;
 using SAW.Application.Features.Suppliers.DTOs;
-using static SAW.Application.Features.Suppliers.DTOs.DeclareSupplierProfileRequest;
+using System.Security.Claims;
 
 namespace SAW.API.Controllers;
 
@@ -15,10 +13,14 @@ namespace SAW.API.Controllers;
 public class SuppliersController : ControllerBase
 {
     private readonly ISupplierCommandService _supplierCommandService;
+    private readonly ILogger<SuppliersController> _logger;
 
-    public SuppliersController(ISupplierCommandService supplierCommandService)
+    public SuppliersController(
+        ISupplierCommandService supplierCommandService,
+        ILogger<SuppliersController> logger)
     {
         _supplierCommandService = supplierCommandService;
+        _logger = logger;
     }
 
     /// <summary>
@@ -29,14 +31,7 @@ public class SuppliersController : ControllerBase
     {
         try
         {
-            var accountIdClaim = User.FindFirst(ClaimTypes.NameIdentifier)?.Value
-                                 ?? User.FindFirst("AccountID")?.Value;
-
-            if (!int.TryParse(accountIdClaim, out int currentAccountId))
-            {
-                return StatusCode(403, new { message = "You are not allowed to view supplier profile." });
-            }
-
+            var currentAccountId = GetCurrentAccountId();
             var response = await _supplierCommandService.GetMyProfileAsync(currentAccountId, cancellationToken);
             return Ok(response);
         }
@@ -48,12 +43,16 @@ public class SuppliersController : ControllerBase
         {
             return StatusCode(403, new { message = ex.Message });
         }
-        catch (Exception)
+        catch (Exception ex)
         {
-            return StatusCode(500, new { message = "Failed to load supplier profile." });
+            _logger.LogError(ex, "Lỗi khi lấy thông tin Supplier Profile");
+            return StatusCode(500, new { message = "Failed to load supplier profile.", detail = ex.Message });
         }
     }
 
+    /// <summary>
+    /// UC 3.2.42: Declare Supplier Profile
+    /// </summary>
     [HttpPost("me/declare")]
     public async Task<ActionResult<SupplierProfileResponse>> DeclareProfile([FromBody] DeclareSupplierProfileRequest request, CancellationToken cancellationToken)
     {
@@ -67,7 +66,7 @@ public class SuppliersController : ControllerBase
             var accountId = GetCurrentAccountId();
             var result = await _supplierCommandService.DeclareProfileAsync(accountId, request, cancellationToken);
 
-            return CreatedAtAction(nameof(GetMyProfile), new { message = "Supplier information saved successfully.", data = result });
+            return CreatedAtAction(nameof(GetMyProfile), null, result);
         }
         catch (InvalidOperationException ex)
         {
@@ -81,23 +80,11 @@ public class SuppliersController : ControllerBase
         {
             return StatusCode(403, new { message = ex.Message });
         }
-        catch (Exception)
+        catch (Exception ex)
         {
-            return StatusCode(500, new { message = "Failed to save supplier information." });
+            _logger.LogError(ex, "Lỗi khi khai báo thông tin Supplier");
+            return StatusCode(500, new { message = "Failed to save supplier information.", detail = ex.Message });
         }
-    }
-
-    private int GetCurrentAccountId()
-    {
-        var accountIdClaim = User.FindFirst(ClaimTypes.NameIdentifier)?.Value
-                             ?? User.FindFirst("AccountID")?.Value;
-
-        if (!int.TryParse(accountIdClaim, out int accountId))
-        {
-            throw new UnauthorizedAccessException("You are not allowed to view/declare supplier profile.");
-        }
-
-        return accountId;
     }
 
     /// <summary>
@@ -116,23 +103,37 @@ public class SuppliersController : ControllerBase
             var accountId = GetCurrentAccountId();
             var result = await _supplierCommandService.UpdateProfileAsync(accountId, request, cancellationToken);
 
-            return Ok(new { message = "Supplier information updated successfully.", data = result });
+            return Ok(result);
         }
         catch (KeyNotFoundException ex)
         {
-            return NotFound(new { message = ex.Message }); // "Supplier profile not found."
+            return NotFound(new { message = ex.Message });
         }
         catch (ArgumentException ex)
         {
-            return BadRequest(new { message = ex.Message }); // "This tax code is already registered."
+            return BadRequest(new { message = ex.Message });
         }
         catch (UnauthorizedAccessException ex)
         {
-            return StatusCode(403, new { message = "You are not allowed to edit supplier information." });
+            return StatusCode(403, new { message = ex.Message });
         }
-        catch (Exception)
+        catch (Exception ex)
         {
-            return StatusCode(500, new { message = "Failed to update supplier information." });
+            _logger.LogError(ex, "Lỗi 500 khi cập nhật Supplier Profile");
+            return StatusCode(500, new { message = "Failed to update supplier information.", detail = ex.Message });
         }
+    }
+
+    private int GetCurrentAccountId()
+    {
+        var accountIdClaim = User.FindFirst(ClaimTypes.NameIdentifier)?.Value
+                             ?? User.FindFirst("AccountID")?.Value;
+
+        if (!int.TryParse(accountIdClaim, out int accountId))
+        {
+            throw new UnauthorizedAccessException("You are not allowed to perform this action.");
+        }
+
+        return accountId;
     }
 }

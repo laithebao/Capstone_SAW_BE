@@ -8,7 +8,7 @@ public class ProductBatchConfiguration : IEntityTypeConfiguration<ProductBatch>
 {
     public void Configure(EntityTypeBuilder<ProductBatch> builder)
     {
-        builder.ToTable("PRODUCT_BATCH");
+        builder.ToTable("PRODUCT_BATCH", tb => tb.UseSqlOutputClause(false));
         builder.HasKey(x => x.ProductBatchId);
         builder.Property(x => x.ProductBatchId).HasColumnName("ProductBatchID").UseIdentityColumn();
         builder.Property(x => x.BatchCode).HasColumnName("BatchCode").HasMaxLength(50).IsRequired();

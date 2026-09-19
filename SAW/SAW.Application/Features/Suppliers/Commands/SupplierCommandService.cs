@@ -1,13 +1,8 @@
-﻿using System;
-using System.Collections.Generic;
-using System.Linq;
-using System.Text;
-using System.Threading.Tasks;
-
-using SAW.Application.Features.Suppliers.DTOs;
+﻿using SAW.Application.Features.Suppliers.DTOs;
 using SAW.Application.Repositories.Suppliers;
 using SAW.Domain.Entities;
-using static SAW.Application.Features.Suppliers.DTOs.DeclareSupplierProfileRequest;
+using System.Text.Json;
+using System.Text.RegularExpressions;
 
 namespace SAW.Application.Features.Suppliers.Commands;
 
@@ -29,10 +24,15 @@ public class SupplierCommandService : ISupplierCommandService
             throw new KeyNotFoundException("Supplier profile not found. Please declare supplier information.");
         }
 
-        // Đảm bảo chỉ chính chủ được xem profile
         if (profile.AccountId != currentAccountId)
         {
             throw new UnauthorizedAccessException("You are not allowed to view this supplier profile.");
+        }
+
+        // Bổ sung: Tự động trích xuất FarmingAreaHa từ OperatingRegion (GrowingArea) nếu đang null hoặc 0
+        if ((!profile.FarmingAreaHa.HasValue || profile.FarmingAreaHa == 0) && !string.IsNullOrEmpty(profile.OperatingRegion))
+        {
+            profile.FarmingAreaHa = ExtractFarmingArea(profile.OperatingRegion);
         }
 
         return profile;
@@ -52,8 +52,8 @@ public class SupplierCommandService : ISupplierCommandService
             throw new ArgumentException("This tax code is already registered.");
         }
 
-        var fullAddress = $"{request.Address.Trim()}, {request.Ward}, {request.District}, {request.Province}".Trim(',', ' ');
-        var growingAreaInfo = $"{request.Province} - {request.District} (Diện tích: {request.FarmingAreaHa ?? 0} ha)";
+        var fullAddress = BuildFullAddress(request.Address, request.Ward, request.District, request.Province);
+        var growingAreaInfo = BuildGrowingAreaInfo(request.Province, request.District, request.FarmingAreaHa);
         var newSupplierCode = await _supplierRepository.GenerateSupplierCodeAsync(cancellationToken);
 
         var newSupplier = new Supplier
@@ -63,7 +63,7 @@ public class SupplierCommandService : ISupplierCommandService
             SupplierName = request.SupplierName.Trim(),
             TaxCode = request.TaxCode.Trim(),
             Address = fullAddress,
-            ContactPerson = $"{request.ContactPerson.Trim()} | Đại diện PL: {request.LegalRepresentative.Trim()}",
+            ContactPerson = BuildContactPerson(request.ContactPerson, request.LegalRepresentative),
             PhoneNumber = request.PhoneNumber?.Trim(),
             Email = request.Email?.Trim(),
             GrowingArea = growingAreaInfo,
@@ -72,22 +72,28 @@ public class SupplierCommandService : ISupplierCommandService
             CreatedAt = DateTime.UtcNow
         };
 
-        await _supplierRepository.AddSupplierAsync(newSupplier, request.CropTypeIds, request.Certifications, cancellationToken);
+        var normalizedCertifications = request.GetNormalizedCertifications();
 
-        var createdProfile = await _supplierRepository.GetProfileByAccountIdAsync(currentAccountId, cancellationToken);
-        return createdProfile ?? throw new Exception("Failed to load supplier profile after creation.");
+        await _supplierRepository.AddSupplierAsync(
+            newSupplier,
+            request.CropTypeIds ?? new List<int>(),
+            normalizedCertifications,
+            cancellationToken
+        );
+
+        return await GetMyProfileAsync(currentAccountId, cancellationToken);
     }
 
     public async Task<SupplierProfileResponse> UpdateProfileAsync(int currentAccountId, UpdateSupplierProfileRequest request, CancellationToken cancellationToken = default)
     {
-        // 1. Kiểm tra Supplier Profile có tồn tại và thuộc sở hữu không
+        // 1. Kiểm tra Supplier Profile tồn tại
         var supplier = await _supplierRepository.GetEntityByAccountIdAsync(currentAccountId, cancellationToken);
         if (supplier == null)
         {
             throw new KeyNotFoundException("Supplier profile not found.");
         }
 
-        // 2. Kiểm tra trùng Mã số thuế với bản ghi khác
+        // 2. Kiểm tra trùng Mã số thuế
         var isTaxCodeExists = await _supplierRepository.IsTaxCodeExistsExceptCurrentAsync(request.TaxCode, supplier.SupplierId, cancellationToken);
         if (isTaxCodeExists)
         {
@@ -95,7 +101,7 @@ public class SupplierCommandService : ISupplierCommandService
         }
 
         // 3. Backup dữ liệu cũ cho Audit Log
-        var oldValuesJson = System.Text.Json.JsonSerializer.Serialize(new
+        var oldValuesJson = JsonSerializer.Serialize(new
         {
             supplier.SupplierName,
             supplier.TaxCode,
@@ -106,24 +112,90 @@ public class SupplierCommandService : ISupplierCommandService
             supplier.Email
         });
 
-        // 4. Cập nhật thông tin mới (Giữ nguyên ProfileStatus)
-        var fullAddress = $"{request.Address.Trim()}, {request.Ward}, {request.District}, {request.Province}".Trim(',', ' ');
-        var growingAreaInfo = $"{request.Province} - {request.District} (Diện tích: {request.FarmingAreaHa ?? 0} ha)";
+        // 4. Nếu request gửi FarmingAreaHa = null/0, bảo toàn số cũ bằng cách trích xuất lại từ DB (GrowingArea)
+        var effectiveFarmingArea = request.FarmingAreaHa;
+        if ((!effectiveFarmingArea.HasValue || effectiveFarmingArea == 0) && !string.IsNullOrEmpty(supplier.GrowingArea))
+        {
+            var oldExtractedArea = ExtractFarmingArea(supplier.GrowingArea);
+            if (oldExtractedArea.HasValue && oldExtractedArea.Value > 0)
+            {
+                effectiveFarmingArea = oldExtractedArea;
+            }
+        }
 
+        // 5. Cập nhật thông tin mới
         supplier.SupplierName = request.SupplierName.Trim();
         supplier.TaxCode = request.TaxCode.Trim();
-        supplier.Address = fullAddress;
-        supplier.ContactPerson = $"{request.ContactPerson.Trim()} | Đại diện PL: {request.LegalRepresentative.Trim()}";
+        supplier.Address = BuildFullAddress(request.Address, request.Ward, request.District, request.Province);
+        supplier.ContactPerson = BuildContactPerson(request.ContactPerson, request.LegalRepresentative);
         supplier.PhoneNumber = request.PhoneNumber?.Trim();
         supplier.Email = request.Email?.Trim();
-        supplier.GrowingArea = growingAreaInfo;
+        supplier.GrowingArea = BuildGrowingAreaInfo(request.Province, request.District, effectiveFarmingArea);
         supplier.Note = request.SupplierType;
 
-        // 5. Lưu xuống DB
-        await _supplierRepository.UpdateSupplierAsync(supplier, request.CropTypeIds, request.Certifications, oldValuesJson, cancellationToken);
+        var normalizedCertifications = request.GetNormalizedCertifications();
 
-        // 6. Trả về Supplier Profile sau khi cập nhật
-        var updatedProfile = await _supplierRepository.GetProfileByAccountIdAsync(currentAccountId, cancellationToken);
-        return updatedProfile ?? throw new Exception("Failed to load supplier profile after update.");
+        // 6. Lưu xuống DB
+        await _supplierRepository.UpdateSupplierAsync(
+            supplier,
+            request.CropTypeIds ?? new List<int>(),
+            normalizedCertifications,
+            oldValuesJson,
+            cancellationToken
+        );
+
+        // 7. Trả về thông tin đã cập nhật (GetMyProfileAsync sẽ tự đảm bảo FarmingAreaHa luôn có giá trị)
+        return await GetMyProfileAsync(currentAccountId, cancellationToken);
     }
+
+    #region Helper Methods
+    private static string BuildFullAddress(string? address, string? ward, string? district, string? province)
+    {
+        var parts = new[] { address?.Trim(), ward?.Trim(), district?.Trim(), province?.Trim() }
+            .Where(p => !string.IsNullOrWhiteSpace(p));
+        return string.Join(", ", parts);
+    }
+
+    private static string BuildGrowingAreaInfo(string? province, string? district, decimal? area)
+    {
+        var location = string.Join(" - ", new[] { province?.Trim(), district?.Trim() }.Where(p => !string.IsNullOrWhiteSpace(p)));
+        if (string.IsNullOrEmpty(location)) location = "Chưa xác định";
+        return $"{location} (Diện tích: {area ?? 0} ha)";
+    }
+
+    private static string BuildContactPerson(string? contactPerson, string? legalRepresentative)
+    {
+        var rawContact = contactPerson?.Trim() ?? "";
+
+        if (rawContact.Contains("| Đại diện PL:"))
+        {
+            rawContact = rawContact.Split("| Đại diện PL:")[0].Trim();
+        }
+
+        var lr = legalRepresentative?.Trim();
+
+        if (string.IsNullOrEmpty(lr) || string.Equals(rawContact, lr, StringComparison.OrdinalIgnoreCase))
+        {
+            return rawContact;
+        }
+
+        return $"{rawContact} | Đại diện PL: {lr}";
+    }
+
+    /// <summary>
+    /// Trích xuất số diện tích (ha) từ chuỗi GrowingArea / OperatingRegion (ví dụ từ: "... (Diện tích: 15.5 ha)")
+    /// </summary>
+    private static decimal? ExtractFarmingArea(string? growingArea)
+    {
+        if (string.IsNullOrWhiteSpace(growingArea)) return null;
+
+        var match = Regex.Match(growingArea, @"\(Diện tích:\s*([\d\.,]+)\s*ha\)", RegexOptions.IgnoreCase);
+        if (match.Success && decimal.TryParse(match.Groups[1].Value.Replace(',', '.'), System.Globalization.NumberStyles.Any, System.Globalization.CultureInfo.InvariantCulture, out var area))
+        {
+            return area;
+        }
+
+        return null;
+    }
+    #endregion
 }
