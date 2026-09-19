@@ -4,9 +4,11 @@ using System.Linq;
 using System.Text;
 using System.Threading.Tasks;
 
-namespace SAW.Application.Features.Suppliers.Commands
+using SAW.Application.Features.Suppliers.DTOs;
+
+namespace SAW.Application.Features.Suppliers.Commands;
+
+public interface ISupplierBatchCommandService
 {
-    internal class ISupplierBatchCommandService
-    {
-    }
+    Task<SupplierBatchListResponse> GetDeclaredBatchesAsync(int currentAccountId, GetSupplierBatchesQueryRequest request, CancellationToken cancellationToken = default);
 }
