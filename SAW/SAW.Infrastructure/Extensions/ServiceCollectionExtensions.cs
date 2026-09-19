@@ -6,6 +6,8 @@ using SAW.Application.Features.Authentication.Commands;
 using SAW.Application.Repositories;
 using SAW.Infrastructure.Authentication;
 using SAW.Infrastructure.Repositories;
+using SAW.Application.Repositories.Suppliers;
+using SAW.Infrastructure.Repositories.Suppliers;
 
 namespace SAW.Infrastructure.Extensions;
 
@@ -34,6 +36,9 @@ public static class ServiceCollectionExtensions
         services.AddSingleton<ITokenService, JwtTokenService>();
         services.AddSingleton<IEmailSender, SmtpEmailSender>();
         services.AddSingleton<IGoogleIdentityService, GoogleIdentityService>();
+
+        services.AddScoped<ISupplierRepository, SupplierRepository>();
+        services.AddScoped<IProductBatchRepository, ProductBatchRepository>();
 
         return services;
     }

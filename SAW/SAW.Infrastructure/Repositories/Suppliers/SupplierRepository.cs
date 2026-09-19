@@ -2,14 +2,15 @@
 using SAW.Application.Features.Suppliers.DTOs;
 using SAW.Application.Repositories.Suppliers;
 using SAW.Domain.Entities;
+using SAW.Infrastructure.Persistence;
 
 namespace SAW.Infrastructure.Repositories.Suppliers;
 
 public class SupplierRepository : ISupplierRepository
 {
-    private readonly DbContext _context;
+    private readonly AppDbContext _context;
 
-    public SupplierRepository(DbContext context)
+    public SupplierRepository(AppDbContext context)
     {
         _context = context;
     }

@@ -8,14 +8,15 @@ using Microsoft.EntityFrameworkCore;
 using SAW.Application.Features.Suppliers.DTOs;
 using SAW.Application.Repositories.Suppliers;
 using SAW.Domain.Entities;
+using SAW.Infrastructure.Persistence;
 
 namespace SAW.Infrastructure.Repositories.Suppliers;
 
 public class ProductBatchRepository : IProductBatchRepository
 {
-    private readonly DbContext _context;
+    private readonly AppDbContext _context;
 
-    public ProductBatchRepository(DbContext context)
+    public ProductBatchRepository(AppDbContext context)
     {
         _context = context;
     }
@@ -110,4 +111,106 @@ public class ProductBatchRepository : IProductBatchRepository
         "REJECTED" => "Bị từ chối",
         _ => status
     };
+
+    public async Task<bool> IsCropTypeRegisteredForSupplierAsync(int supplierId, int cropTypeId, CancellationToken cancellationToken = default)
+    {
+        // Check if CropType exists and active in Supplier's registered list
+        return await _context.Set<SupplierCropType>()
+            .AnyAsync(sct => sct.SupplierId == supplierId && sct.CropTypeId == cropTypeId && sct.IsActive, cancellationToken);
+    }
+
+    public async Task<string> GenerateBatchCodeAsync(CancellationToken cancellationToken = default)
+    {
+        var todayStr = DateTime.UtcNow.ToString("yyyyMMdd");
+        var prefix = $"LH-{todayStr}-";
+
+        var lastBatch = await _context.Set<ProductBatch>()
+            .Where(b => b.BatchCode.StartsWith(prefix))
+            .OrderByDescending(b => b.BatchCode)
+            .FirstOrDefaultAsync(cancellationToken);
+
+        if (lastBatch == null)
+        {
+            return $"{prefix}01";
+        }
+
+        var lastSeqStr = lastBatch.BatchCode.Replace(prefix, "");
+        if (int.TryParse(lastSeqStr, out int lastSeq))
+        {
+            return $"{prefix}{(lastSeq + 1):D2}";
+        }
+
+        return $"{prefix}{Guid.NewGuid().ToString()[..2].ToUpper()}";
+    }
+
+    public async Task AddProductBatchAsync(ProductBatch batch, BatchStatusHistory initialHistory, CancellationToken cancellationToken = default)
+    {
+        using var transaction = await _context.Database.BeginTransactionAsync(cancellationToken);
+        try
+        {
+            // 1. Thêm Lô hàng mới (Trạng thái SUBMITTED, không tự tăng Inventory)
+            _context.Set<ProductBatch>().Add(batch);
+            await _context.SaveChangesAsync(cancellationToken);
+
+            // 2. Thêm Lịch sử trạng thái ban đầu (BatchStatusHistory)
+            initialHistory.ProductBatchId = batch.ProductBatchId;
+            _context.Set<BatchStatusHistory>().Add(initialHistory);
+
+            await _context.SaveChangesAsync(cancellationToken);
+            await transaction.CommitAsync(cancellationToken);
+        }
+        catch
+        {
+            await transaction.RollbackAsync(cancellationToken);
+            throw;
+        }
+    }
+
+    public async Task<ProductBatch?> GetBatchByIdAsync(long batchId, CancellationToken cancellationToken = default)
+    {
+        return await _context.ProductBatches
+            .FirstOrDefaultAsync(b => b.ProductBatchId == batchId, cancellationToken);
+    }
+
+    public async Task UpdateProductBatchAsync(ProductBatch batch, BatchStatusHistory statusHistory, CancellationToken cancellationToken = default)
+    {
+        using var transaction = await _context.Database.BeginTransactionAsync(cancellationToken);
+        try
+        {
+            _context.ProductBatches.Update(batch);
+            _context.BatchStatusHistories.Add(statusHistory);
+
+            await _context.SaveChangesAsync(cancellationToken);
+            await transaction.CommitAsync(cancellationToken);
+        }
+        catch
+        {
+            await transaction.RollbackAsync(cancellationToken);
+            throw;
+        }
+    }
+
+    public async Task<ProductBatch?> GetBatchStatusDetailByIdAsync(long batchId, CancellationToken cancellationToken = default)
+    {
+        return await _context.ProductBatches
+            .Include(b => b.CropType)
+            .Include(b => b.QcInspections)
+            .FirstOrDefaultAsync(b => b.ProductBatchId == batchId, cancellationToken);
+    }
+
+    public async Task<decimal> GetCommittedReceivedQuantityAsync(long batchId, CancellationToken cancellationToken = default)
+    {
+        // Chỉ tính ReceivedQuantity từ các phiếu GoodsReceipt có trạng thái COMMITTED
+        return await _context.GoodsReceipts
+            .Where(gr => gr.ProductBatchId == batchId && gr.ReceiptStatus == "COMMITTED")
+            .SumAsync(gr => (decimal?)gr.ReceivedQuantity, cancellationToken) ?? 0m;
+    }
+
+    public async Task<List<BatchStatusHistory>> GetBatchStatusHistoryAsync(long batchId, CancellationToken cancellationToken = default)
+    {
+        return await _context.BatchStatusHistories
+            .Where(h => h.ProductBatchId == batchId)
+            .OrderByDescending(h => h.ChangedAt)
+            .ToListAsync(cancellationToken);
+    }
 }
