@@ -21,12 +21,12 @@ public class SupplierCommandService : ISupplierCommandService
 
         if (profile == null)
         {
-            throw new KeyNotFoundException("Supplier profile not found. Please declare supplier information.");
+            throw new KeyNotFoundException("Không tìm thấy thông tin nhà cung cấp. Vui lòng khai báo thông tin nhà cung cấp.");
         }
 
         if (profile.AccountId != currentAccountId)
         {
-            throw new UnauthorizedAccessException("You are not allowed to view this supplier profile.");
+            throw new UnauthorizedAccessException("Bạn không có quyền xem thông tin nhà cung cấp này.");
         }
 
         // Bổ sung: Tự động trích xuất FarmingAreaHa từ OperatingRegion (GrowingArea) nếu đang null hoặc 0
@@ -43,13 +43,13 @@ public class SupplierCommandService : ISupplierCommandService
         var hasProfile = await _supplierRepository.HasProfileAsync(currentAccountId, cancellationToken);
         if (hasProfile)
         {
-            throw new InvalidOperationException("Supplier profile already exists.");
+            throw new InvalidOperationException("Hồ sơ nhà cung cấp đã tồn tại.");
         }
 
         var isTaxCodeExists = await _supplierRepository.IsTaxCodeExistsAsync(request.TaxCode, cancellationToken);
         if (isTaxCodeExists)
         {
-            throw new ArgumentException("This tax code is already registered.");
+            throw new ArgumentException("Mã số thuế này đã được đăng ký.");
         }
 
         var fullAddress = BuildFullAddress(request.Address, request.Ward, request.District, request.Province);
@@ -90,14 +90,14 @@ public class SupplierCommandService : ISupplierCommandService
         var supplier = await _supplierRepository.GetEntityByAccountIdAsync(currentAccountId, cancellationToken);
         if (supplier == null)
         {
-            throw new KeyNotFoundException("Supplier profile not found.");
+            throw new KeyNotFoundException("Không tìm thấy thông tin nhà cung cấp.");
         }
 
         // 2. Kiểm tra trùng Mã số thuế
         var isTaxCodeExists = await _supplierRepository.IsTaxCodeExistsExceptCurrentAsync(request.TaxCode, supplier.SupplierId, cancellationToken);
         if (isTaxCodeExists)
         {
-            throw new ArgumentException("This tax code is already registered.");
+            throw new ArgumentException("Mã số thuế này đã được đăng ký.");
         }
 
         // 3. Backup dữ liệu cũ cho Audit Log
