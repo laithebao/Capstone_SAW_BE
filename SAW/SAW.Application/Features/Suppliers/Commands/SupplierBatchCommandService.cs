@@ -34,27 +34,27 @@ public class SupplierBatchCommandService : ISupplierBatchCommandService
         var supplier = await _supplierRepository.GetEntityByAccountIdAsync(currentAccountId, cancellationToken);
         if (supplier == null)
         {
-            throw new KeyNotFoundException("Please declare supplier information before declaring product batch information.");
+            throw new KeyNotFoundException("Vui lòng khai báo thông tin nhà cung cấp trước khi khai báo thông tin lô hàng.");
         }
 
         // 2. Validate HarvestDate (không được ở tương lai)
         var today = DateOnly.FromDateTime(DateTime.UtcNow);
         if (request.HarvestDate > today)
         {
-            throw new ArgumentException("Harvest date cannot be in the future.");
+            throw new ArgumentException("Ngày thu hoạch không được ở tương lai.");
         }
 
         // 3. Validate ExpectedDeliveryDate
         if (request.ExpectedDeliveryDate.HasValue && request.ExpectedDeliveryDate.Value < request.HarvestDate)
         {
-            throw new ArgumentException("Invalid expected delivery date.");
+            throw new ArgumentException("Ngày giao hàng dự kiến không hợp lệ.");
         }
 
         // 4. Kiểm tra CropType có được đăng ký bởi Supplier này không
         var isRegistered = await _productBatchRepository.IsCropTypeRegisteredForSupplierAsync(supplier.SupplierId, request.CropTypeId, cancellationToken);
         if (!isRegistered)
         {
-            throw new InvalidOperationException("The selected crop type is not registered for this supplier.");
+            throw new InvalidOperationException("Loại cây trồng đã chọn chưa được đăng ký cho nhà cung cấp này.");
         }
 
         // 5. Tính toán WeightInKg theo Đơn vị & Quy cách đóng gói
@@ -80,7 +80,7 @@ public class SupplierBatchCommandService : ISupplierBatchCommandService
 
         if (calculatedWeightKg <= 0)
         {
-            throw new ArgumentException("Declared quantity must be greater than 0.");
+            throw new ArgumentException("Số lượng khai báo phải lớn hơn 0.");
         }
 
         // 6. Sinh mã lô hàng tự động
@@ -144,46 +144,46 @@ public class SupplierBatchCommandService : ISupplierBatchCommandService
         var supplier = await _supplierRepository.GetEntityByAccountIdAsync(currentAccountId, cancellationToken);
         if (supplier == null)
         {
-            throw new UnauthorizedAccessException("You are not allowed to edit this batch.");
+            throw new UnauthorizedAccessException("Bạn không có quyền chỉnh sửa lô hàng này.");
         }
 
         // 2. Tìm lô hàng theo BatchId
         var existingBatch = await _productBatchRepository.GetBatchByIdAsync(batchId, cancellationToken);
         if (existingBatch == null)
         {
-            throw new KeyNotFoundException("Product batch not found.");
+            throw new KeyNotFoundException("Không tìm thấy thông tin lô hàng.");
         }
 
         // 3. Kiểm tra lô hàng có thuộc sở hữu của Nhà cung cấp này không
         if (existingBatch.SupplierId != supplier.SupplierId)
         {
-            throw new UnauthorizedAccessException("You are not allowed to edit this batch.");
+            throw new UnauthorizedAccessException("Bạn không có quyền chỉnh sửa lô hàng này.");
         }
 
         // 4. Kiểm tra trạng thái lô hàng (chỉ cho phép sửa khi SUBMITTED)
         if (existingBatch.BatchStatus != "SUBMITTED")
         {
-            throw new InvalidOperationException("This batch declaration can no longer be modified.");
+            throw new InvalidOperationException("Khai báo lô hàng này không còn có thể chỉnh sửa.");
         }
 
         // 5. Kiểm tra HarvestDate không ở tương lai
         var today = DateOnly.FromDateTime(DateTime.UtcNow);
         if (request.HarvestDate > today)
         {
-            throw new ArgumentException("Harvest date cannot be in the future.");
+            throw new ArgumentException("Ngày thu hoạch không được ở tương lai.");
         }
 
         // 6. Kiểm tra ExpectedDeliveryDate
         if (request.ExpectedDeliveryDate.HasValue && request.ExpectedDeliveryDate.Value < request.HarvestDate)
         {
-            throw new ArgumentException("Invalid expected delivery date.");
+            throw new ArgumentException("Ngày giao hàng dự kiến không hợp lệ.");
         }
 
         // 7. Kiểm tra CropType có được đăng ký bởi Supplier này không
         var isRegistered = await _productBatchRepository.IsCropTypeRegisteredForSupplierAsync(supplier.SupplierId, request.CropTypeId, cancellationToken);
         if (!isRegistered)
         {
-            throw new InvalidOperationException("The selected crop type is not registered for this supplier.");
+            throw new InvalidOperationException("Loại cây trồng đã chọn chưa được đăng ký cho nhà cung cấp này.");
         }
 
         // 8. Tính toán lại WeightInKg
@@ -209,7 +209,7 @@ public class SupplierBatchCommandService : ISupplierBatchCommandService
 
         if (calculatedWeightKg <= 0)
         {
-            throw new ArgumentException("Declared quantity must be greater than 0.");
+            throw new ArgumentException("Số lượng khai báo phải lớn hơn 0.");
         }
 
         // 9. Cập nhật thông tin Lô hàng
@@ -264,20 +264,20 @@ public class SupplierBatchCommandService : ISupplierBatchCommandService
         var supplier = await _supplierRepository.GetEntityByAccountIdAsync(currentAccountId, cancellationToken);
         if (supplier == null)
         {
-            throw new UnauthorizedAccessException("Supplier profile not found.");
+            throw new UnauthorizedAccessException("Không tìm thấy thông tin hồ sơ nhà cung cấp.");
         }
 
         // 2. Lấy thông tin lô hàng chi tiết
         var batch = await _productBatchRepository.GetBatchStatusDetailByIdAsync(batchId, cancellationToken);
         if (batch == null)
         {
-            throw new KeyNotFoundException("Product batch not found.");
+            throw new KeyNotFoundException("Không tìm thấy thông tin lô hàng.");
         }
 
         // 3. Kiểm tra quyền truy cập (Chỉ cho phép xem lô hàng của chính mình)
         if (batch.SupplierId != supplier.SupplierId)
         {
-            throw new UnauthorizedAccessException("You are not allowed to view this batch.");
+            throw new UnauthorizedAccessException("Bạn không có quyền xem thông tin lô hàng này.");
         }
 
         // 4. Tính tổng ReceivedQuantity từ các GoodsReceipt có trạng thái COMMITTED
@@ -335,26 +335,26 @@ public class SupplierBatchCommandService : ISupplierBatchCommandService
         var supplier = await _supplierRepository.GetEntityByAccountIdAsync(currentAccountId, cancellationToken);
         if (supplier == null)
         {
-            throw new UnauthorizedAccessException("You are not allowed to cancel this batch.");
+            throw new UnauthorizedAccessException("Bạn không có quyền hủy lô hàng này.");
         }
 
         // 2. Tìm lô hàng theo BatchId
         var existingBatch = await _productBatchRepository.GetBatchByIdAsync(batchId, cancellationToken);
         if (existingBatch == null)
         {
-            throw new KeyNotFoundException("Product batch not found.");
+            throw new KeyNotFoundException("Không tìm thấy thông tin lô hàng.");
         }
 
         // 3. Kiểm tra lô hàng có thuộc sở hữu của Nhà cung cấp này không
         if (existingBatch.SupplierId != supplier.SupplierId)
         {
-            throw new UnauthorizedAccessException("You are not allowed to cancel this batch.");
+            throw new UnauthorizedAccessException("Bạn không có quyền hủy lô hàng này.");
         }
 
         // 4. Kiểm tra trạng thái lô hàng (chỉ cho phép hủy khi đang SUBMITTED)
         if (existingBatch.BatchStatus != "SUBMITTED")
         {
-            throw new InvalidOperationException("This batch cannot be cancelled at its current status.");
+            throw new InvalidOperationException("Lô hàng này không thể hủy ở trạng thái hiện tại.");
         }
 
         // 5. Cập nhật trạng thái lô hàng thành CANCELLED
