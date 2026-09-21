@@ -11,10 +11,15 @@ public class SupplierBatchItemResponse
     public long BatchId { get; set; }
     public string BatchCode { get; set; } = string.Empty;
     public string ProductName { get; set; } = string.Empty;
+    public string Origin { get; set; } = string.Empty; // Khu vực sản xuất / Nguồn gốc
+    public string? Note { get; set; } // Mô tả / Ghi chú lô hàng
     public decimal QuantityInTons { get; set; }
-    public DateTime SubmittedDate { get; set; }
+    public DateTime SubmittedDate { get; set; } // Ngày tạo / Ngày nộp
+    public DateTime? CompletedDate { get; set; } // Ngày hoàn thành (CommittedAt từ GoodsReceipt)
     public string Status { get; set; } = string.Empty;
     public string StatusDisplayName { get; set; } = string.Empty;
+    public string ConsumptionStatus { get; set; } = "IN_STOCK"; // Trạng thái tiêu thụ (VD: IN_STOCK, CONSUMING, CONSUMED)
+    public string ConsumptionStatusDisplayName { get; set; } = "Tồn kho";
 }
 
 public class SupplierBatchSummaryResponse

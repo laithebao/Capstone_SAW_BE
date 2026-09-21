@@ -11,6 +11,8 @@ public class GetSupplierBatchesQueryRequest
 {
     public string? Keyword { get; set; } // Tìm kiếm theo Mã lô hàng hoặc Tên sản phẩm
     public string? Status { get; set; } // SUBMITTED, PENDING_QC, APPROVED, REJECTED...
+    public string? Origin { get; set; } // Lọc theo khu vực (Đắk Lắk, Gia Lai...)
+    public string? ConsumptionStatus { get; set; } // Lọc theo trạng thái tiêu thụ
     public DateTime? FromDate { get; set; }
     public DateTime? ToDate { get; set; }
 
