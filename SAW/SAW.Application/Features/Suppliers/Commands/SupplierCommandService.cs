@@ -1,4 +1,4 @@
-﻿using SAW.Application.Features.Suppliers.DTOs;
+using SAW.Application.Features.Suppliers.DTOs;
 using SAW.Application.Repositories.Suppliers;
 using SAW.Domain.Entities;
 using System.Text.Json;
@@ -34,6 +34,14 @@ public class SupplierCommandService : ISupplierCommandService
         {
             profile.FarmingAreaHa = ExtractFarmingArea(profile.OperatingRegion);
         }
+        
+        if (!string.IsNullOrEmpty(profile.OperatingRegion))
+        {
+            // Bỏ phần (Diện tích: ...) ra khỏi OperatingRegion và gán vào DetailedPlantingArea
+            var regionWithoutArea = Regex.Replace(profile.OperatingRegion, @"\s*\(Diện tích:.*?\)", "").Trim();
+            profile.OperatingRegion = regionWithoutArea; 
+            profile.DetailedPlantingArea = regionWithoutArea;
+        }
 
         return profile;
     }
@@ -52,8 +60,8 @@ public class SupplierCommandService : ISupplierCommandService
             throw new ArgumentException("Mã số thuế này đã được đăng ký.");
         }
 
-        var fullAddress = BuildFullAddress(request.Address, request.Ward, request.District, request.Province);
-        var growingAreaInfo = BuildGrowingAreaInfo(request.Province, request.District, request.FarmingAreaHa);
+        var fullAddress = request.Address?.Trim() ?? string.Empty;
+        var growingAreaInfo = BuildGrowingAreaInfo(request.Province, request.District, request.Ward, request.FarmingAreaHa);
         var newSupplierCode = await _supplierRepository.GenerateSupplierCodeAsync(cancellationToken);
 
         var newSupplier = new Supplier
@@ -126,11 +134,11 @@ public class SupplierCommandService : ISupplierCommandService
         // 5. Cập nhật thông tin mới
         supplier.SupplierName = request.SupplierName.Trim();
         supplier.TaxCode = request.TaxCode.Trim();
-        supplier.Address = BuildFullAddress(request.Address, request.Ward, request.District, request.Province);
+        supplier.Address = request.Address?.Trim() ?? string.Empty;
         supplier.ContactPerson = BuildContactPerson(request.ContactPerson, request.LegalRepresentative);
         supplier.PhoneNumber = request.PhoneNumber?.Trim();
         supplier.Email = request.Email?.Trim();
-        supplier.GrowingArea = BuildGrowingAreaInfo(request.Province, request.District, effectiveFarmingArea);
+        supplier.GrowingArea = BuildGrowingAreaInfo(request.Province, request.District, request.Ward, effectiveFarmingArea);
         supplier.Note = request.SupplierType;
 
         var normalizedCertifications = request.GetNormalizedCertifications();
@@ -156,9 +164,9 @@ public class SupplierCommandService : ISupplierCommandService
         return string.Join(", ", parts);
     }
 
-    private static string BuildGrowingAreaInfo(string? province, string? district, decimal? area)
+    private static string BuildGrowingAreaInfo(string? province, string? district, string? ward, decimal? area)
     {
-        var location = string.Join(" - ", new[] { province?.Trim(), district?.Trim() }.Where(p => !string.IsNullOrWhiteSpace(p)));
+        var location = string.Join(" - ", new[] { province?.Trim(), district?.Trim(), ward?.Trim() }.Where(p => !string.IsNullOrWhiteSpace(p)));
         if (string.IsNullOrEmpty(location)) location = "Chưa xác định";
         return $"{location} (Diện tích: {area ?? 0} ha)";
     }
