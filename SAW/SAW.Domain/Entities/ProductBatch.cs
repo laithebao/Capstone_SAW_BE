@@ -7,9 +7,14 @@ public class ProductBatch
 
     public int SupplierId { get; set; }
     public int CropTypeId { get; set; }
+    
+    // THÊM MỚI
+    public int GrowingAreaId { get; set; }
 
     public string ProductName { get; set; } = default!;
-    public string Origin { get; set; } = default!;
+    
+    // ĐÃ XÓA: public string Origin { get; set; } = default!;
+    
     public DateOnly HarvestDate { get; set; }
 
     public decimal DeclaredQuantity { get; set; }
@@ -41,6 +46,10 @@ public class ProductBatch
     // Navigation
     public Supplier Supplier { get; set; } = default!;
     public CropType CropType { get; set; } = default!;
+    
+    // THÊM MỚI
+    public GrowingArea GrowingArea { get; set; } = default!;
+    
     public ICollection<BatchStatusHistory> StatusHistories { get; set; } = [];
     public ICollection<QcInspection> QcInspections { get; set; } = [];
     public ICollection<Inventory> Inventories { get; set; } = [];
