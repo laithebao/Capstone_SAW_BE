@@ -9,10 +9,10 @@ namespace SAW.Application.Features.Suppliers.DTOs;
 
 public class GetSupplierBatchesQueryRequest
 {
-    public string? Keyword { get; set; } // Tìm kiếm theo Mã lô hàng hoặc Tên sản phẩm
-    public string? Status { get; set; } // SUBMITTED, PENDING_QC, APPROVED, REJECTED...
-    public string? Origin { get; set; } // Lọc theo khu vực (Đắk Lắk, Gia Lai...)
-    public string? ConsumptionStatus { get; set; } // Lọc theo trạng thái tiêu thụ
+    public string? Keyword { get; set; } 
+    public string? Status { get; set; } 
+    public string? Province { get; set; } // Lọc theo Tỉnh
+    public string? ConsumptionStatus { get; set; } 
     public DateTime? FromDate { get; set; }
     public DateTime? ToDate { get; set; }
 
@@ -25,13 +25,12 @@ public class DeclareProductBatchRequest
     [Required(ErrorMessage = "Please fill in all required fields.")]
     public int CropTypeId { get; set; }
 
+    [Required(ErrorMessage = "Please select a growing area.")]
+    public int GrowingAreaId { get; set; } // Đã khớp với DB Entity
+
     [Required(ErrorMessage = "Please fill in all required fields.")]
     [MaxLength(200)]
     public string ProductName { get; set; } = string.Empty;
-
-    [Required(ErrorMessage = "Please fill in all required fields.")]
-    [MaxLength(250)]
-    public string Origin { get; set; } = string.Empty;
 
     [Required(ErrorMessage = "Please fill in all required fields.")]
     public DateOnly HarvestDate { get; set; }
@@ -41,7 +40,7 @@ public class DeclareProductBatchRequest
 
     [Required(ErrorMessage = "Please fill in all required fields.")]
     [MaxLength(20)]
-    public string Unit { get; set; } = "Tấn"; // Tấn, Kg, Bao...
+    public string Unit { get; set; } = "Tấn"; 
 
     public string? PackagingType { get; set; }
     public int? PackageCount { get; set; }
@@ -62,13 +61,12 @@ public class UpdateProductBatchRequest
     [Required(ErrorMessage = "Please fill in all required fields.")]
     public int CropTypeId { get; set; }
 
+    [Required(ErrorMessage = "Please select a growing area.")]
+    public int GrowingAreaId { get; set; }
+
     [Required(ErrorMessage = "Please fill in all required fields.")]
     [MaxLength(200)]
     public string ProductName { get; set; } = string.Empty;
-
-    [Required(ErrorMessage = "Please fill in all required fields.")]
-    [MaxLength(250)]
-    public string Origin { get; set; } = string.Empty;
 
     [Required(ErrorMessage = "Please fill in all required fields.")]
     public DateOnly HarvestDate { get; set; }

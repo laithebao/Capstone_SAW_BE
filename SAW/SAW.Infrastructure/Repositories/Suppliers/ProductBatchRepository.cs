@@ -58,6 +58,13 @@ public class ProductBatchRepository : IProductBatchRepository
             query = query.Where(b => b.BatchStatus == request.Status.Trim());
         }
 
+        // ĐÃ SỬA: Lọc theo Province thay vì GrowingAreaId
+        if (!string.IsNullOrWhiteSpace(request.Province))
+        {
+            var p = request.Province.Trim();
+            query = query.Where(b => b.GrowingArea != null && b.GrowingArea.Province == p);
+        }
+
         if (request.FromDate.HasValue)
         {
             query = query.Where(b => b.CreatedAt >= request.FromDate.Value);
@@ -72,6 +79,7 @@ public class ProductBatchRepository : IProductBatchRepository
         var totalCount = await query.CountAsync(cancellationToken);
 
         var items = await query
+            .Include(b => b.GrowingArea)
             .OrderByDescending(b => b.CreatedAt)
             .Skip((request.PageIndex - 1) * request.PageSize)
             .Take(request.PageSize)
@@ -80,6 +88,13 @@ public class ProductBatchRepository : IProductBatchRepository
                 BatchId = b.ProductBatchId,
                 BatchCode = b.BatchCode,
                 ProductName = b.ProductName,
+                
+                // ĐÃ SỬA: Map chi tiết 4 trường địa chỉ khớp với UI
+                AreaName = b.GrowingArea != null ? b.GrowingArea.AreaName : null,
+                Province = b.GrowingArea != null ? b.GrowingArea.Province : null,
+                District = b.GrowingArea != null ? b.GrowingArea.District : null,
+                Ward = b.GrowingArea != null ? b.GrowingArea.Ward : null,
+                
                 QuantityInTons = b.Unit.ToLower().Contains("kg") ? b.DeclaredQuantity / 1000m : b.DeclaredQuantity,
                 SubmittedDate = b.CreatedAt,
                 Status = b.BatchStatus,
@@ -201,6 +216,7 @@ public class ProductBatchRepository : IProductBatchRepository
     {
         return await _context.ProductBatches
             .Include(b => b.CropType)
+            .Include(b => b.GrowingArea)
             .Include(b => b.QcInspections)
             .FirstOrDefaultAsync(b => b.ProductBatchId == batchId, cancellationToken);
     }

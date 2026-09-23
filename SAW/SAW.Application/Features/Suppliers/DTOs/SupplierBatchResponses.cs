@@ -11,15 +11,21 @@ public class SupplierBatchItemResponse
     public long BatchId { get; set; }
     public string BatchCode { get; set; } = string.Empty;
     public string ProductName { get; set; } = string.Empty;
-    public string Origin { get; set; } = string.Empty; // Khu vực sản xuất / Nguồn gốc
-    public string? Note { get; set; } // Mô tả / Ghi chú lô hàng
+    
+    // Tách chi tiết Vùng trồng khớp với FE
+    public string? AreaName { get; set; } 
+    public string? Province { get; set; } 
+    public string? District { get; set; }
+    public string? Ward { get; set; }
+    
+    public string? Note { get; set; } 
     public decimal QuantityInTons { get; set; }
-    public DateTime SubmittedDate { get; set; } // Ngày tạo / Ngày nộp
-    public DateTime? CompletedDate { get; set; } // Ngày hoàn thành (CommittedAt từ GoodsReceipt)
+    public DateTime SubmittedDate { get; set; } 
+    public DateTime? CompletedDate { get; set; } 
     public string Status { get; set; } = string.Empty;
     public string StatusDisplayName { get; set; } = string.Empty;
-    public string ConsumptionStatus { get; set; } = "IN_STOCK"; // Trạng thái tiêu thụ (VD: IN_STOCK, CONSUMING, CONSUMED)
-    public string ConsumptionStatusDisplayName { get; set; } = "Tồn kho";
+    public string? ConsumptionStatus { get; set; } = "IN_STOCK"; 
+    public string? ConsumptionStatusDisplayName { get; set; } = "Tồn kho";
 }
 
 public class SupplierBatchSummaryResponse
@@ -52,28 +58,30 @@ public class SupplierBatchStatusResponse
     public string BatchCode { get; set; } = string.Empty;
     public string ProductName { get; set; } = string.Empty;
     public string CropTypeName { get; set; } = string.Empty;
-    public string Origin { get; set; } = string.Empty;
+    
+    // Tách chi tiết Vùng trồng
+    public string AreaName { get; set; } = string.Empty;
+    public string Province { get; set; } = string.Empty;
+    public string District { get; set; } = string.Empty;
+    public string Ward { get; set; } = string.Empty;
+    
     public DateOnly HarvestDate { get; set; }
 
-    // Khối lượng & Số lượng
     public decimal DeclaredQuantity { get; set; }
     public string Unit { get; set; } = string.Empty;
-    public decimal ReceivedQuantity { get; set; } // Tính từ GoodsReceipt (COMMITTED)
+    public decimal ReceivedQuantity { get; set; } 
     public decimal WeightInKg { get; set; }
 
-    // Trạng thái & Kết quả QC
     public string CurrentStatus { get; set; } = string.Empty;
     public string StatusDisplayName { get; set; } = string.Empty;
-    public string? QcResult { get; set; } // Passed / Failed / Pending
-    public string? QualityGrade { get; set; } // Hạng A, Hạng B,...
-    public string? RejectionReason { get; set; } // Lý do từ chối/thất bại QC
+    public string? QcResult { get; set; } 
+    public string? QualityGrade { get; set; } 
+    public string? RejectionReason { get; set; } 
     public string? WarehouseNote { get; set; }
 
-    // Ngày tháng liên quan
     public DateOnly? ExpectedDeliveryDate { get; set; }
     public DateTime CreatedAt { get; set; }
 
-    // Lịch sử tiến trình xử lý
     public List<BatchStatusHistoryDto> StatusHistory { get; set; } = new();
 }
 

@@ -15,7 +15,7 @@ public class ProductBatchConfiguration : IEntityTypeConfiguration<ProductBatch>
         builder.Property(x => x.SupplierId).HasColumnName("SupplierID").IsRequired();
         builder.Property(x => x.CropTypeId).HasColumnName("CropTypeID").IsRequired();
         builder.Property(x => x.ProductName).HasColumnName("ProductName").HasMaxLength(200).IsRequired();
-        builder.Property(x => x.Origin).HasColumnName("Origin").HasMaxLength(300).IsRequired();
+        builder.Property(x => x.GrowingAreaId).HasColumnName("GrowingAreaID").IsRequired();
         builder.Property(x => x.HarvestDate).HasColumnName("HarvestDate").IsRequired();
         builder.Property(x => x.DeclaredQuantity).HasColumnName("DeclaredQuantity").HasPrecision(18, 3);
         builder.Property(x => x.Unit).HasColumnName("Unit").HasMaxLength(20).IsRequired();
@@ -48,5 +48,10 @@ public class ProductBatchConfiguration : IEntityTypeConfiguration<ProductBatch>
                .WithMany(c => c.ProductBatches)
                .HasForeignKey(x => x.CropTypeId)
                .HasConstraintName("FK_PRODUCT_BATCH_CROP");
+
+        builder.HasOne(x => x.GrowingArea)
+               .WithMany(g => g.ProductBatches)
+               .HasForeignKey(x => x.GrowingAreaId)
+               .HasConstraintName("FK_PRODUCT_BATCH_GROWING_AREA");
     }
 }

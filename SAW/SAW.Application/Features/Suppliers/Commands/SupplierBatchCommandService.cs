@@ -92,8 +92,8 @@ public class SupplierBatchCommandService : ISupplierBatchCommandService
             BatchCode = batchCode,
             SupplierId = supplier.SupplierId,
             CropTypeId = request.CropTypeId,
+            GrowingAreaId = request.GrowingAreaId, // Đã đổi sang GrowingAreaId
             ProductName = request.ProductName.Trim(),
-            Origin = request.Origin.Trim(),
             HarvestDate = request.HarvestDate,
             DeclaredQuantity = request.DeclaredQuantity,
             Unit = request.Unit.Trim(),
@@ -214,8 +214,8 @@ public class SupplierBatchCommandService : ISupplierBatchCommandService
 
         // 9. Cập nhật thông tin Lô hàng
         existingBatch.CropTypeId = request.CropTypeId;
+        existingBatch.GrowingAreaId = request.GrowingAreaId; // Đã đổi sang GrowingAreaId
         existingBatch.ProductName = request.ProductName.Trim();
-        existingBatch.Origin = request.Origin.Trim();
         existingBatch.HarvestDate = request.HarvestDate;
         existingBatch.DeclaredQuantity = request.DeclaredQuantity;
         existingBatch.Unit = request.Unit.Trim();
@@ -298,8 +298,8 @@ public class SupplierBatchCommandService : ISupplierBatchCommandService
         var histories = await _productBatchRepository.GetBatchStatusHistoryAsync(batchId, cancellationToken);
         var historyDtos = histories.Select(h => new BatchStatusHistoryDto
         {
-            OldStatus = h.OldStatus,
-            NewStatus = h.NewStatus,
+            OldStatus = h.OldStatus ?? string.Empty, // Đã fix cảnh báo CS8601
+            NewStatus = h.NewStatus ?? string.Empty, // Đã fix cảnh báo CS8601
             ChangeReason = h.ChangeReason,
             ChangedAt = h.ChangedAt
         }).ToList();
@@ -311,7 +311,14 @@ public class SupplierBatchCommandService : ISupplierBatchCommandService
             BatchCode = batch.BatchCode,
             ProductName = batch.ProductName,
             CropTypeName = batch.CropType?.CropName ?? string.Empty,
-            Origin = batch.Origin,
+            
+            // XÓA: Origin = ...,
+            // THÊM MỚI: Tách chi tiết Vùng trồng khớp với FE
+            AreaName = batch.GrowingArea?.AreaName ?? string.Empty,
+            Province = batch.GrowingArea?.Province ?? string.Empty,
+            District = batch.GrowingArea?.District ?? string.Empty,
+            Ward = batch.GrowingArea?.Ward ?? string.Empty,
+            
             HarvestDate = batch.HarvestDate,
             DeclaredQuantity = batch.DeclaredQuantity,
             Unit = batch.Unit,
