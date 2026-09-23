@@ -28,7 +28,10 @@ public class SupplierRepository : ISupplierRepository
                           SupplierName = s.SupplierName,
                           TaxCode = s.TaxCode,
                           Address = s.Address,
-                          OperatingRegion = s.GrowingArea,
+                          OperatingRegion = (from sga in _context.Set<SupplierGrowingArea>()
+                                             join ga in _context.Set<GrowingArea>() on sga.GrowingAreaId equals ga.GrowingAreaId
+                                             where sga.SupplierId == s.SupplierId
+                                             select ga.AreaName).FirstOrDefault(),
                           ProfileStatus = s.ProfileStatus,
                           ContactPerson = s.ContactPerson,
                           PhoneNumber = s.PhoneNumber ?? a.PhoneNumber,
@@ -237,7 +240,6 @@ public class SupplierRepository : ISupplierRepository
                         supplier.SupplierName,
                         supplier.TaxCode,
                         supplier.Address,
-                        supplier.GrowingArea,
                         supplier.ProfileStatus
                     }),
                     Description = "Cập nhật thông tin Hồ sơ Nhà cung cấp.",
