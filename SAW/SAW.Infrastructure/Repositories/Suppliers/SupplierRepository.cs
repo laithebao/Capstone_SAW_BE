@@ -212,13 +212,33 @@ public class SupplierRepository : ISupplierRepository
             {
                 _context.Set<Supplier>().Update(supplier);
 
+                // 1. Xóa các liên kết vùng trồng cũ của Supplier
                 var oldGrowingAreas = await _context.Set<SupplierGrowingArea>()
                     .Where(sga => sga.SupplierId == supplier.SupplierId)
                     .ToListAsync(cancellationToken);
+
                 _context.Set<SupplierGrowingArea>().RemoveRange(oldGrowingAreas);
 
+                // 2. Thêm danh sách vùng trồng mới (ĐÃ FIX AN TOÀN KHÓA NGOẠI)
                 if (growingAreas != null && growingAreas.Any())
                 {
+                    // Lấy các ID đầu vào phân biệt
+                    var inputAreaIds = growingAreas.Select(ga => ga.GrowingAreaId).Distinct().ToList();
+
+                    // Query xuống DB để lấy danh sách GrowingAreaId THỰC SỰ TỒN TẠI trong bảng dbo.GROWING_AREA
+                    var existingAreaIds = await _context.Set<GrowingArea>()
+                        .Where(ga => inputAreaIds.Contains(ga.GrowingAreaId))
+                        .Select(ga => ga.GrowingAreaId)
+                        .ToListAsync(cancellationToken);
+
+                    // Bắt lỗi nếu có ID không hợp lệ gửi lên từ Client
+                    var invalidIds = inputAreaIds.Except(existingAreaIds).ToList();
+                    if (invalidIds.Any())
+                    {
+                        throw new ArgumentException($"Các Vùng trồng có ID [{string.Join(", ", invalidIds)}] không tồn tại trong cơ sở dữ liệu.");
+                    }
+
+                    // Nếu tất cả ID đều hợp lệ, thực hiện chèn dữ liệu
                     var newGrowingAreas = growingAreas.Select(ga => new SupplierGrowingArea
                     {
                         SupplierId = supplier.SupplierId,
@@ -226,6 +246,7 @@ public class SupplierRepository : ISupplierRepository
                         AreaInHectares = ga.AreaInHectares,
                         JoinedAt = DateTime.UtcNow
                     });
+
                     _context.Set<SupplierGrowingArea>().AddRange(newGrowingAreas);
                 }
 
