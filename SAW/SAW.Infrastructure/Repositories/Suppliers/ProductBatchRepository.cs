@@ -167,12 +167,14 @@ public class ProductBatchRepository : IProductBatchRepository
             using var transaction = await _context.Database.BeginTransactionAsync(cancellationToken);
             try
             {
+                // 1. Thêm trực tiếp history vào navigation collection của batch
+                batch.StatusHistories ??= new List<BatchStatusHistory>();
+                batch.StatusHistories.Add(initialHistory);
+
+                // 2. Thêm batch (EF Core sẽ tự chèn cả batch và history trong 1 câu lệnh)
                 _context.Set<ProductBatch>().Add(batch);
-                await _context.SaveChangesAsync(cancellationToken);
 
-                initialHistory.ProductBatchId = batch.ProductBatchId;
-                _context.Set<BatchStatusHistory>().Add(initialHistory);
-
+                // 3. Chỉ SaveChanges DUY NHẤT 1 LẦN
                 await _context.SaveChangesAsync(cancellationToken);
                 await transaction.CommitAsync(cancellationToken);
             }
@@ -199,15 +201,24 @@ public class ProductBatchRepository : IProductBatchRepository
             using var transaction = await _context.Database.BeginTransactionAsync(cancellationToken);
             try
             {
-                _context.ProductBatches.Update(batch);
-                _context.BatchStatusHistories.Add(statusHistory);
+                // 1. Gán ID chính xác
+                statusHistory.ProductBatchId = batch.ProductBatchId;
 
+                // 2. Thêm lịch sử mới vào DB
+                _context.Set<BatchStatusHistory>().Add(statusHistory);
+
+                // 3. Đánh dấu Batch là Modified (Chỉ update thông tin lô hàng)
+                _context.Entry(batch).State = EntityState.Modified;
+
+                // 4. Lưu tất cả thay đổi
                 await _context.SaveChangesAsync(cancellationToken);
                 await transaction.CommitAsync(cancellationToken);
             }
-            catch
+            catch (Exception ex)
             {
                 await transaction.RollbackAsync(cancellationToken);
+                // Ghi log lỗi ra console/logger để không bị chìm exception
+                Console.WriteLine($"[ERROR UpdateProductBatchAsync]: {ex.Message} | Inner: {ex.InnerException?.Message}");
                 throw;
             }
         });

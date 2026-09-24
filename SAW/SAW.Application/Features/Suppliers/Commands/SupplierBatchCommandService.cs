@@ -86,13 +86,15 @@ public class SupplierBatchCommandService : ISupplierBatchCommandService
         // 6. Sinh mã lô hàng tự động
         var batchCode = await _productBatchRepository.GenerateBatchCodeAsync(cancellationToken);
 
+        var nowUtc = DateTime.UtcNow;
+
         // 7. Tạo Entity ProductBatch
         var newBatch = new ProductBatch
         {
             BatchCode = batchCode,
             SupplierId = supplier.SupplierId,
             CropTypeId = request.CropTypeId,
-            GrowingAreaId = request.GrowingAreaId, // Đã đổi sang GrowingAreaId
+            GrowingAreaId = request.GrowingAreaId,
             ProductName = request.ProductName.Trim(),
             HarvestDate = request.HarvestDate,
             DeclaredQuantity = request.DeclaredQuantity,
@@ -107,9 +109,9 @@ public class SupplierBatchCommandService : ISupplierBatchCommandService
             ExpectedMaxHumidityPct = request.ExpectedMaxHumidityPct,
             ExpectedDeliveryDate = request.ExpectedDeliveryDate,
             ExpiryDate = request.ExpiryDate,
-            BatchStatus = "SUBMITTED", // Gán trạng thái ban đầu SUBMITTED
+            BatchStatus = "SUBMITTED",
             Note = request.Note,
-            CreatedAt = DateTime.UtcNow
+            CreatedAt = nowUtc
         };
 
         // 8. Tạo lịch sử trạng thái ban đầu (BatchStatusHistory)
@@ -119,7 +121,7 @@ public class SupplierBatchCommandService : ISupplierBatchCommandService
             NewStatus = "SUBMITTED",
             ChangedByAccountId = currentAccountId,
             ChangeReason = "Khai báo lô hàng mới từ phía Nhà cung cấp.",
-            ChangedAt = DateTime.UtcNow
+            ChangedAt = nowUtc
         };
 
         // 9. Lưu vào DB
@@ -212,9 +214,12 @@ public class SupplierBatchCommandService : ISupplierBatchCommandService
             throw new ArgumentException("Số lượng khai báo phải lớn hơn 0.");
         }
 
+        var currentStatus = existingBatch.BatchStatus;
+        var nowUtc = DateTime.UtcNow;
+
         // 9. Cập nhật thông tin Lô hàng
         existingBatch.CropTypeId = request.CropTypeId;
-        existingBatch.GrowingAreaId = request.GrowingAreaId; // Đã đổi sang GrowingAreaId
+        existingBatch.GrowingAreaId = request.GrowingAreaId;
         existingBatch.ProductName = request.ProductName.Trim();
         existingBatch.HarvestDate = request.HarvestDate;
         existingBatch.DeclaredQuantity = request.DeclaredQuantity;
@@ -230,16 +235,17 @@ public class SupplierBatchCommandService : ISupplierBatchCommandService
         existingBatch.ExpectedDeliveryDate = request.ExpectedDeliveryDate;
         existingBatch.ExpiryDate = request.ExpiryDate;
         existingBatch.Note = request.Note;
+        existingBatch.UpdatedAt = nowUtc;
 
         // 10. Ghi nhận lịch sử thay đổi (Audit History)
         var statusHistory = new BatchStatusHistory
         {
             ProductBatchId = existingBatch.ProductBatchId,
-            OldStatus = existingBatch.BatchStatus,
-            NewStatus = existingBatch.BatchStatus, // Vẫn là SUBMITTED
+            OldStatus = currentStatus,
+            NewStatus = currentStatus,
             ChangedByAccountId = currentAccountId,
             ChangeReason = "Cập nhật thông tin khai báo lô hàng.",
-            ChangedAt = DateTime.UtcNow
+            ChangedAt = nowUtc
         };
 
         // 11. Lưu xuống DB
@@ -274,7 +280,7 @@ public class SupplierBatchCommandService : ISupplierBatchCommandService
             throw new KeyNotFoundException("Không tìm thấy thông tin lô hàng.");
         }
 
-        // 3. Kiểm tra quyền truy cập (Chỉ cho phép xem lô hàng của chính mình)
+        // 3. Kiểm tra quyền truy cập
         if (batch.SupplierId != supplier.SupplierId)
         {
             throw new UnauthorizedAccessException("Bạn không có quyền xem thông tin lô hàng này.");
@@ -283,7 +289,7 @@ public class SupplierBatchCommandService : ISupplierBatchCommandService
         // 4. Tính tổng ReceivedQuantity từ các GoodsReceipt có trạng thái COMMITTED
         decimal receivedQuantity = await _productBatchRepository.GetCommittedReceivedQuantityAsync(batchId, cancellationToken);
 
-        // 5. Lấy kết quả QC & Quality Grade gần nhất (nếu có)
+        // 5. Lấy kết quả QC & Quality Grade gần nhất
         var latestQc = batch.QcInspections?
             .OrderByDescending(q => q.CompletedAt ?? q.StartedAt)
             .FirstOrDefault();
@@ -298,10 +304,13 @@ public class SupplierBatchCommandService : ISupplierBatchCommandService
         var histories = await _productBatchRepository.GetBatchStatusHistoryAsync(batchId, cancellationToken);
         var historyDtos = histories.Select(h => new BatchStatusHistoryDto
         {
-            OldStatus = h.OldStatus ?? string.Empty, // Đã fix cảnh báo CS8601
-            NewStatus = h.NewStatus ?? string.Empty, // Đã fix cảnh báo CS8601
+            OldStatus = h.OldStatus ?? string.Empty,
+            NewStatus = h.NewStatus ?? string.Empty,
             ChangeReason = h.ChangeReason,
-            ChangedAt = h.ChangedAt
+            // Fix triệt để lệch múi giờ: Đưa về UtcKind an toàn
+            ChangedAt = h.ChangedAt.Kind == DateTimeKind.Utc
+                ? h.ChangedAt
+                : DateTime.SpecifyKind(DateTime.SpecifyKind(h.ChangedAt, DateTimeKind.Unspecified), DateTimeKind.Utc)
         }).ToList();
 
         // 7. Map dữ liệu trả về Response
@@ -311,14 +320,10 @@ public class SupplierBatchCommandService : ISupplierBatchCommandService
             BatchCode = batch.BatchCode,
             ProductName = batch.ProductName,
             CropTypeName = batch.CropType?.CropName ?? string.Empty,
-            
-            // XÓA: Origin = ...,
-            // THÊM MỚI: Tách chi tiết Vùng trồng khớp với FE
             AreaName = batch.GrowingArea?.AreaName ?? string.Empty,
             Province = batch.GrowingArea?.Province ?? string.Empty,
             District = batch.GrowingArea?.District ?? string.Empty,
             Ward = batch.GrowingArea?.Ward ?? string.Empty,
-            
             HarvestDate = batch.HarvestDate,
             DeclaredQuantity = batch.DeclaredQuantity,
             Unit = batch.Unit,
@@ -364,11 +369,9 @@ public class SupplierBatchCommandService : ISupplierBatchCommandService
             throw new InvalidOperationException("Lô hàng này không thể hủy ở trạng thái hiện tại.");
         }
 
-        // 5. Cập nhật trạng thái lô hàng thành CANCELLED
         var oldStatus = existingBatch.BatchStatus;
         existingBatch.BatchStatus = "CANCELLED";
 
-        // 6. Ghi nhận lịch sử thay đổi trạng thái
         var statusHistory = new BatchStatusHistory
         {
             ProductBatchId = existingBatch.ProductBatchId,
@@ -379,7 +382,6 @@ public class SupplierBatchCommandService : ISupplierBatchCommandService
             ChangedAt = DateTime.UtcNow
         };
 
-        // 7. Lưu xuống DB qua Repository
         await _productBatchRepository.UpdateProductBatchAsync(existingBatch, statusHistory, cancellationToken);
     }
 
