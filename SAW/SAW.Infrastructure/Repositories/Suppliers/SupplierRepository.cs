@@ -29,17 +29,17 @@ public class SupplierRepository : ISupplierRepository
                           TaxCode = s.TaxCode,
                           Address = s.Address,
                           GrowingAreas = (from sga in _context.Set<SupplierGrowingArea>()
-                                             join ga in _context.Set<GrowingArea>() on sga.GrowingAreaId equals ga.GrowingAreaId
-                                             where sga.SupplierId == s.SupplierId
-                                             select new SupplierGrowingAreaDto
-                                             {
-                                                 GrowingAreaId = ga.GrowingAreaId,
-                                                 AreaName = ga.AreaName,
-                                                 Province = ga.Province,
-                                                 District = ga.District,
-                                                 Ward = ga.Ward,
-                                                 AreaInHectares = sga.AreaInHectares
-                                             }).ToList(),
+                                          join ga in _context.Set<GrowingArea>() on sga.GrowingAreaId equals ga.GrowingAreaId
+                                          where sga.SupplierId == s.SupplierId
+                                          select new SupplierGrowingAreaDto
+                                          {
+                                              GrowingAreaId = ga.GrowingAreaId,
+                                              AreaName = ga.AreaName,
+                                              Province = ga.Province,
+                                              District = ga.District,
+                                              Ward = ga.Ward,
+                                              AreaInHectares = sga.AreaInHectares
+                                          }).ToList(),
                           ProfileStatus = s.ProfileStatus,
                           ContactPerson = s.ContactPerson,
                           PhoneNumber = s.PhoneNumber ?? a.PhoneNumber,
@@ -123,8 +123,21 @@ public class SupplierRepository : ISupplierRepository
                 _context.Set<Supplier>().Add(supplier);
                 await _context.SaveChangesAsync(cancellationToken);
 
+                // 1. VALIDATE & THÊM VÙNG TRỒNG (ĐÃ CỦNG CỐ AN TOÀN)
                 if (growingAreas != null && growingAreas.Any())
                 {
+                    var inputAreaIds = growingAreas.Select(ga => ga.GrowingAreaId).Distinct().ToList();
+                    var existingAreaIds = await _context.Set<GrowingArea>()
+                        .Where(ga => inputAreaIds.Contains(ga.GrowingAreaId))
+                        .Select(ga => ga.GrowingAreaId)
+                        .ToListAsync(cancellationToken);
+
+                    var invalidIds = inputAreaIds.Except(existingAreaIds).ToList();
+                    if (invalidIds.Any())
+                    {
+                        throw new ArgumentException($"Các Vùng trồng có ID [{string.Join(", ", invalidIds)}] không tồn tại trong cơ sở dữ liệu.");
+                    }
+
                     var supplierGrowingAreas = growingAreas.Select(ga => new SupplierGrowingArea
                     {
                         SupplierId = supplier.SupplierId,
@@ -222,23 +235,19 @@ public class SupplierRepository : ISupplierRepository
                 // 2. Thêm danh sách vùng trồng mới (ĐÃ FIX AN TOÀN KHÓA NGOẠI)
                 if (growingAreas != null && growingAreas.Any())
                 {
-                    // Lấy các ID đầu vào phân biệt
                     var inputAreaIds = growingAreas.Select(ga => ga.GrowingAreaId).Distinct().ToList();
 
-                    // Query xuống DB để lấy danh sách GrowingAreaId THỰC SỰ TỒN TẠI trong bảng dbo.GROWING_AREA
                     var existingAreaIds = await _context.Set<GrowingArea>()
                         .Where(ga => inputAreaIds.Contains(ga.GrowingAreaId))
                         .Select(ga => ga.GrowingAreaId)
                         .ToListAsync(cancellationToken);
 
-                    // Bắt lỗi nếu có ID không hợp lệ gửi lên từ Client
                     var invalidIds = inputAreaIds.Except(existingAreaIds).ToList();
                     if (invalidIds.Any())
                     {
                         throw new ArgumentException($"Các Vùng trồng có ID [{string.Join(", ", invalidIds)}] không tồn tại trong cơ sở dữ liệu.");
                     }
 
-                    // Nếu tất cả ID đều hợp lệ, thực hiện chèn dữ liệu
                     var newGrowingAreas = growingAreas.Select(ga => new SupplierGrowingArea
                     {
                         SupplierId = supplier.SupplierId,
