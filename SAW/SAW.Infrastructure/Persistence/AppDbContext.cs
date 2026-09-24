@@ -97,30 +97,6 @@ public class AppDbContext : DbContext
     {
         // Auto-discover all IEntityTypeConfiguration<T> in this assembly
         modelBuilder.ApplyConfigurationsFromAssembly(typeof(AppDbContext).Assembly);
-
-        // Cấu hình Khóa chính kép cho SupplierGrowingArea
-        modelBuilder.Entity<SupplierGrowingArea>()
-            .HasKey(sga => new { sga.SupplierId, sga.GrowingAreaId });
-
-        // Cấu hình quan hệ Many-to-Many
-        modelBuilder.Entity<SupplierGrowingArea>()
-            .HasOne(sga => sga.Supplier)
-            .WithMany(s => s.SupplierGrowingAreas)
-            .HasForeignKey(sga => sga.SupplierId)
-            .OnDelete(DeleteBehavior.Restrict);
-
-        modelBuilder.Entity<SupplierGrowingArea>()
-            .HasOne(sga => sga.GrowingArea)
-            .WithMany(ga => ga.SupplierGrowingAreas)
-            .HasForeignKey(sga => sga.GrowingAreaId)
-            .OnDelete(DeleteBehavior.Restrict);
-
-        // Cấu hình quan hệ One-to-Many ProductBatch -> GrowingArea
-        modelBuilder.Entity<ProductBatch>()
-            .HasOne(pb => pb.GrowingArea)
-            .WithMany(ga => ga.ProductBatches)
-            .HasForeignKey(pb => pb.GrowingAreaId)
-            .OnDelete(DeleteBehavior.Restrict);
     }
 
     public override int SaveChanges(bool acceptAllChangesOnSuccess)

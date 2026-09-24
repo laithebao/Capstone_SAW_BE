@@ -327,6 +327,8 @@ namespace SAW.Infrastructure.Migrations
                     b.HasIndex("ProductBatchId");
 
                     b.ToTable("BATCH_STATUS_HISTORY", (string)null);
+
+                    b.HasAnnotation("SqlServer:UseSqlOutputClause", false);
                 });
 
             modelBuilder.Entity("SAW.Domain.Entities.CriterionGradeRule", b =>
@@ -573,6 +575,8 @@ namespace SAW.Infrastructure.Migrations
                         .HasDatabaseName("UQ_DISTRIBUTOR_TaxCode");
 
                     b.ToTable("DISTRIBUTOR", (string)null);
+
+                    b.HasAnnotation("SqlServer:UseSqlOutputClause", false);
                 });
 
             modelBuilder.Entity("SAW.Domain.Entities.EmailVerificationToken", b =>
@@ -888,6 +892,42 @@ namespace SAW.Infrastructure.Migrations
                     b.ToTable("GOODS_RECEIPT", (string)null);
                 });
 
+            modelBuilder.Entity("SAW.Domain.Entities.GrowingArea", b =>
+                {
+                    b.Property<int>("GrowingAreaId")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("int");
+
+                    SqlServerPropertyBuilderExtensions.UseIdentityColumn(b.Property<int>("GrowingAreaId"));
+
+                    b.Property<string>("AreaName")
+                        .IsRequired()
+                        .HasColumnType("nvarchar(max)");
+
+                    b.Property<string>("Description")
+                        .HasColumnType("nvarchar(max)");
+
+                    b.Property<string>("District")
+                        .IsRequired()
+                        .HasColumnType("nvarchar(max)");
+
+                    b.Property<string>("Province")
+                        .IsRequired()
+                        .HasColumnType("nvarchar(max)");
+
+                    b.Property<string>("Region")
+                        .IsRequired()
+                        .HasColumnType("nvarchar(max)");
+
+                    b.Property<string>("Ward")
+                        .IsRequired()
+                        .HasColumnType("nvarchar(max)");
+
+                    b.HasKey("GrowingAreaId");
+
+                    b.ToTable("GROWING_AREA", (string)null);
+                });
+
             modelBuilder.Entity("SAW.Domain.Entities.InspectionCriterion", b =>
                 {
                     b.Property<long>("InspectionCriterionId")
@@ -1107,7 +1147,12 @@ namespace SAW.Infrastructure.Migrations
                         .IsUnique()
                         .HasDatabaseName("UQ_INSPECTION_STANDARD_VERSION");
 
-                    b.ToTable("INSPECTION_STANDARD_VERSION", (string)null);
+                    b.ToTable("INSPECTION_STANDARD_VERSION", null, t =>
+                        {
+                            t.HasTrigger("TR_INSPECTION_STANDARD_VERSION_PUBLISH_ENFORCE");
+                        });
+
+                    b.HasAnnotation("SqlServer:UseSqlOutputClause", false);
                 });
 
             modelBuilder.Entity("SAW.Domain.Entities.Inventory", b =>
@@ -1706,6 +1751,10 @@ namespace SAW.Infrastructure.Migrations
                         .HasColumnType("date")
                         .HasColumnName("ExpiryDate");
 
+                    b.Property<int>("GrowingAreaId")
+                        .HasColumnType("int")
+                        .HasColumnName("GrowingAreaID");
+
                     b.Property<DateOnly>("HarvestDate")
                         .HasColumnType("date")
                         .HasColumnName("HarvestDate");
@@ -1714,12 +1763,6 @@ namespace SAW.Infrastructure.Migrations
                         .HasMaxLength(1000)
                         .HasColumnType("nvarchar(1000)")
                         .HasColumnName("Note");
-
-                    b.Property<string>("Origin")
-                        .IsRequired()
-                        .HasMaxLength(300)
-                        .HasColumnType("nvarchar(300)")
-                        .HasColumnName("Origin");
 
                     b.Property<int?>("PackageCount")
                         .HasColumnType("int")
@@ -1782,9 +1825,13 @@ namespace SAW.Infrastructure.Migrations
 
                     b.HasIndex("CropTypeId");
 
+                    b.HasIndex("GrowingAreaId");
+
                     b.HasIndex("SupplierId");
 
                     b.ToTable("PRODUCT_BATCH", (string)null);
+
+                    b.HasAnnotation("SqlServer:UseSqlOutputClause", false);
                 });
 
             modelBuilder.Entity("SAW.Domain.Entities.PurchaseOrder", b =>
@@ -2545,11 +2592,6 @@ namespace SAW.Infrastructure.Migrations
                         .HasColumnType("nvarchar(255)")
                         .HasColumnName("Email");
 
-                    b.Property<string>("GrowingArea")
-                        .HasMaxLength(300)
-                        .HasColumnType("nvarchar(300)")
-                        .HasColumnName("GrowingArea");
-
                     b.Property<string>("Note")
                         .HasMaxLength(1000)
                         .HasColumnType("nvarchar(1000)")
@@ -2605,6 +2647,8 @@ namespace SAW.Infrastructure.Migrations
                         .HasDatabaseName("UQ_SUPPLIER_TaxCode");
 
                     b.ToTable("SUPPLIER", (string)null);
+
+                    b.HasAnnotation("SqlServer:UseSqlOutputClause", false);
                 });
 
             modelBuilder.Entity("SAW.Domain.Entities.SupplierCertification", b =>
@@ -2689,6 +2733,30 @@ namespace SAW.Infrastructure.Migrations
                     b.HasIndex("CropTypeId");
 
                     b.ToTable("SUPPLIER_CROP_TYPE", (string)null);
+                });
+
+            modelBuilder.Entity("SAW.Domain.Entities.SupplierGrowingArea", b =>
+                {
+                    b.Property<int>("SupplierId")
+                        .HasColumnType("int");
+
+                    b.Property<int>("GrowingAreaId")
+                        .HasColumnType("int");
+
+                    b.Property<double?>("AreaInHectares")
+                        .HasColumnType("float");
+
+                    b.Property<DateTime>("JoinedAt")
+                        .HasColumnType("datetime2");
+
+                    b.Property<string>("SupplierSpecificNote")
+                        .HasColumnType("nvarchar(max)");
+
+                    b.HasKey("SupplierId", "GrowingAreaId");
+
+                    b.HasIndex("GrowingAreaId");
+
+                    b.ToTable("SUPPLIER_GROWING_AREA", (string)null);
                 });
 
             modelBuilder.Entity("SAW.Domain.Entities.WarehouseLocation", b =>
@@ -3255,6 +3323,13 @@ namespace SAW.Infrastructure.Migrations
                         .IsRequired()
                         .HasConstraintName("FK_PRODUCT_BATCH_CROP");
 
+                    b.HasOne("SAW.Domain.Entities.GrowingArea", "GrowingArea")
+                        .WithMany("ProductBatches")
+                        .HasForeignKey("GrowingAreaId")
+                        .OnDelete(DeleteBehavior.Restrict)
+                        .IsRequired()
+                        .HasConstraintName("FK_PRODUCT_BATCH_GROWING_AREA");
+
                     b.HasOne("SAW.Domain.Entities.Supplier", "Supplier")
                         .WithMany("ProductBatches")
                         .HasForeignKey("SupplierId")
@@ -3263,6 +3338,8 @@ namespace SAW.Infrastructure.Migrations
                         .HasConstraintName("FK_PRODUCT_BATCH_SUPPLIER");
 
                     b.Navigation("CropType");
+
+                    b.Navigation("GrowingArea");
 
                     b.Navigation("Supplier");
                 });
@@ -3506,6 +3583,25 @@ namespace SAW.Infrastructure.Migrations
                     b.Navigation("Supplier");
                 });
 
+            modelBuilder.Entity("SAW.Domain.Entities.SupplierGrowingArea", b =>
+                {
+                    b.HasOne("SAW.Domain.Entities.GrowingArea", "GrowingArea")
+                        .WithMany("SupplierGrowingAreas")
+                        .HasForeignKey("GrowingAreaId")
+                        .OnDelete(DeleteBehavior.Restrict)
+                        .IsRequired();
+
+                    b.HasOne("SAW.Domain.Entities.Supplier", "Supplier")
+                        .WithMany("SupplierGrowingAreas")
+                        .HasForeignKey("SupplierId")
+                        .OnDelete(DeleteBehavior.Restrict)
+                        .IsRequired();
+
+                    b.Navigation("GrowingArea");
+
+                    b.Navigation("Supplier");
+                });
+
             modelBuilder.Entity("SAW.Domain.Entities.Account", b =>
                 {
                     b.Navigation("AccountPermissions");
@@ -3544,6 +3640,13 @@ namespace SAW.Infrastructure.Migrations
             modelBuilder.Entity("SAW.Domain.Entities.GoodsIssue", b =>
                 {
                     b.Navigation("GoodsIssueDetails");
+                });
+
+            modelBuilder.Entity("SAW.Domain.Entities.GrowingArea", b =>
+                {
+                    b.Navigation("ProductBatches");
+
+                    b.Navigation("SupplierGrowingAreas");
                 });
 
             modelBuilder.Entity("SAW.Domain.Entities.InspectionCriterion", b =>
@@ -3650,6 +3753,8 @@ namespace SAW.Infrastructure.Migrations
                     b.Navigation("SupplierCertifications");
 
                     b.Navigation("SupplierCropTypes");
+
+                    b.Navigation("SupplierGrowingAreas");
                 });
 
             modelBuilder.Entity("SAW.Domain.Entities.WarehouseLocation", b =>
