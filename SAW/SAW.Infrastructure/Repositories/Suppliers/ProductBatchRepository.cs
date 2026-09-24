@@ -88,7 +88,8 @@ public class ProductBatchRepository : IProductBatchRepository
                 BatchId = b.ProductBatchId,
                 BatchCode = b.BatchCode,
                 ProductName = b.ProductName,
-                
+                Note = b.Note,
+
                 // ĐÃ SỬA: Map chi tiết 4 trường địa chỉ khớp với UI
                 AreaName = b.GrowingArea != null ? b.GrowingArea.AreaName : null,
                 Province = b.GrowingArea != null ? b.GrowingArea.Province : null,
