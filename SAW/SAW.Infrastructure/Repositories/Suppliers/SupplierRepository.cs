@@ -28,10 +28,18 @@ public class SupplierRepository : ISupplierRepository
                           SupplierName = s.SupplierName,
                           TaxCode = s.TaxCode,
                           Address = s.Address,
-                          OperatingRegion = (from sga in _context.Set<SupplierGrowingArea>()
+                          GrowingAreas = (from sga in _context.Set<SupplierGrowingArea>()
                                              join ga in _context.Set<GrowingArea>() on sga.GrowingAreaId equals ga.GrowingAreaId
                                              where sga.SupplierId == s.SupplierId
-                                             select ga.AreaName).FirstOrDefault(),
+                                             select new SupplierGrowingAreaDto
+                                             {
+                                                 GrowingAreaId = ga.GrowingAreaId,
+                                                 AreaName = ga.AreaName,
+                                                 Province = ga.Province,
+                                                 District = ga.District,
+                                                 Ward = ga.Ward,
+                                                 AreaInHectares = sga.AreaInHectares
+                                             }).ToList(),
                           ProfileStatus = s.ProfileStatus,
                           ContactPerson = s.ContactPerson,
                           PhoneNumber = s.PhoneNumber ?? a.PhoneNumber,
@@ -103,7 +111,7 @@ public class SupplierRepository : ISupplierRepository
         return $"{prefix}{Guid.NewGuid().ToString()[..3].ToUpper()}";
     }
 
-    public async Task AddSupplierAsync(Supplier supplier, List<int> cropTypeIds, List<SupplierCertificationInputDto> certifications, CancellationToken cancellationToken = default)
+    public async Task AddSupplierAsync(Supplier supplier, List<int> cropTypeIds, List<SupplierCertificationInputDto> certifications, List<SupplierGrowingAreaInputDto> growingAreas, CancellationToken cancellationToken = default)
     {
         var strategy = _context.Database.CreateExecutionStrategy();
 
@@ -114,6 +122,18 @@ public class SupplierRepository : ISupplierRepository
             {
                 _context.Set<Supplier>().Add(supplier);
                 await _context.SaveChangesAsync(cancellationToken);
+
+                if (growingAreas != null && growingAreas.Any())
+                {
+                    var supplierGrowingAreas = growingAreas.Select(ga => new SupplierGrowingArea
+                    {
+                        SupplierId = supplier.SupplierId,
+                        GrowingAreaId = ga.GrowingAreaId,
+                        AreaInHectares = ga.AreaInHectares,
+                        JoinedAt = DateTime.UtcNow
+                    });
+                    _context.Set<SupplierGrowingArea>().AddRange(supplierGrowingAreas);
+                }
 
                 if (cropTypeIds != null && cropTypeIds.Any())
                 {
@@ -181,7 +201,7 @@ public class SupplierRepository : ISupplierRepository
         return existsInSupplier || existsInDistributor;
     }
 
-    public async Task UpdateSupplierAsync(Supplier supplier, List<int> cropTypeIds, List<SupplierCertificationInputDto> certifications, string oldValuesJson, CancellationToken cancellationToken = default)
+    public async Task UpdateSupplierAsync(Supplier supplier, List<int> cropTypeIds, List<SupplierCertificationInputDto> certifications, List<SupplierGrowingAreaInputDto> growingAreas, string oldValuesJson, CancellationToken cancellationToken = default)
     {
         var strategy = _context.Database.CreateExecutionStrategy();
 
@@ -191,6 +211,23 @@ public class SupplierRepository : ISupplierRepository
             try
             {
                 _context.Set<Supplier>().Update(supplier);
+
+                var oldGrowingAreas = await _context.Set<SupplierGrowingArea>()
+                    .Where(sga => sga.SupplierId == supplier.SupplierId)
+                    .ToListAsync(cancellationToken);
+                _context.Set<SupplierGrowingArea>().RemoveRange(oldGrowingAreas);
+
+                if (growingAreas != null && growingAreas.Any())
+                {
+                    var newGrowingAreas = growingAreas.Select(ga => new SupplierGrowingArea
+                    {
+                        SupplierId = supplier.SupplierId,
+                        GrowingAreaId = ga.GrowingAreaId,
+                        AreaInHectares = ga.AreaInHectares,
+                        JoinedAt = DateTime.UtcNow
+                    });
+                    _context.Set<SupplierGrowingArea>().AddRange(newGrowingAreas);
+                }
 
                 var oldCropTypes = await _context.Set<SupplierCropType>()
                     .Where(sct => sct.SupplierId == supplier.SupplierId)

@@ -1,4 +1,4 @@
-﻿using System.ComponentModel.DataAnnotations;
+using System.ComponentModel.DataAnnotations;
 using System.Text.Json;
 using System.Text.Json.Serialization;
 
@@ -8,6 +8,12 @@ public class SupplierCertificationInputDto
 {
     public string CertificationName { get; set; } = string.Empty;
     public string? EvidenceFileUrl { get; set; }
+}
+
+public class SupplierGrowingAreaInputDto
+{
+    public int GrowingAreaId { get; set; }
+    public double? AreaInHectares { get; set; }
 }
 
 public class DeclareSupplierProfileRequest
@@ -40,15 +46,12 @@ public class DeclareSupplierProfileRequest
     public string? Email { get; set; }
 
     public string? LogoUrl { get; set; }
-    public string? Province { get; set; }
-    public string? District { get; set; }
-    public string? Ward { get; set; }
 
     [Required(ErrorMessage = "Địa chỉ không được để trống.")]
     [MaxLength(500)]
     public string Address { get; set; } = string.Empty;
 
-    public decimal? FarmingAreaHa { get; set; }
+    public List<SupplierGrowingAreaInputDto> GrowingAreas { get; set; } = new();
 
     [MinLength(1, ErrorMessage = "Vui lòng chọn ít nhất một danh mục nông sản cung cấp.")]
     public List<int> CropTypeIds { get; set; } = new();

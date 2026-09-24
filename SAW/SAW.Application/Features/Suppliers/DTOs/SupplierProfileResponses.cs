@@ -1,4 +1,4 @@
-﻿using System;
+using System;
 using System.Collections.Generic;
 using System.Linq;
 using System.Text;
@@ -16,7 +16,7 @@ public class SupplierProfileResponse
     public string SupplierName { get; set; } = string.Empty;
     public string TaxCode { get; set; } = string.Empty;
     public string Address { get; set; } = string.Empty;
-    public string? OperatingRegion { get; set; } // Vùng hoạt động / GrowingArea
+    public List<SupplierGrowingAreaDto> GrowingAreas { get; set; } = new(); // Vùng trồng / GrowingAreas
     public string ProfileStatus { get; set; } = string.Empty;
     public string? LogoUrl { get; set; }
     public string? SupplierType { get; set; } // Lấy từ Note hoặc phân loại mở rộng
@@ -29,12 +29,21 @@ public class SupplierProfileResponse
 
     // Thông tin sản xuất
     public string? DetailedPlantingArea { get; set; }
-    public decimal? FarmingAreaHa { get; set; }
     public List<SupplierCropTypeDto> CropTypes { get; set; } = new();
     public List<SupplierCertificationDto> Certifications { get; set; } = new();
 
     // File đính kèm
     public List<SupplierDocumentDto> Documents { get; set; } = new();
+}
+
+public class SupplierGrowingAreaDto
+{
+    public int GrowingAreaId { get; set; }
+    public string AreaName { get; set; } = string.Empty;
+    public string Province { get; set; } = string.Empty;
+    public string District { get; set; } = string.Empty;
+    public string Ward { get; set; } = string.Empty;
+    public double? AreaInHectares { get; set; }
 }
 
 public class SupplierCropTypeDto

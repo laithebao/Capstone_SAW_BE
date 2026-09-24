@@ -71,12 +71,11 @@ public class SupplierCommandService : ISupplierCommandService
 
         var normalizedCertifications = request.GetNormalizedCertifications();
 
-        // LƯU Ý: Bạn cần truyền thêm danh sách ID vùng trồng (GrowingAreaIds) vào hàm AddSupplierAsync
-        // để Repository thêm dữ liệu vào bảng trung gian SupplierGrowingArea.
         await _supplierRepository.AddSupplierAsync(
             newSupplier,
             request.CropTypeIds ?? new List<int>(),
             normalizedCertifications,
+            request.GrowingAreas ?? new List<SupplierGrowingAreaInputDto>(),
             cancellationToken
         );
 
@@ -118,11 +117,11 @@ public class SupplierCommandService : ISupplierCommandService
 
         var normalizedCertifications = request.GetNormalizedCertifications();
 
-        // LƯU Ý: Việc cập nhật vùng trồng vào bảng trung gian nên thực hiện trong Repository
         await _supplierRepository.UpdateSupplierAsync(
             supplier,
             request.CropTypeIds ?? new List<int>(),
             normalizedCertifications,
+            request.GrowingAreas ?? new List<SupplierGrowingAreaInputDto>(),
             oldValuesJson,
             cancellationToken
         );
