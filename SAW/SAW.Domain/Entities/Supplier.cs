@@ -13,7 +13,6 @@ public class Supplier
     public string? PhoneNumber { get; set; }
     public string? Email { get; set; }
     public string Address { get; set; } = default!;
-    public string? GrowingArea { get; set; }
     public string? Note { get; set; }
 
     public string ProfileStatus { get; set; } = "ACTIVE";
@@ -26,4 +25,7 @@ public class Supplier
     public ICollection<SupplierCropType> SupplierCropTypes { get; set; } = [];
     public ICollection<SupplierCertification> SupplierCertifications { get; set; } = [];
     public ICollection<ProductBatch> ProductBatches { get; set; } = [];
+    
+    // LIÊN KẾT MỚI
+    public ICollection<SupplierGrowingArea> SupplierGrowingAreas { get; set; } = [];
 }

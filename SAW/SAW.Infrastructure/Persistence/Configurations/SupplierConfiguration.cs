@@ -19,7 +19,6 @@ public class SupplierConfiguration : IEntityTypeConfiguration<Supplier>
         builder.Property(x => x.PhoneNumber).HasColumnName("PhoneNumber").HasMaxLength(30);
         builder.Property(x => x.Email).HasColumnName("Email").HasMaxLength(255);
         builder.Property(x => x.Address).HasColumnName("Address").HasMaxLength(500).IsRequired();
-        builder.Property(x => x.GrowingArea).HasColumnName("GrowingArea").HasMaxLength(300);
         builder.Property(x => x.Note).HasColumnName("Note").HasMaxLength(1000);
         builder.Property(x => x.ProfileStatus).HasColumnName("ProfileStatus").HasMaxLength(20).HasDefaultValue("ACTIVE");
         builder.Property(x => x.CreatedAt).HasColumnName("CreatedAt").HasDefaultValueSql("SYSDATETIME()");

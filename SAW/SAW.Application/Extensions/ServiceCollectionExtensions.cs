@@ -7,6 +7,7 @@ using SAW.Application.Features.UserAccess;
 using SAW.Application.Features.AdminDashboard;
 using SAW.Application.Features.InspectionStandards;
 using SAW.Application.Features.AuditLogs;
+using SAW.Application.Features.Suppliers.Commands;
 
 namespace SAW.Application.Extensions;
 
@@ -25,6 +26,9 @@ public static class ServiceCollectionExtensions
         services.AddScoped<IAdminDashboardService, AdminDashboardService>();
         services.AddScoped<IInspectionStandardService, InspectionStandardService>();
         services.AddScoped<IAuditLogService, AuditLogService>();
+
+        services.AddScoped<ISupplierCommandService, SupplierCommandService>();
+        services.AddScoped<ISupplierBatchCommandService, SupplierBatchCommandService>();
 
         return services;
     }

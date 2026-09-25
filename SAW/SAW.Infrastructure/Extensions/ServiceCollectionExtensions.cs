@@ -11,6 +11,8 @@ using SAW.Application.Features.UserAccess;
 using SAW.Application.Features.AdminDashboard;
 using SAW.Application.Features.InspectionStandards;
 using SAW.Application.Features.AuditLogs;
+using SAW.Application.Repositories.Suppliers;
+using SAW.Infrastructure.Repositories.Suppliers;
 
 namespace SAW.Infrastructure.Extensions;
 
@@ -49,6 +51,9 @@ public static class ServiceCollectionExtensions
         else
             services.AddSingleton<IEmailSender, SmtpEmailSender>();
         services.AddSingleton<IGoogleIdentityService, GoogleIdentityService>();
+
+        services.AddScoped<ISupplierRepository, SupplierRepository>();
+        services.AddScoped<IProductBatchRepository, ProductBatchRepository>();
 
         return services;
     }

@@ -43,6 +43,10 @@ public class AppDbContext : DbContext
     public DbSet<SupplierCropType> SupplierCropTypes => Set<SupplierCropType>();
     public DbSet<SupplierCertification> SupplierCertifications => Set<SupplierCertification>();
 
+    // 03b. Growing Areas
+    public DbSet<GrowingArea> GrowingAreas => Set<GrowingArea>();
+    public DbSet<SupplierGrowingArea> SupplierGrowingAreas => Set<SupplierGrowingArea>();
+
     // 04. Inspection Standards
     public DbSet<InspectionStandardSet> InspectionStandardSets => Set<InspectionStandardSet>();
     public DbSet<InspectionStandardVersion> InspectionStandardVersions => Set<InspectionStandardVersion>();
