@@ -51,7 +51,7 @@ public sealed class ProductBatchService(IProductBatchQueryRepository repository)
             batch.CropTypeId, batch.CropType.CropName, batch.CropType.CategoryName,
             batch.DeclaredQuantity, batch.Unit, batch.HarvestDate,
             batch.GrowingArea.AreaName, batch.ExpectedDeliveryDate, batch.ExpiryDate,
-            batch.CreatedAt, batch.UpdatedAt, batch.BatchStatus);
+            batch.CreatedAt, batch.UpdatedAt, batch.BatchStatus, batch.Note);
     }
 
     private static ProductBatchListItem MapList(ProductBatch batch) => new(

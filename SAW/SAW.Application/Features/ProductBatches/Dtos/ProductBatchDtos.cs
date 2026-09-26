@@ -20,7 +20,7 @@ public sealed record ProductBatchDetail(
     int CropTypeId, string CropTypeName, string CategoryName,
     decimal Quantity, string Unit, DateOnly HarvestDate,
     string GrowingAreaName, DateOnly? ExpectedDeliveryDate, DateOnly? ExpiryDate,
-    DateTime CreatedAt, DateTime? UpdatedAt, string BatchStatus);
+    DateTime CreatedAt, DateTime? UpdatedAt, string BatchStatus, string? Note);
 
 public sealed record ProductBatchFilterOption(int Id, string Name);
 
