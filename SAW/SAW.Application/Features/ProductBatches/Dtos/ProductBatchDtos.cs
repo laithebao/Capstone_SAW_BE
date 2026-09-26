@@ -18,7 +18,8 @@ public sealed record ProductBatchDetail(
     long Id, string BatchCode, string ProductName,
     int SupplierId, string SupplierName,
     int CropTypeId, string CropTypeName, string CategoryName,
-    decimal Quantity, string Unit, DateOnly HarvestDate,
+    decimal Quantity, string Unit, decimal WeightInKg,
+    decimal? VerifiedQuantity, decimal? VerifiedWeightInKg, DateOnly HarvestDate,
     string GrowingAreaName, DateOnly? ExpectedDeliveryDate, DateOnly? ExpiryDate,
     DateTime CreatedAt, DateTime? UpdatedAt, string BatchStatus, string? Note);
 
