@@ -20,6 +20,8 @@ public class ProductBatchConfiguration : IEntityTypeConfiguration<ProductBatch>
         builder.Property(x => x.DeclaredQuantity).HasColumnName("DeclaredQuantity").HasPrecision(18, 3);
         builder.Property(x => x.Unit).HasColumnName("Unit").HasMaxLength(20).IsRequired();
         builder.Property(x => x.WeightInKg).HasColumnName("WeightInKg").HasPrecision(18, 3);
+        builder.Property(x => x.VerifiedQuantity).HasColumnName("VerifiedQuantity").HasPrecision(18, 3);
+        builder.Property(x => x.VerifiedWeightInKg).HasColumnName("VerifiedWeightInKg").HasPrecision(18, 3);
         builder.Property(x => x.PackagingType).HasColumnName("PackagingType").HasMaxLength(100);
         builder.Property(x => x.PackageCount).HasColumnName("PackageCount");
         builder.Property(x => x.PackageUnitWeightKg).HasColumnName("PackageUnitWeightKg").HasPrecision(18, 3);
