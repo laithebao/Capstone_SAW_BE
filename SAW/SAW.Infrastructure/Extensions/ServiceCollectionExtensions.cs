@@ -54,6 +54,7 @@ public static class ServiceCollectionExtensions
 
         services.AddScoped<ISupplierRepository, SupplierRepository>();
         services.AddScoped<IProductBatchRepository, ProductBatchRepository>();
+        services.AddScoped<IProductBatchQueryRepository, ProductBatchQueryRepository>();
 
         return services;
     }
