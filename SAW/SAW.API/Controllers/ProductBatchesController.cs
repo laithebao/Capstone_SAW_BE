@@ -36,7 +36,23 @@ public sealed class ProductBatchesController(IProductBatchService service) : Con
         CancellationToken cancellationToken) =>
         Ok(ApiResponse<VerifyProductBatchResponse>.Success(
             await service.VerifyAsync(id, supplierId, ActorId(), request, cancellationToken),
-            "Product batch created successfully."));
+            "Product batch confirmed successfully."));
+
+    [HttpPut("{id:long}/reject")]
+    public async Task<ActionResult<ApiResponse<RejectProductBatchResponse>>> Reject(
+        long id, [FromQuery] int supplierId, [FromBody] RejectProductBatchRequest request,
+        CancellationToken cancellationToken) =>
+        Ok(ApiResponse<RejectProductBatchResponse>.Success(
+            await service.RejectAsync(id, supplierId, ActorId(), request, cancellationToken),
+            "Product batch rejected."));
+
+    [HttpPut("{id:long}/receiving-details")]
+    public async Task<ActionResult<ApiResponse<ProductBatchDetail>>> UpdateReceivingDetails(
+        long id, [FromBody] UpdateProductBatchReceivingRequest request,
+        CancellationToken cancellationToken) =>
+        Ok(ApiResponse<ProductBatchDetail>.Success(
+            await service.UpdateAsync(id, ActorId(), request, cancellationToken),
+            "Receiving details updated."));
 
     [HttpGet]
     public async Task<ActionResult<ApiResponse<ProductBatchListResponse>>> Search(

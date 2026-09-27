@@ -13,6 +13,7 @@ public sealed class ProductBatchService(
 {
     private const string Submitted = "SUBMITTED";
     private const string PendingQc = "PENDING_QC";
+    private const string Rejected = "REJECTED";
     private const string NoLongerAvailable = "Product batch is no longer available for warehouse verification.";
     private static readonly HashSet<string> AllowedSorts =
         ["createdAtDesc", "createdAtAsc", "updatedAtDesc", "updatedAtAsc"];
@@ -57,7 +58,13 @@ public sealed class ProductBatchService(
             batch.DeclaredQuantity, batch.Unit, batch.WeightInKg,
             batch.VerifiedQuantity, batch.VerifiedWeightInKg, batch.HarvestDate,
             batch.GrowingArea.AreaName, batch.ExpectedDeliveryDate, batch.ExpiryDate,
-            batch.CreatedAt, batch.UpdatedAt, batch.BatchStatus, batch.Note);
+            batch.CreatedAt, batch.UpdatedAt, batch.BatchStatus, batch.Note,
+            batch.PackagingType, batch.PackageCount, batch.PackageUnitWeightKg,
+            batch.VerifiedPackagingType, batch.VerifiedPackageCount,
+            batch.VerifiedPackageUnitWeightKg, batch.ReceivingNote, batch.RejectionReason,
+            batch.ExpectedMinTempC, batch.ExpectedMaxTempC,
+            batch.ExpectedMinHumidityPct, batch.ExpectedMaxHumidityPct,
+            batch.ShelfLifeDaysSnapshot);
     }
 
     public Task<IReadOnlyList<ProductBatchFilterOption>> GetSubmittedSuppliersAsync(CancellationToken cancellationToken) =>
@@ -91,12 +98,9 @@ public sealed class ProductBatchService(
         CancellationToken cancellationToken)
     {
         if (accountId <= 0) throw new UnauthorizedAccessException();
-        if (request.VerifiedQuantity <= 0 || request.VerifiedWeightInKg <= 0 ||
-            request.VerifiedQuantity > 999999999999999.999m ||
-            request.VerifiedWeightInKg > 999999999999999.999m ||
-            decimal.Round(request.VerifiedQuantity, 3) != request.VerifiedQuantity ||
-            decimal.Round(request.VerifiedWeightInKg, 3) != request.VerifiedWeightInKg)
-            throw new BadRequestException("Verified quantity and weight must be positive with at most three decimal places.");
+        var details = ValidateReceiving(request.VerifiedQuantity, request.VerifiedWeightInKg,
+            request.VerifiedPackagingType, request.VerifiedPackageCount,
+            request.VerifiedPackageUnitWeightKg, request.ReceivingNote);
 
         var batch = await GetAvailableBatchAsync(id, supplierId, cancellationToken);
         var now = DateTime.UtcNow;
@@ -110,11 +114,85 @@ public sealed class ProductBatchService(
             ChangedAt = now
         };
         if (!await verificationRepository.ConfirmAsync(id, supplierId,
-                request.VerifiedQuantity, request.VerifiedWeightInKg, history, cancellationToken))
+                details, history, cancellationToken))
             throw new ConflictException(NoLongerAvailable);
 
         return new VerifyProductBatchResponse(
             id, batch.BatchCode, request.VerifiedQuantity, request.VerifiedWeightInKg, PendingQc);
+    }
+
+    public async Task<RejectProductBatchResponse> RejectAsync(
+        long id, int supplierId, int accountId, RejectProductBatchRequest request,
+        CancellationToken cancellationToken)
+    {
+        if (accountId <= 0) throw new UnauthorizedAccessException();
+        var reason = request.Reason?.Trim();
+        if (string.IsNullOrWhiteSpace(reason) || reason.Length > 1000)
+            throw new BadRequestException("Rejection reason is required and must not exceed 1000 characters.");
+
+        var batch = await GetAvailableBatchAsync(id, supplierId, cancellationToken);
+        var history = new BatchStatusHistory
+        {
+            ProductBatchId = id,
+            OldStatus = Submitted,
+            NewStatus = Rejected,
+            ChangedByAccountId = accountId,
+            ChangeReason = reason,
+            ChangedAt = DateTime.UtcNow
+        };
+        if (!await verificationRepository.RejectAsync(id, supplierId, reason, history, cancellationToken))
+            throw new ConflictException(NoLongerAvailable);
+
+        return new RejectProductBatchResponse(id, batch.BatchCode, Rejected, reason);
+    }
+
+    public async Task<ProductBatchDetail> UpdateAsync(
+        long id, int accountId, UpdateProductBatchReceivingRequest request,
+        CancellationToken cancellationToken)
+    {
+        if (accountId <= 0) throw new UnauthorizedAccessException();
+        if (id <= 0) throw new BadRequestException("Invalid batch ID.");
+        if (request.ExpectedCreatedAt == default)
+            throw new BadRequestException("The batch version is required. Reload the batch and try again.");
+        var details = ValidateReceiving(request.VerifiedQuantity, request.VerifiedWeightInKg,
+            request.VerifiedPackagingType, request.VerifiedPackageCount,
+            request.VerifiedPackageUnitWeightKg, request.ReceivingNote);
+        var batch = await repository.GetWarehouseByIdAsync(id, cancellationToken)
+            ?? throw new NotFoundException("Product batch not found.");
+        if (batch.BatchStatus != PendingQc)
+            throw new ConflictException("Only batches awaiting QC can be updated.");
+        if (batch.CreatedAt != request.ExpectedCreatedAt)
+            throw new ConflictException("Batch information changed. Reload the batch and try again.");
+
+        // TODO: Khi tích hợp module QC, bổ sung khóa UC28 ngay khi QC tiếp nhận/bắt đầu
+        // kiểm định và bảo vệ thao tác đồng thời.
+        if (!await verificationRepository.UpdateAsync(id, request.ExpectedUpdatedAt,
+                request.ExpectedCreatedAt, accountId, details, cancellationToken))
+            throw new ConflictException("Batch information changed. Reload the batch and try again.");
+
+        return await GetAsync(id, cancellationToken);
+    }
+
+    private static VerifiedReceivingDetails ValidateReceiving(
+        decimal quantity, decimal weight, string? packagingType, int? packageCount,
+        decimal? packageUnitWeightKg, string? receivingNote)
+    {
+        static bool ValidDecimal(decimal value) =>
+            value > 0 && value <= 999999999999999.999m && decimal.Round(value, 3) == value;
+
+        if (!ValidDecimal(quantity) || !ValidDecimal(weight))
+            throw new BadRequestException("Verified quantity and weight must be positive with at most three decimal places.");
+        if (packageCount is <= 0)
+            throw new BadRequestException("Verified package count must be greater than zero.");
+        if (packageUnitWeightKg.HasValue && !ValidDecimal(packageUnitWeightKg.Value))
+            throw new BadRequestException("Verified package unit weight must be positive with at most three decimal places.");
+
+        packagingType = string.IsNullOrWhiteSpace(packagingType) ? null : packagingType.Trim();
+        receivingNote = string.IsNullOrWhiteSpace(receivingNote) ? null : receivingNote.Trim();
+        if (packagingType?.Length > 100 || receivingNote?.Length > 1000)
+            throw new BadRequestException("Verified packaging type or receiving note is too long.");
+        return new VerifiedReceivingDetails(quantity, weight, packagingType,
+            packageCount, packageUnitWeightKg, receivingNote);
     }
 
     private async Task<ProductBatch> GetAvailableBatchAsync(

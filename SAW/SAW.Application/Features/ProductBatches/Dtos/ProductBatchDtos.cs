@@ -21,7 +21,13 @@ public sealed record ProductBatchDetail(
     decimal Quantity, string Unit, decimal WeightInKg,
     decimal? VerifiedQuantity, decimal? VerifiedWeightInKg, DateOnly HarvestDate,
     string GrowingAreaName, DateOnly? ExpectedDeliveryDate, DateOnly? ExpiryDate,
-    DateTime CreatedAt, DateTime? UpdatedAt, string BatchStatus, string? Note);
+    DateTime CreatedAt, DateTime? UpdatedAt, string BatchStatus, string? Note,
+    string? PackagingType, int? PackageCount, decimal? PackageUnitWeightKg,
+    string? VerifiedPackagingType, int? VerifiedPackageCount,
+    decimal? VerifiedPackageUnitWeightKg, string? ReceivingNote, string? RejectionReason,
+    decimal? ExpectedMinTempC, decimal? ExpectedMaxTempC,
+    decimal? ExpectedMinHumidityPct, decimal? ExpectedMaxHumidityPct,
+    int? ShelfLifeDaysSnapshot);
 
 public sealed record ProductBatchFilterOption(int Id, string Name);
 

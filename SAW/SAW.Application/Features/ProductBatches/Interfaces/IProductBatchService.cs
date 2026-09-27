@@ -12,4 +12,8 @@ public interface IProductBatchService
     Task<SubmittedDeclarationDetail> GetSubmittedDetailAsync(long id, int supplierId, CancellationToken cancellationToken);
     Task<VerifyProductBatchResponse> VerifyAsync(long id, int supplierId, int accountId,
         VerifyProductBatchRequest request, CancellationToken cancellationToken);
+    Task<RejectProductBatchResponse> RejectAsync(long id, int supplierId, int accountId,
+        RejectProductBatchRequest request, CancellationToken cancellationToken);
+    Task<ProductBatchDetail> UpdateAsync(long id, int accountId,
+        UpdateProductBatchReceivingRequest request, CancellationToken cancellationToken);
 }

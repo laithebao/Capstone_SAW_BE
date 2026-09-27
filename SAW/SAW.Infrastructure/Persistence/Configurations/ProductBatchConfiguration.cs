@@ -8,7 +8,14 @@ public class ProductBatchConfiguration : IEntityTypeConfiguration<ProductBatch>
 {
     public void Configure(EntityTypeBuilder<ProductBatch> builder)
     {
-        builder.ToTable("PRODUCT_BATCH", tb => tb.UseSqlOutputClause(false));
+        builder.ToTable("PRODUCT_BATCH", tb =>
+        {
+            tb.UseSqlOutputClause(false);
+            tb.HasCheckConstraint("CK_PRODUCT_BATCH_VerifiedPackageCount",
+                "[VerifiedPackageCount] IS NULL OR [VerifiedPackageCount] > 0");
+            tb.HasCheckConstraint("CK_PRODUCT_BATCH_VerifiedPackageUnitWeightKg",
+                "[VerifiedPackageUnitWeightKg] IS NULL OR [VerifiedPackageUnitWeightKg] > 0");
+        });
         builder.HasKey(x => x.ProductBatchId);
         builder.Property(x => x.ProductBatchId).HasColumnName("ProductBatchID").UseIdentityColumn();
         builder.Property(x => x.BatchCode).HasColumnName("BatchCode").HasMaxLength(50).IsRequired();
@@ -25,6 +32,10 @@ public class ProductBatchConfiguration : IEntityTypeConfiguration<ProductBatch>
         builder.Property(x => x.PackagingType).HasColumnName("PackagingType").HasMaxLength(100);
         builder.Property(x => x.PackageCount).HasColumnName("PackageCount");
         builder.Property(x => x.PackageUnitWeightKg).HasColumnName("PackageUnitWeightKg").HasPrecision(18, 3);
+        builder.Property(x => x.VerifiedPackagingType).HasColumnName("VerifiedPackagingType").HasMaxLength(100).IsRequired(false);
+        builder.Property(x => x.VerifiedPackageCount).HasColumnName("VerifiedPackageCount").IsRequired(false);
+        builder.Property(x => x.VerifiedPackageUnitWeightKg).HasColumnName("VerifiedPackageUnitWeightKg").HasPrecision(18, 3).IsRequired(false);
+        builder.Property(x => x.ReceivingNote).HasColumnName("ReceivingNote").HasMaxLength(1000).IsRequired(false);
         builder.Property(x => x.ExpectedMinTempC).HasColumnName("ExpectedMinTempC").HasPrecision(6, 2);
         builder.Property(x => x.ExpectedMaxTempC).HasColumnName("ExpectedMaxTempC").HasPrecision(6, 2);
         builder.Property(x => x.ExpectedMinHumidityPct).HasColumnName("ExpectedMinHumidityPct").HasPrecision(6, 2);
