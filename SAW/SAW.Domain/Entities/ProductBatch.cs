@@ -20,10 +20,16 @@ public class ProductBatch
     public decimal DeclaredQuantity { get; set; }
     public string Unit { get; set; } = default!;
     public decimal WeightInKg { get; set; }
+    public decimal? VerifiedQuantity { get; set; }
+    public decimal? VerifiedWeightInKg { get; set; }
 
     public string? PackagingType { get; set; }
     public int? PackageCount { get; set; }
     public decimal? PackageUnitWeightKg { get; set; }
+    public string? VerifiedPackagingType { get; set; }
+    public int? VerifiedPackageCount { get; set; }
+    public decimal? VerifiedPackageUnitWeightKg { get; set; }
+    public string? ReceivingNote { get; set; }
 
     public decimal? ExpectedMinTempC { get; set; }
     public decimal? ExpectedMaxTempC { get; set; }

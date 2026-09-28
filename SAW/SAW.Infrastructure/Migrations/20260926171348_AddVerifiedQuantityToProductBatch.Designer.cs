@@ -3,6 +3,7 @@ using System;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Infrastructure;
 using Microsoft.EntityFrameworkCore.Metadata;
+using Microsoft.EntityFrameworkCore.Migrations;
 using Microsoft.EntityFrameworkCore.Storage.ValueConversion;
 using SAW.Infrastructure.Persistence;
 
@@ -11,9 +12,11 @@ using SAW.Infrastructure.Persistence;
 namespace SAW.Infrastructure.Migrations
 {
     [DbContext(typeof(AppDbContext))]
-    partial class AppDbContextModelSnapshot : ModelSnapshot
+    [Migration("20260926171348_AddVerifiedQuantityToProductBatch")]
+    partial class AddVerifiedQuantityToProductBatch
     {
-        protected override void BuildModel(ModelBuilder modelBuilder)
+        /// <inheritdoc />
+        protected override void BuildTargetModel(ModelBuilder modelBuilder)
         {
 #pragma warning disable 612, 618
             modelBuilder
@@ -1795,11 +1798,6 @@ namespace SAW.Infrastructure.Migrations
                         .HasColumnType("nvarchar(5)")
                         .HasColumnName("QualityGrade");
 
-                    b.Property<string>("ReceivingNote")
-                        .HasMaxLength(1000)
-                        .HasColumnType("nvarchar(1000)")
-                        .HasColumnName("ReceivingNote");
-
                     b.Property<string>("RejectionReason")
                         .HasMaxLength(1000)
                         .HasColumnType("nvarchar(1000)")
@@ -1822,20 +1820,6 @@ namespace SAW.Infrastructure.Migrations
                     b.Property<DateTime?>("UpdatedAt")
                         .HasColumnType("datetime2")
                         .HasColumnName("UpdatedAt");
-
-                    b.Property<int?>("VerifiedPackageCount")
-                        .HasColumnType("int")
-                        .HasColumnName("VerifiedPackageCount");
-
-                    b.Property<decimal?>("VerifiedPackageUnitWeightKg")
-                        .HasPrecision(18, 3)
-                        .HasColumnType("decimal(18,3)")
-                        .HasColumnName("VerifiedPackageUnitWeightKg");
-
-                    b.Property<string>("VerifiedPackagingType")
-                        .HasMaxLength(100)
-                        .HasColumnType("nvarchar(100)")
-                        .HasColumnName("VerifiedPackagingType");
 
                     b.Property<decimal?>("VerifiedQuantity")
                         .HasPrecision(18, 3)
@@ -1864,12 +1848,7 @@ namespace SAW.Infrastructure.Migrations
 
                     b.HasIndex("SupplierId");
 
-                    b.ToTable("PRODUCT_BATCH", null, t =>
-                        {
-                            t.HasCheckConstraint("CK_PRODUCT_BATCH_VerifiedPackageCount", "[VerifiedPackageCount] IS NULL OR [VerifiedPackageCount] > 0");
-
-                            t.HasCheckConstraint("CK_PRODUCT_BATCH_VerifiedPackageUnitWeightKg", "[VerifiedPackageUnitWeightKg] IS NULL OR [VerifiedPackageUnitWeightKg] > 0");
-                        });
+                    b.ToTable("PRODUCT_BATCH", (string)null);
 
                     b.HasAnnotation("SqlServer:UseSqlOutputClause", false);
                 });

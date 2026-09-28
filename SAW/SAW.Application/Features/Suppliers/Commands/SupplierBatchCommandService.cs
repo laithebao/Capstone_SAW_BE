@@ -296,9 +296,11 @@ public class SupplierBatchCommandService : ISupplierBatchCommandService
 
         string? qcResult = latestQc?.QcResult;
         string? qualityGrade = latestQc?.QualityGrade;
-        string? rejectionReason = (latestQc?.QcResult == "FAILED" || latestQc?.QcResult == "REJECTED")
-            ? latestQc.Note
-            : null;
+        string? rejectionReason = batch.BatchStatus == "REJECTED" && !string.IsNullOrWhiteSpace(batch.RejectionReason)
+            ? batch.RejectionReason
+            : (latestQc?.QcResult == "FAILED" || latestQc?.QcResult == "REJECTED")
+                ? latestQc.Note
+                : null;
 
         // 6. Lấy Lịch sử trạng thái xử lý
         var histories = await _productBatchRepository.GetBatchStatusHistoryAsync(batchId, cancellationToken);
