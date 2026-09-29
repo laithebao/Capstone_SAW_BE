@@ -74,3 +74,19 @@ public sealed record InspectionStandardVersionCreatedDto(
     int SetId, string SetCode, string SetName,
     long VersionId, int VersionNo, string Status,
     DateOnly? EffectiveFrom, int CriterionCount);
+
+/// <summary>
+/// DTO nhẹ dùng cho dropdown chọn phiên bản tiêu chuẩn khi tạo phiếu kiểm định.
+/// Chứa VersionId thực sự (không phải SetId).
+/// </summary>
+public sealed record PublishedVersionOption(
+    long VersionId,          // ID thực sự của INSPECTION_STANDARD_VERSION
+    int SetId,
+    string SetCode,
+    string SetName,
+    int CropTypeId,          // dùng để FE lọc theo lô hàng
+    string CropTypeName,
+    int VersionNo,
+    DateOnly? EffectiveFrom,
+    int CriterionCount
+);

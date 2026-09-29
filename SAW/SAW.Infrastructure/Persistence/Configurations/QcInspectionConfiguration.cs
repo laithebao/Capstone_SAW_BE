@@ -8,7 +8,10 @@ public class QcInspectionConfiguration : IEntityTypeConfiguration<QcInspection>
 {
     public void Configure(EntityTypeBuilder<QcInspection> builder)
     {
-        builder.ToTable("QC_INSPECTION");
+        builder.ToTable("QC_INSPECTION", tb =>
+        {
+            tb.HasTrigger("TR_QC_INSPECTION_COMPLETED_IMMUTABLE");
+        });
         builder.HasKey(x => x.QcInspectionId);
         builder.Property(x => x.QcInspectionId).HasColumnName("QCInspectionID").UseIdentityColumn();
         builder.Property(x => x.InspectionCode).HasColumnName("InspectionCode").HasMaxLength(50).IsRequired();

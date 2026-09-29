@@ -16,6 +16,11 @@ public sealed class InspectionStandardService(IInspectionStandardRepository repo
     public Task<IReadOnlyList<InspectionStandardListItem>> ListAsync(string? search, CancellationToken token)
         => repository.ListAsync(search?.Trim(), token);
 
+    // ── Published Versions (dùng khi tạo phiếu kiểm định) ────────────────────
+    public Task<IReadOnlyList<PublishedVersionOption>> GetPublishedVersionsAsync(
+        int? cropTypeId, CancellationToken token)
+        => repository.GetPublishedVersionsAsync(cropTypeId, token);
+
     // ── Get Detail ────────────────────────────────────────────────────────────
     public async Task<InspectionStandardDetailDto> GetByIdAsync(int id, CancellationToken token)
     {
