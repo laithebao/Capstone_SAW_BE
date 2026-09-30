@@ -12,12 +12,16 @@ public interface IQcInspectionService
     Task UpdateSamplingRatioAsync(
         long inspectionId,
         UpdateSamplingRatioRequest request,
+        int actorAccountId,
+        string actorRole,
         CancellationToken ct);
 
     // UC22 – Input Sensory Inspection Result
     Task SaveSensoryResultAsync(
         long inspectionId,
         SaveSensoryResultRequest request,
+        int actorAccountId,
+        string actorRole,
         CancellationToken ct);
 
     // UC23 – Upload Quality Evidence Image (metadata saved after Cloudinary upload)
@@ -25,24 +29,31 @@ public interface IQcInspectionService
         long inspectionId,
         UploadQualityImageRequest request,
         int actorAccountId,
+        string actorRole,
         CancellationToken ct);
 
     // UC23 – Delete Image
     Task DeleteImageAsync(
         long inspectionId,
         long imageId,
+        int actorAccountId,
+        string actorRole,
         CancellationToken ct);
 
     // UC24 – Input Laboratory Test Result
     Task SaveLabResultAsync(
         long inspectionId,
         SaveLabResultRequest request,
+        int actorAccountId,
+        string actorRole,
         CancellationToken ct);
 
     // UC22b – Input Environment Criteria Result
     Task SaveEnvironmentCriteriaAsync(
         long inspectionId,
         SaveEnvironmentCriteriaRequest request,
+        int actorAccountId,
+        string actorRole,
         CancellationToken ct);
 
     // UC25 – Input Actual Storage Temperature
@@ -54,6 +65,8 @@ public interface IQcInspectionService
     // UC52 + UC53 – Compare with Rule Set & Classify Grade (combined finalize)
     Task<FinalizeQcResultDto> FinalizeAsync(
         long inspectionId,
+        int actorAccountId,
+        string actorRole,
         CancellationToken ct);
 
     // UC54 – Reject Batch with Serious Defect (manual override)
@@ -73,5 +86,7 @@ public interface IQcInspectionService
     // Detail view
     Task<QcInspectionDetailDto> GetByIdAsync(
         long inspectionId,
+        int actorAccountId,
+        string actorRole,
         CancellationToken ct);
 }

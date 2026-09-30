@@ -24,7 +24,7 @@ public sealed class QcInspectionsController(IQcInspectionService service) : Cont
     // =========================================================================
 
     [HttpPost]
-    [Authorize(Roles = "QC_STAFF,WAREHOUSE_MANAGER,ADMINISTRATOR")]
+    [Authorize(Roles = "QC_STAFF,ADMINISTRATOR")]
     public async Task<ActionResult<ApiResponse<QcInspectionDto>>> Create(
         [FromBody] CreateQcInspectionRequest request,
         CancellationToken ct)
@@ -41,13 +41,13 @@ public sealed class QcInspectionsController(IQcInspectionService service) : Cont
     // =========================================================================
 
     [HttpPatch("{id:long}/sampling-ratio")]
-    [Authorize(Roles = "QC_STAFF,WAREHOUSE_MANAGER,ADMINISTRATOR")]
+    [Authorize(Roles = "QC_STAFF,ADMINISTRATOR")]
     public async Task<ActionResult<ApiResponse<object>>> UpdateSamplingRatio(
         long id,
         [FromBody] UpdateSamplingRatioRequest request,
         CancellationToken ct)
     {
-        await service.UpdateSamplingRatioAsync(id, request, ct);
+        await service.UpdateSamplingRatioAsync(id, request, ActorId, ActorRole, ct);
         return Ok(ApiResponse<object>.Success(new { }, "Cập nhật tỷ lệ lấy mẫu thành công."));
     }
 
@@ -57,13 +57,13 @@ public sealed class QcInspectionsController(IQcInspectionService service) : Cont
     // =========================================================================
 
     [HttpPut("{id:long}/sensory-result")]
-    [Authorize(Roles = "QC_STAFF,WAREHOUSE_MANAGER,ADMINISTRATOR")]
+    [Authorize(Roles = "QC_STAFF,ADMINISTRATOR")]
     public async Task<ActionResult<ApiResponse<object>>> SaveSensoryResult(
         long id,
         [FromBody] SaveSensoryResultRequest request,
         CancellationToken ct)
     {
-        await service.SaveSensoryResultAsync(id, request, ct);
+        await service.SaveSensoryResultAsync(id, request, ActorId, ActorRole, ct);
         return Ok(ApiResponse<object>.Success(new { }, "Lưu kết quả cảm quan thành công."));
     }
 
@@ -74,26 +74,26 @@ public sealed class QcInspectionsController(IQcInspectionService service) : Cont
     // =========================================================================
 
     [HttpPost("{id:long}/images")]
-    [Authorize(Roles = "QC_STAFF,WAREHOUSE_MANAGER,ADMINISTRATOR")]
+    [Authorize(Roles = "QC_STAFF,ADMINISTRATOR")]
     public async Task<ActionResult<ApiResponse<QualityImageDto>>> AddImage(
         long id,
         [FromBody] UploadQualityImageRequest request,
         CancellationToken ct)
     {
-        var result = await service.AddImageAsync(id, request, ActorId, ct);
+        var result = await service.AddImageAsync(id, request, ActorId, ActorRole, ct);
         return Created(
             $"api/qc-inspections/{id}/images/{result.Id}",
             ApiResponse<QualityImageDto>.Created(result, "Tải ảnh bằng chứng thành công."));
     }
 
     [HttpDelete("{id:long}/images/{imageId:long}")]
-    [Authorize(Roles = "QC_STAFF,WAREHOUSE_MANAGER,ADMINISTRATOR")]
+    [Authorize(Roles = "QC_STAFF,ADMINISTRATOR")]
     public async Task<ActionResult<ApiResponse<object>>> DeleteImage(
         long id,
         long imageId,
         CancellationToken ct)
     {
-        await service.DeleteImageAsync(id, imageId, ct);
+        await service.DeleteImageAsync(id, imageId, ActorId, ActorRole, ct);
         return Ok(ApiResponse<object>.Success(new { }, "Xóa ảnh bằng chứng thành công."));
     }
 
@@ -103,13 +103,13 @@ public sealed class QcInspectionsController(IQcInspectionService service) : Cont
     // =========================================================================
 
     [HttpPut("{id:long}/lab-result")]
-    [Authorize(Roles = "QC_STAFF,WAREHOUSE_MANAGER,ADMINISTRATOR")]
+    [Authorize(Roles = "QC_STAFF,ADMINISTRATOR")]
     public async Task<ActionResult<ApiResponse<object>>> SaveLabResult(
         long id,
         [FromBody] SaveLabResultRequest request,
         CancellationToken ct)
     {
-        await service.SaveLabResultAsync(id, request, ct);
+        await service.SaveLabResultAsync(id, request, ActorId, ActorRole, ct);
         return Ok(ApiResponse<object>.Success(new { }, "Lưu kết quả kiểm nghiệm phòng lab thành công."));
     }
 
@@ -119,13 +119,13 @@ public sealed class QcInspectionsController(IQcInspectionService service) : Cont
     // =========================================================================
 
     [HttpPut("{id:long}/environment-criteria")]
-    [Authorize(Roles = "QC_STAFF,WAREHOUSE_MANAGER,ADMINISTRATOR")]
+    [Authorize(Roles = "QC_STAFF,ADMINISTRATOR")]
     public async Task<ActionResult<ApiResponse<object>>> SaveEnvironmentCriteria(
         long id,
         [FromBody] SaveEnvironmentCriteriaRequest request,
         CancellationToken ct)
     {
-        await service.SaveEnvironmentCriteriaAsync(id, request, ct);
+        await service.SaveEnvironmentCriteriaAsync(id, request, ActorId, ActorRole, ct);
         return Ok(ApiResponse<object>.Success(new { }, "Lưu kết quả tiêu chí môi trường thành công."));
     }
 
@@ -135,12 +135,12 @@ public sealed class QcInspectionsController(IQcInspectionService service) : Cont
     // =========================================================================
 
     [HttpPost("{id:long}/finalize")]
-    [Authorize(Roles = "QC_STAFF,WAREHOUSE_MANAGER,ADMINISTRATOR")]
+    [Authorize(Roles = "QC_STAFF,ADMINISTRATOR")]
     public async Task<ActionResult<ApiResponse<FinalizeQcResultDto>>> Finalize(
         long id,
         CancellationToken ct)
     {
-        var result = await service.FinalizeAsync(id, ct);
+        var result = await service.FinalizeAsync(id, ActorId, ActorRole, ct);
         return Ok(ApiResponse<FinalizeQcResultDto>.Success(
             result,
             result.QcResult == "PASS"
@@ -202,7 +202,7 @@ public sealed class QcInspectionsController(IQcInspectionService service) : Cont
         long id,
         CancellationToken ct)
     {
-        var result = await service.GetByIdAsync(id, ct);
+        var result = await service.GetByIdAsync(id, ActorId, ActorRole, ct);
         return Ok(ApiResponse<QcInspectionDetailDto>.Success(result));
     }
 }

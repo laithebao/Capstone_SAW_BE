@@ -36,6 +36,7 @@ public sealed class InspectionStandardsController(IInspectionStandardService ser
 
     // POST /api/inspection-standards  (UC12)
     [HttpPost]
+    [Authorize(Roles = "ADMINISTRATOR")]
     public async Task<ActionResult<ApiResponse<InspectionStandardDto>>> Create(
         CreateInspectionStandardRequest request, CancellationToken token)
     {
@@ -47,6 +48,7 @@ public sealed class InspectionStandardsController(IInspectionStandardService ser
 
     // POST /api/inspection-standards/{id}/versions  (UC13)
     [HttpPost("{id:int}/versions")]
+    [Authorize(Roles = "ADMINISTRATOR")]
     public async Task<ActionResult<ApiResponse<InspectionStandardVersionCreatedDto>>> CreateVersion(
         int id, CreateInspectionStandardVersionRequest request, CancellationToken token)
     {

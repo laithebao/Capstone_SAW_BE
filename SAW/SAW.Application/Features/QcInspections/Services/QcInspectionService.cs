@@ -116,9 +116,11 @@ public sealed class QcInspectionService(IQcInspectionRepository repository) : IQ
     public async Task UpdateSamplingRatioAsync(
         long inspectionId,
         UpdateSamplingRatioRequest request,
+        int actorAccountId,
+        string actorRole,
         CancellationToken ct)
     {
-        var inspection = await GetEditableInspectionAsync(inspectionId, ct);
+        var inspection = await GetEditableInspectionAsync(inspectionId, actorAccountId, actorRole, ct);
 
         // Validate sampling ratio
         if (request.SamplingRatio <= 0 || request.SamplingRatio > 1)
@@ -149,9 +151,11 @@ public sealed class QcInspectionService(IQcInspectionRepository repository) : IQ
     public async Task SaveSensoryResultAsync(
         long inspectionId,
         SaveSensoryResultRequest request,
+        int actorAccountId,
+        string actorRole,
         CancellationToken ct)
     {
-        var inspection = await GetEditableInspectionAsync(inspectionId, ct);
+        var inspection = await GetEditableInspectionAsync(inspectionId, actorAccountId, actorRole, ct);
         EnsureInProgress(inspection);
 
         // Validate scores
@@ -205,9 +209,10 @@ public sealed class QcInspectionService(IQcInspectionRepository repository) : IQ
         long inspectionId,
         UploadQualityImageRequest request,
         int actorAccountId,
+        string actorRole,
         CancellationToken ct)
     {
-        var inspection = await GetEditableInspectionAsync(inspectionId, ct);
+        var inspection = await GetEditableInspectionAsync(inspectionId, actorAccountId, actorRole, ct);
 
         // Validate MIME type
         if (!string.IsNullOrWhiteSpace(request.MimeType) &&
@@ -252,9 +257,11 @@ public sealed class QcInspectionService(IQcInspectionRepository repository) : IQ
     public async Task DeleteImageAsync(
         long inspectionId,
         long imageId,
+        int actorAccountId,
+        string actorRole,
         CancellationToken ct)
     {
-        var inspection = await GetEditableInspectionAsync(inspectionId, ct);
+        var inspection = await GetEditableInspectionAsync(inspectionId, actorAccountId, actorRole, ct);
 
         var image = await repository.GetImageAsync(imageId, ct)
             ?? throw new NotFoundException($"Không tìm thấy ảnh ID {imageId}.");
@@ -273,9 +280,11 @@ public sealed class QcInspectionService(IQcInspectionRepository repository) : IQ
     public async Task SaveLabResultAsync(
         long inspectionId,
         SaveLabResultRequest request,
+        int actorAccountId,
+        string actorRole,
         CancellationToken ct)
     {
-        var inspection = await GetEditableInspectionAsync(inspectionId, ct);
+        var inspection = await GetEditableInspectionAsync(inspectionId, actorAccountId, actorRole, ct);
         EnsureInProgress(inspection);
 
         // Validate status enums
@@ -353,9 +362,11 @@ public sealed class QcInspectionService(IQcInspectionRepository repository) : IQ
     public async Task SaveEnvironmentCriteriaAsync(
         long inspectionId,
         SaveEnvironmentCriteriaRequest request,
+        int actorAccountId,
+        string actorRole,
         CancellationToken ct)
     {
-        var inspection = await GetEditableInspectionAsync(inspectionId, ct);
+        var inspection = await GetEditableInspectionAsync(inspectionId, actorAccountId, actorRole, ct);
         EnsureInProgress(inspection);
 
         if (request.CriteriaResults?.Count > 0)
@@ -446,10 +457,14 @@ public sealed class QcInspectionService(IQcInspectionRepository repository) : IQ
 
     public async Task<FinalizeQcResultDto> FinalizeAsync(
         long inspectionId,
+        int actorAccountId,
+        string actorRole,
         CancellationToken ct)
     {
         var inspection = await repository.GetInspectionDetailAsync(inspectionId, ct)
             ?? throw new NotFoundException($"Không tìm thấy phiếu kiểm định ID {inspectionId}.");
+
+        EnsureOwnership(inspection, actorAccountId, actorRole);
 
         if (inspection.InspectionStatus == "COMPLETED")
             throw new BadRequestException(
@@ -615,11 +630,14 @@ public sealed class QcInspectionService(IQcInspectionRepository repository) : IQ
 
     public async Task<QcInspectionDetailDto> GetByIdAsync(
         long inspectionId,
+        int actorAccountId,
+        string actorRole,
         CancellationToken ct)
     {
         var inspection = await repository.GetInspectionDetailAsync(inspectionId, ct)
             ?? throw new NotFoundException($"Không tìm thấy phiếu kiểm định ID {inspectionId}.");
 
+        EnsureOwnership(inspection, actorAccountId, actorRole);
         return MapToDetailDto(inspection);
     }
 
@@ -845,6 +863,8 @@ public sealed class QcInspectionService(IQcInspectionRepository repository) : IQ
 
     private async Task<QcInspection> GetEditableInspectionAsync(
         long inspectionId,
+        int actorAccountId,
+        string actorRole,
         CancellationToken ct)
     {
         var inspection = await repository.GetInspectionAsync(inspectionId, ct)
@@ -854,7 +874,21 @@ public sealed class QcInspectionService(IQcInspectionRepository repository) : IQ
             throw new BadRequestException(
                 "Phiếu kiểm định đã hoàn thành và bị khóa bất biến. Không thể chỉnh sửa.");
 
+        EnsureOwnership(inspection, actorAccountId, actorRole);
         return inspection;
+    }
+
+    /// <summary>
+    /// QC_STAFF chỉ được phép truy cập và chỉnh sửa phiếu kiểm định do chính họ tạo.
+    /// WAREHOUSE_MANAGER và ADMINISTRATOR được truy cập toàn bộ.
+    /// </summary>
+    private static void EnsureOwnership(QcInspection inspection, int actorAccountId, string actorRole)
+    {
+        if (actorRole.Equals("QC_STAFF", StringComparison.OrdinalIgnoreCase)
+            && inspection.QcAccountId != actorAccountId)
+            throw new ForbiddenException(
+                "Bạn không có quyền truy cập phiếu kiểm định này. " +
+                "QC_STAFF chỉ được xem và chỉnh sửa phiếu kiểm định do chính mình tạo.");
     }
 
     private static void EnsureInProgress(QcInspection inspection)
