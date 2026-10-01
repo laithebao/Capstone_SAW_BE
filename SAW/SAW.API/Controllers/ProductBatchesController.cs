@@ -9,7 +9,7 @@ namespace SAW.API.Controllers;
 
 [ApiController]
 [Route("api/operation/product-batches")]
-[Authorize(Roles = "OPERATION_STAFF")]
+[Authorize(Roles = "OPERATION_STAFF,QC_STAFF,WAREHOUSE_MANAGER,ADMINISTRATOR")]
 public sealed class ProductBatchesController(IProductBatchService service) : ControllerBase
 {
     [HttpGet("submitted-suppliers")]
@@ -31,6 +31,7 @@ public sealed class ProductBatchesController(IProductBatchService service) : Con
             await service.GetSubmittedDetailAsync(id, supplierId, cancellationToken)));
 
     [HttpPut("{id:long}/verify")]
+    [Authorize(Roles = "OPERATION_STAFF")] // chỉ OPERATION_STAFF được xác nhận lô
     public async Task<ActionResult<ApiResponse<VerifyProductBatchResponse>>> Verify(
         long id, [FromQuery] int supplierId, [FromBody] VerifyProductBatchRequest request,
         CancellationToken cancellationToken) =>
@@ -39,6 +40,7 @@ public sealed class ProductBatchesController(IProductBatchService service) : Con
             "Product batch confirmed successfully."));
 
     [HttpPut("{id:long}/reject")]
+    [Authorize(Roles = "OPERATION_STAFF")] // chỉ OPERATION_STAFF được từ chối lô
     public async Task<ActionResult<ApiResponse<RejectProductBatchResponse>>> Reject(
         long id, [FromQuery] int supplierId, [FromBody] RejectProductBatchRequest request,
         CancellationToken cancellationToken) =>
@@ -47,6 +49,7 @@ public sealed class ProductBatchesController(IProductBatchService service) : Con
             "Product batch rejected."));
 
     [HttpPut("{id:long}/receiving-details")]
+    [Authorize(Roles = "OPERATION_STAFF")] // chỉ OPERATION_STAFF được cập nhật
     public async Task<ActionResult<ApiResponse<ProductBatchDetail>>> UpdateReceivingDetails(
         long id, [FromBody] UpdateProductBatchReceivingRequest request,
         CancellationToken cancellationToken) =>

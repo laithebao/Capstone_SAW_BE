@@ -2,19 +2,26 @@ using System.ComponentModel.DataAnnotations;
 
 namespace SAW.Application.Features.InspectionStandards;
 
+// ── Grade Rule request (1 grade = 1 rule) ─────────────────────────────────────
+public sealed record SaveGradeRuleRequest(
+    [Required] string Grade,                    // A | B | C | D | E
+    decimal? MinValue,
+    decimal? MaxValue,
+    [MaxLength(300)] string? RequiredTextValue,  // dành cho TEXT criterion
+    bool IsFailRule                              // true = kết quả này → từ chối lô
+);
+
 // ── Shared criterion request ───────────────────────────────────────────────────
 public sealed record SaveInspectionCriterionRequest(
     [Required, MaxLength(100)] string Code,
     [Required, MaxLength(300)] string Name,
-    [MaxLength(60)]  string CriterionGroup,
+    [Required, MaxLength(60)] string CriterionGroup,
     [Required, MaxLength(40)] string DataType,
     [MaxLength(100)] string? Unit,
     bool IsRequired,
     bool IsCritical,
-    decimal? MinValue,
-    decimal? MaxValue,
-    [MaxLength(200)] string? RequiredTextValue,
-    bool IsFailRule);
+    IReadOnlyList<SaveGradeRuleRequest> GradeRules
+);
 
 // ── UC12 – Create Inspection Standard Set ──────────────────────────────────────
 public sealed record CreateInspectionStandardRequest(
@@ -39,10 +46,18 @@ public sealed record InspectionStandardListItem(
     int Id, string Code, string Name, string CropTypeName,
     int VersionNo, string Status, DateOnly? EffectiveFrom, int CriterionCount);
 
+public sealed record GradeRuleDto(
+    long Id,
+    string Grade,
+    decimal? MinValue,
+    decimal? MaxValue,
+    string? RequiredTextValue,
+    bool IsFailRule);
+
 public sealed record CriterionDto(
     long Id, string Code, string Name, string CriterionGroup,
     string DataType, string? Unit, bool IsRequired, bool IsCritical,
-    decimal? MinValue, decimal? MaxValue, string? RequiredTextValue, bool IsFailRule);
+    IReadOnlyList<GradeRuleDto> GradeRules);
 
 public sealed record InspectionStandardVersionDto(
     long VersionId, int VersionNo, string Status,
@@ -59,3 +74,19 @@ public sealed record InspectionStandardVersionCreatedDto(
     int SetId, string SetCode, string SetName,
     long VersionId, int VersionNo, string Status,
     DateOnly? EffectiveFrom, int CriterionCount);
+
+/// <summary>
+/// DTO nhẹ dùng cho dropdown chọn phiên bản tiêu chuẩn khi tạo phiếu kiểm định.
+/// Chứa VersionId thực sự (không phải SetId).
+/// </summary>
+public sealed record PublishedVersionOption(
+    long VersionId,          // ID thực sự của INSPECTION_STANDARD_VERSION
+    int SetId,
+    string SetCode,
+    string SetName,
+    int CropTypeId,          // dùng để FE lọc theo lô hàng
+    string CropTypeName,
+    int VersionNo,
+    DateOnly? EffectiveFrom,
+    int CriterionCount
+);

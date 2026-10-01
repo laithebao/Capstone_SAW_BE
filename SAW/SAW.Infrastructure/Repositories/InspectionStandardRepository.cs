@@ -42,6 +42,41 @@ public sealed class InspectionStandardRepository(AppDbContext dbContext) : IInsp
         }).ToList();
     }
 
+    /// <summary>
+    /// Trả về tất cả phiên bản PUBLISHED kèm VersionId thực sự.
+    /// Lọc theo cropTypeId nếu được cung cấp.
+    /// </summary>
+    public async Task<IReadOnlyList<PublishedVersionOption>> GetPublishedVersionsAsync(
+        int? cropTypeId, CancellationToken token)
+    {
+        var query = dbContext.InspectionStandardVersions
+            .AsNoTracking()
+            .Include(v => v.InspectionStandardSet)
+                .ThenInclude(s => s.CropType)
+            .Include(v => v.Criteria)
+            .Where(v => v.VersionStatus == "PUBLISHED");
+
+        if (cropTypeId.HasValue)
+            query = query.Where(v => v.InspectionStandardSet.CropTypeId == cropTypeId.Value);
+
+        var versions = await query
+            .OrderBy(v => v.InspectionStandardSet.StandardCode)
+            .ThenByDescending(v => v.VersionNo)
+            .ToListAsync(token);
+
+        return versions.Select(v => new PublishedVersionOption(
+            v.InspectionStandardVersionId,
+            v.InspectionStandardSetId,
+            v.InspectionStandardSet.StandardCode,
+            v.InspectionStandardSet.StandardName,
+            v.InspectionStandardSet.CropTypeId,
+            v.InspectionStandardSet.CropType.CropName,
+            v.VersionNo,
+            v.EffectiveFrom,
+            v.Criteria.Count
+        )).ToList();
+    }
+
     public Task<InspectionStandardSet?> GetByIdAsync(int id, CancellationToken token)
         => dbContext.InspectionStandardSets
             .Include(x => x.CropType)

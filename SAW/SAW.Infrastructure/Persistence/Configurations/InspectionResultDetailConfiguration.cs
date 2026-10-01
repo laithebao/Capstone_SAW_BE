@@ -8,7 +8,13 @@ public class InspectionResultDetailConfiguration : IEntityTypeConfiguration<Insp
 {
     public void Configure(EntityTypeBuilder<InspectionResultDetail> builder)
     {
-        builder.ToTable("INSPECTION_RESULT_DETAIL");
+        builder.ToTable("INSPECTION_RESULT_DETAIL", tb =>
+        {
+            // Khai báo triggers để EF Core dùng OUTPUT INTO (tránh lỗi với SQL Server triggers)
+            // Ref: https://aka.ms/efcore-docs-sqlserver-save-changes-and-output-clause
+            tb.HasTrigger("TR_INSPECTION_RESULT_DETAIL_VERSION_CHECK");
+            tb.HasTrigger("TR_INSPECTION_RESULT_DETAIL_IMMUTABLE");
+        });
         builder.HasKey(x => x.InspectionResultDetailId);
         builder.Property(x => x.InspectionResultDetailId).HasColumnName("InspectionResultDetailID").UseIdentityColumn();
         builder.Property(x => x.QcInspectionId).HasColumnName("QCInspectionID").IsRequired();

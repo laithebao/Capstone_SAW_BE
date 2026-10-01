@@ -10,6 +10,7 @@ using SAW.Application.Features.AuditLogs;
 using SAW.Application.Features.Suppliers.Commands;
 using SAW.Application.Features.ProductBatches.Interfaces;
 using SAW.Application.Features.ProductBatches.Services;
+using SAW.Application.Features.QcInspections;
 
 namespace SAW.Application.Extensions;
 
@@ -32,6 +33,7 @@ public static class ServiceCollectionExtensions
         services.AddScoped<ISupplierCommandService, SupplierCommandService>();
         services.AddScoped<ISupplierBatchCommandService, SupplierBatchCommandService>();
         services.AddScoped<IProductBatchService, ProductBatchService>();
+        services.AddScoped<IQcInspectionService, QcInspectionService>();
 
         return services;
     }

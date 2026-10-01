@@ -8,6 +8,7 @@ public interface IInspectionStandardRepository
     Task<bool> CropTypeExistsAsync(int id, CancellationToken token);
     Task<bool> CodeExistsAsync(string code, CancellationToken token);
     Task<IReadOnlyList<InspectionStandardListItem>> ListAsync(string? search, CancellationToken token);
+    Task<IReadOnlyList<PublishedVersionOption>> GetPublishedVersionsAsync(int? cropTypeId, CancellationToken token);
     Task<InspectionStandardSet?> GetByIdAsync(int id, CancellationToken token);
     Task<int> GetMaxVersionNoAsync(int setId, CancellationToken token);
     void Add(InspectionStandardSet item);

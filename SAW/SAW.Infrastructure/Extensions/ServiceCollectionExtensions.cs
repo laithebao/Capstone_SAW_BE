@@ -56,6 +56,7 @@ public static class ServiceCollectionExtensions
         services.AddScoped<IProductBatchRepository, ProductBatchRepository>();
         services.AddScoped<IProductBatchQueryRepository, ProductBatchQueryRepository>();
         services.AddScoped<IProductBatchVerificationRepository, ProductBatchVerificationRepository>();
+        services.AddScoped<IQcInspectionRepository, QcInspectionRepository>();
 
         return services;
     }

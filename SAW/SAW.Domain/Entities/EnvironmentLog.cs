@@ -5,7 +5,7 @@ public class EnvironmentLog
     public long EnvironmentLogId { get; set; }
 
     public long ProductBatchId { get; set; }
-    public int WarehouseLocationId { get; set; }
+    public int? WarehouseLocationId { get; set; }   // null khi ghi trong phương pháp kiểm định (lô chưa nhập kho)
     public long? QcInspectionId { get; set; }
     public int? RecordedByAccountId { get; set; }
 
@@ -20,7 +20,7 @@ public class EnvironmentLog
 
     // Navigation
     public ProductBatch ProductBatch { get; set; } = default!;
-    public WarehouseLocation WarehouseLocation { get; set; } = default!;
+    public WarehouseLocation? WarehouseLocation { get; set; }
     public QcInspection? QcInspection { get; set; }
     public Account? RecordedByAccount { get; set; }
 }

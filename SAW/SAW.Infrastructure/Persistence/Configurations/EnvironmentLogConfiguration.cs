@@ -8,11 +8,14 @@ public class EnvironmentLogConfiguration : IEntityTypeConfiguration<EnvironmentL
 {
     public void Configure(EntityTypeBuilder<EnvironmentLog> builder)
     {
-        builder.ToTable("ENVIRONMENT_LOG");
+        builder.ToTable("ENVIRONMENT_LOG", tb =>
+        {
+            tb.HasTrigger("TR_ENVIRONMENT_LOG_IMMUTABLE");
+        });
         builder.HasKey(x => x.EnvironmentLogId);
         builder.Property(x => x.EnvironmentLogId).HasColumnName("EnvironmentLogID").UseIdentityColumn();
         builder.Property(x => x.ProductBatchId).HasColumnName("ProductBatchID").IsRequired();
-        builder.Property(x => x.WarehouseLocationId).HasColumnName("WarehouseLocationID").IsRequired();
+        builder.Property(x => x.WarehouseLocationId).HasColumnName("WarehouseLocationID").IsRequired(false);
         builder.Property(x => x.QcInspectionId).HasColumnName("QCInspectionID");
         builder.Property(x => x.RecordedByAccountId).HasColumnName("RecordedByAccountID");
         builder.Property(x => x.TemperatureC).HasColumnName("TemperatureC").HasPrecision(6, 2).IsRequired();
@@ -30,6 +33,7 @@ public class EnvironmentLogConfiguration : IEntityTypeConfiguration<EnvironmentL
         builder.HasOne(x => x.WarehouseLocation)
                .WithMany(l => l.EnvironmentLogs)
                .HasForeignKey(x => x.WarehouseLocationId)
+               .IsRequired(false)
                .HasConstraintName("FK_ENVIRONMENT_LOG_LOCATION");
 
         builder.HasOne(x => x.QcInspection)
