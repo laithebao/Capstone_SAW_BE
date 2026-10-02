@@ -14,6 +14,7 @@ public sealed class ProductBatchService(
     private const string Submitted = "SUBMITTED";
     private const string PendingQc = "PENDING_QC";
     private const string Rejected = "REJECTED";
+    public const string QcReceivingLockMessage = "Lô hàng đã được QC tiếp nhận. Không thể cập nhật thông tin kiểm nhận.";
     private const string NoLongerAvailable = "Product batch is no longer available for warehouse verification.";
     private static readonly HashSet<string> AllowedSorts =
         ["createdAtDesc", "createdAtAsc", "updatedAtDesc", "updatedAtAsc"];
@@ -51,6 +52,9 @@ public sealed class ProductBatchService(
     {
         var batch = await repository.GetWarehouseByIdAsync(id, cancellationToken)
             ?? throw new NotFoundException("Product batch not found.");
+        var hasInspection = await repository.HasQcInspectionAsync(id, cancellationToken);
+        var lockReason = hasInspection ? QcReceivingLockMessage
+            : batch.BatchStatus != PendingQc ? "Chỉ có thể cập nhật lô đang chờ kiểm định QC." : null;
         return new ProductBatchDetail(
             batch.ProductBatchId, batch.BatchCode, batch.ProductName,
             batch.SupplierId, batch.Supplier.SupplierName,
@@ -64,7 +68,7 @@ public sealed class ProductBatchService(
             batch.VerifiedPackageUnitWeightKg, batch.ReceivingNote, batch.RejectionReason,
             batch.ExpectedMinTempC, batch.ExpectedMaxTempC,
             batch.ExpectedMinHumidityPct, batch.ExpectedMaxHumidityPct,
-            batch.ShelfLifeDaysSnapshot);
+            batch.ShelfLifeDaysSnapshot, lockReason is null, lockReason);
     }
 
     public Task<IReadOnlyList<ProductBatchFilterOption>> GetSubmittedSuppliersAsync(CancellationToken cancellationToken) =>
@@ -159,15 +163,18 @@ public sealed class ProductBatchService(
             request.VerifiedPackageUnitWeightKg, request.ReceivingNote);
         var batch = await repository.GetWarehouseByIdAsync(id, cancellationToken)
             ?? throw new NotFoundException("Product batch not found.");
+        if (await repository.HasQcInspectionAsync(id, cancellationToken))
+            throw new ConflictException(QcReceivingLockMessage);
         if (batch.BatchStatus != PendingQc)
             throw new ConflictException("Only batches awaiting QC can be updated.");
         if (batch.CreatedAt != request.ExpectedCreatedAt)
             throw new ConflictException("Batch information changed. Reload the batch and try again.");
 
-        // TODO: Khi tích hợp module QC, bổ sung khóa UC28 ngay khi QC tiếp nhận/bắt đầu
-        // kiểm định và bảo vệ thao tác đồng thời.
-        if (!await verificationRepository.UpdateAsync(id, request.ExpectedUpdatedAt,
-                request.ExpectedCreatedAt, accountId, details, cancellationToken))
+        var result = await verificationRepository.UpdateAsync(id, request.ExpectedUpdatedAt,
+            request.ExpectedCreatedAt, accountId, details, cancellationToken);
+        if (result == ProductBatchReceivingUpdateResult.QcReceived)
+            throw new ConflictException(QcReceivingLockMessage);
+        if (result != ProductBatchReceivingUpdateResult.Updated)
             throw new ConflictException("Batch information changed. Reload the batch and try again.");
 
         return await GetAsync(id, cancellationToken);

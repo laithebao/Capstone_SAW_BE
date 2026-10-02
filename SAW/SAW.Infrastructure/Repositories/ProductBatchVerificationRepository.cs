@@ -117,14 +117,28 @@ public sealed class ProductBatchVerificationRepository(
         });
     }
 
-    public Task<bool> UpdateAsync(long batchId, DateTime? expectedUpdatedAt,
+    public Task<ProductBatchReceivingUpdateResult> UpdateAsync(long batchId, DateTime? expectedUpdatedAt,
         DateTime expectedCreatedAt, int accountId,
         VerifiedReceivingDetails details, CancellationToken cancellationToken)
     {
         var strategy = dbContext.Database.CreateExecutionStrategy();
         return strategy.ExecuteAsync(async () =>
         {
-            await using var transaction = await dbContext.Database.BeginTransactionAsync(cancellationToken);
+            await using var transaction = await dbContext.Database.BeginTransactionAsync(
+                System.Data.IsolationLevel.Serializable, cancellationToken);
+            // Keep the QC key range locked through both the receiving update and audit commit.
+            // Even with no rows, a concurrent INSERT must wait. UPDLOCK also serializes UC28
+            // writers before reading the batch. DRAFT counts; do not filter by status or date.
+            // Uses the existing ProductBatchID-leading index when available. A scan still
+            // protects correctness through broader locks if that index is absent.
+            var qcReceived = await dbContext.QcInspections
+                .FromSqlInterpolated($"SELECT * FROM [QC_INSPECTION] WITH (UPDLOCK, HOLDLOCK) WHERE [ProductBatchID] = {batchId}")
+                .AnyAsync(cancellationToken);
+            if (qcReceived)
+            {
+                await transaction.RollbackAsync(cancellationToken);
+                return ProductBatchReceivingUpdateResult.QcReceived;
+            }
             var current = await dbContext.ProductBatches.AsNoTracking()
                 .SingleOrDefaultAsync(b => b.ProductBatchId == batchId, cancellationToken);
             if (current is null || current.BatchStatus != "PENDING_QC" ||
@@ -132,7 +146,7 @@ public sealed class ProductBatchVerificationRepository(
                 current.UpdatedAt != expectedUpdatedAt)
             {
                 await transaction.RollbackAsync(cancellationToken);
-                return false;
+                return ProductBatchReceivingUpdateResult.Conflict;
             }
 
             // UpdatedAt is datetime2(0) in the existing DB. Advance the stored second
@@ -158,7 +172,7 @@ public sealed class ProductBatchVerificationRepository(
             if (affected != 1)
             {
                 await transaction.RollbackAsync(cancellationToken);
-                return false;
+                return ProductBatchReceivingUpdateResult.Conflict;
             }
 
             AddAudit(batchId, accountId, nextUpdatedAt, "Receiving details corrected.",
@@ -177,7 +191,7 @@ public sealed class ProductBatchVerificationRepository(
                 });
             await dbContext.SaveChangesAsync(cancellationToken);
             await transaction.CommitAsync(cancellationToken);
-            return true;
+            return ProductBatchReceivingUpdateResult.Updated;
         });
     }
 

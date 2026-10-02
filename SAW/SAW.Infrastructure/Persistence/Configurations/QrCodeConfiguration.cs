@@ -21,6 +21,10 @@ public class QrCodeConfiguration : IEntityTypeConfiguration<QrCode>
 
         builder.HasIndex(x => x.PublicToken).IsUnique().HasDatabaseName("UQ_QR_CODE_PublicToken");
         builder.HasIndex(x => x.TraceabilityUrl).IsUnique().HasDatabaseName("UQ_QR_CODE_Url");
+        builder.HasIndex(x => x.ProductBatchId);
+        builder.HasIndex(x => x.ProductBatchId, "ActiveBatchQr").IsUnique()
+               .HasFilter("[IsActive] = 1 AND [PackageCode] IS NULL")
+               .HasDatabaseName("UQ_QR_CODE_ActiveBatch");
 
         builder.HasOne(x => x.ProductBatch)
                .WithMany(b => b.QrCodes)

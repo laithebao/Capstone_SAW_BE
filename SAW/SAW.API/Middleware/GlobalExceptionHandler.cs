@@ -58,6 +58,11 @@ public sealed class GlobalExceptionHandler : IExceptionHandler
                 StatusCodes.Status404NotFound,
                 ApiResponse<object>.NotFound(ex.Message)),
 
+            // 410 - public resource is no longer available
+            GoneException ex => (
+                StatusCodes.Status410Gone,
+                ApiResponse<object>.Failure(StatusCodes.Status410Gone, ex.Message)),
+
             // 400 - Bad Request
             BadRequestException ex => (
                 StatusCodes.Status400BadRequest,
