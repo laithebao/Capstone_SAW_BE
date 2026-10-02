@@ -1,4 +1,4 @@
-﻿using System;
+using System;
 using System.Collections.Generic;
 using System.Linq;
 using System.Text;
@@ -329,6 +329,14 @@ public class SupplierBatchCommandService : ISupplierBatchCommandService
             HarvestDate = batch.HarvestDate,
             DeclaredQuantity = batch.DeclaredQuantity,
             Unit = batch.Unit,
+            PackagingType = batch.PackagingType,
+            PackageCount = batch.PackageCount,
+            PackageUnitWeightKg = batch.PackageUnitWeightKg,
+            ExpectedMinTempC = batch.ExpectedMinTempC,
+            ExpectedMaxTempC = batch.ExpectedMaxTempC,
+            ExpectedMinHumidityPct = batch.ExpectedMinHumidityPct,
+            ExpectedMaxHumidityPct = batch.ExpectedMaxHumidityPct,
+            ExpiryDate = batch.ExpiryDate,
             ReceivedQuantity = receivedQuantity,
             WeightInKg = batch.WeightInKg,
             CurrentStatus = batch.BatchStatus,

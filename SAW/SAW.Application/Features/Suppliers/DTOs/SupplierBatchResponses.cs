@@ -1,4 +1,4 @@
-﻿using System;
+using System;
 using System.Collections.Generic;
 using System.Linq;
 using System.Text;
@@ -69,6 +69,15 @@ public class SupplierBatchStatusResponse
 
     public decimal DeclaredQuantity { get; set; }
     public string Unit { get; set; } = string.Empty;
+    public string? PackagingType { get; set; }
+    public int? PackageCount { get; set; }
+    public decimal? PackageUnitWeightKg { get; set; }
+    public decimal? ExpectedMinTempC { get; set; }
+    public decimal? ExpectedMaxTempC { get; set; }
+    public decimal? ExpectedMinHumidityPct { get; set; }
+    public decimal? ExpectedMaxHumidityPct { get; set; }
+    public DateOnly? ExpiryDate { get; set; }
+    
     public decimal ReceivedQuantity { get; set; } 
     public decimal WeightInKg { get; set; }
 
