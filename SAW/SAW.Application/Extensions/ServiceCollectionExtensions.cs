@@ -15,6 +15,8 @@ using SAW.Application.Features.QrCodes.Interfaces;
 using SAW.Application.Features.QrCodes.Services;
 using SAW.Application.Features.Traceability.Interfaces;
 using SAW.Application.Features.Traceability.Services;
+using SAW.Application.Features.GoodsReceipts.Interfaces;
+using SAW.Application.Features.GoodsReceipts.Services;
 
 namespace SAW.Application.Extensions;
 
@@ -40,6 +42,7 @@ public static class ServiceCollectionExtensions
         services.AddScoped<IQcInspectionService, QcInspectionService>();
         services.AddScoped<IProductBatchQrCodeService, ProductBatchQrCodeService>();
         services.AddScoped<ITraceabilityService, TraceabilityService>();
+        services.AddScoped<IGoodsReceiptService, GoodsReceiptService>();
 
         return services;
     }

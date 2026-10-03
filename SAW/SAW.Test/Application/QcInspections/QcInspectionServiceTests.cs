@@ -23,7 +23,18 @@ public sealed class QcInspectionServiceTests
 {
     private readonly Mock<IQcInspectionRepository> _repo = new();
 
-    private QcInspectionService CreateService() => new(_repo.Object);
+    private QcInspectionService CreateService()
+    {
+        _repo.Setup(r => r.FinalizeAsync(It.IsAny<long>(), It.IsAny<int>(), It.IsAny<Action<QcInspection>>(), It.IsAny<CancellationToken>()))
+            .Returns(async (long id, int actor, Action<QcInspection> evaluate, CancellationToken ct) =>
+            {
+                var inspection = await _repo.Object.GetInspectionDetailAsync(id, ct) ?? throw new NotFoundException("Missing inspection");
+                evaluate(inspection);
+                await _repo.Object.SaveChangesAsync(ct);
+                return inspection;
+            });
+        return new(_repo.Object);
+    }
 
     // ─── Factory helpers ──────────────────────────────────────────────────────
 
@@ -895,11 +906,16 @@ public sealed class QcInspectionServiceTests
         var result = await svc.FinalizeAsync(1, 5, "ADMINISTRATOR", CancellationToken.None);
 
         Assert.Equal("FAIL", result.QcResult);
-        Assert.Null(result.QualityGrade);
+        Assert.Equal("E", result.QualityGrade);
     }
 
-    [Fact]
-    public async Task UC53_FinalizeAsync_GradeDOrE_BatchGoesToQuarantine()
+    [Theory]
+    [InlineData(2, "A", "PASS", "APPROVED_FOR_STORAGE")]
+    [InlineData(8, "B", "PASS", "APPROVED_FOR_STORAGE")]
+    [InlineData(15, "C", "PASS", "APPROVED_FOR_STORAGE")]
+    [InlineData(25, "D", "PASS", "APPROVED_FOR_STORAGE")]
+    [InlineData(35, "E", "FAIL", "REJECTED")]
+    public async Task UC53_FinalizeAsync_Accepts_A_to_D_Rejects_E_even_without_fail_flag(int value, string grade, string qcResult, string status)
     {
         var criterion = new InspectionCriterion
         {
@@ -915,10 +931,11 @@ public sealed class QcInspectionServiceTests
                 new CriterionGradeRule { Grade = "A", MinValue = 0m, MaxValue = 5m, IsFailRule = false },
                 new CriterionGradeRule { Grade = "B", MinValue = 6m, MaxValue = 10m, IsFailRule = false },
                 new CriterionGradeRule { Grade = "C", MinValue = 11m, MaxValue = 20m, IsFailRule = false },
-                new CriterionGradeRule { Grade = "D", MinValue = 21m, MaxValue = 30m, IsFailRule = false }
+                new CriterionGradeRule { Grade = "D", MinValue = 21m, MaxValue = 30m, IsFailRule = false },
+                new CriterionGradeRule { Grade = "E", MinValue = 31m, MaxValue = 40m, IsFailRule = false }
             ]
         };
-        var detail = new InspectionResultDetail { InspectionCriterionId = 100, NumericValue = 25m }; // grade D
+        var detail = new InspectionResultDetail { InspectionCriterionId = 100, NumericValue = value };
         var inspection = BuildFinalizeInspection([(criterion, detail)]);
         _repo.Setup(r => r.GetInspectionDetailAsync(1, It.IsAny<CancellationToken>())).ReturnsAsync(inspection);
         _repo.Setup(r => r.SaveChangesAsync(It.IsAny<CancellationToken>())).Returns(Task.CompletedTask);
@@ -926,9 +943,11 @@ public sealed class QcInspectionServiceTests
         var svc = CreateService();
         var result = await svc.FinalizeAsync(1, 5, "ADMINISTRATOR", CancellationToken.None);
 
-        Assert.Equal("PASS", result.QcResult);
-        Assert.Equal("D", result.QualityGrade);
-        Assert.Equal("QUARANTINE", result.NewBatchStatus);
+        Assert.Equal(qcResult, result.QcResult);
+        Assert.Equal(grade, result.QualityGrade);
+        Assert.Equal(status, result.NewBatchStatus);
+        Assert.Equal(grade, detail.EvaluatedGrade);
+        Assert.Equal(grade != "E", detail.IsPassed);
     }
 
     [Fact]
@@ -940,6 +959,45 @@ public sealed class QcInspectionServiceTests
 
         await Assert.ThrowsAsync<BadRequestException>(
             () => svc.FinalizeAsync(1, 5, "ADMINISTRATOR", CancellationToken.None));
+    }
+
+    [Fact]
+    public async Task Finalize_optional_missing_critical_is_not_a_defect_and_critical_failure_preserves_other_grades()
+    {
+        var optional = MakeBooleanCriterion(200); optional.IsRequired = false;
+        var number = MakeNumberCriterion();
+        var detail = new InspectionResultDetail { NumericValue = 5 };
+        var boolean = new InspectionResultDetail();
+        var inspection = BuildFinalizeInspection([(number, detail), (optional, boolean)]);
+        _repo.Setup(r => r.GetInspectionDetailAsync(1, It.IsAny<CancellationToken>())).ReturnsAsync(inspection);
+        var service = CreateService();
+        Assert.Equal("PASS", (await service.FinalizeAsync(1, 5, "QC_STAFF", default)).QcResult);
+        inspection.InspectionStatus = "IN_PROGRESS";
+        boolean.BooleanValue = false;
+        var result = await service.FinalizeAsync(1, 5, "QC_STAFF", default);
+        Assert.Equal("E", result.QualityGrade); Assert.Equal("FAIL", result.QcResult);
+        Assert.Equal("A", detail.EvaluatedGrade); Assert.True(detail.IsPassed);
+        Assert.Null(boolean.EvaluatedGrade); Assert.False(boolean.IsPassed);
+    }
+
+    [Theory]
+    [InlineData("missing-row")]
+    [InlineData("missing-rules")]
+    [InlineData("unmatched")]
+    [InlineData("no-graded-data")]
+    public async Task Finalize_incomplete_configuration_never_defaults_to_pass(string mode)
+    {
+        var criterion = MakeNumberCriterion();
+        var detail = new InspectionResultDetail { NumericValue = mode == "unmatched" ? 100 : 5 };
+        var inspection = BuildFinalizeInspection([(criterion, detail)]);
+        if (mode == "missing-row") inspection.ResultDetails.Clear();
+        if (mode == "missing-rules") criterion.GradeRules.Clear();
+        if (mode == "no-graded-data") { criterion.IsRequired = false; detail.NumericValue = null; }
+        _repo.Setup(r => r.GetInspectionDetailAsync(1, It.IsAny<CancellationToken>())).ReturnsAsync(inspection);
+        await Assert.ThrowsAsync<BadRequestException>(() => CreateService().FinalizeAsync(1, 5, "QC_STAFF", default));
+        Assert.Equal("IN_PROGRESS", inspection.InspectionStatus);
+        Assert.Equal("PENDING_QC", inspection.ProductBatch.BatchStatus);
+        _repo.Verify(r => r.SaveChangesAsync(It.IsAny<CancellationToken>()), Times.Never);
     }
 
     [Fact]
@@ -1157,7 +1215,18 @@ public sealed class QcInspectionServiceTests
 public sealed class QcInspectionAuthorizationTests
 {
     private readonly Mock<IQcInspectionRepository> _repo = new();
-    private QcInspectionService CreateService() => new(_repo.Object);
+    private QcInspectionService CreateService()
+    {
+        _repo.Setup(r => r.FinalizeAsync(It.IsAny<long>(), It.IsAny<int>(), It.IsAny<Action<QcInspection>>(), It.IsAny<CancellationToken>()))
+            .Returns(async (long id, int actor, Action<QcInspection> evaluate, CancellationToken ct) =>
+            {
+                var inspection = await _repo.Object.GetInspectionDetailAsync(id, ct) ?? throw new NotFoundException("Missing inspection");
+                evaluate(inspection);
+                await _repo.Object.SaveChangesAsync(ct);
+                return inspection;
+            });
+        return new(_repo.Object);
+    }
 
     // Phiếu tạo bởi accountId = 5
     private static QcInspection OwnerInspection() => new()
@@ -1347,6 +1416,7 @@ public sealed class QcInspectionAuthorizationTests
     {
         // ownership passes (QcAccountId=5 == actor=5), then service proceeds normally
         var inspection = OwnerInspection();
+        AddValidGradingData(inspection);
         SetupGetInspectionDetail(inspection);
         SetupSave();
         var svc = CreateService();
@@ -1364,7 +1434,9 @@ public sealed class QcInspectionAuthorizationTests
     public async Task UC52_Administrator_AccessingAnyInspection_PassesOwnershipCheck()
     {
         // ADMINISTRATOR: ownership skipped entirely, service proceeds normally
-        SetupGetInspectionDetail(OwnerInspection());
+        var inspection = OwnerInspection();
+        AddValidGradingData(inspection);
+        SetupGetInspectionDetail(inspection);
         SetupSave();
         var svc = CreateService();
 
@@ -1375,6 +1447,14 @@ public sealed class QcInspectionAuthorizationTests
             CancellationToken.None);
 
         Assert.NotNull(result);
+    }
+
+    private static void AddValidGradingData(QcInspection inspection)
+    {
+        var criterion = new InspectionCriterion { InspectionCriterionId = 1, CriterionCode = "TEST", DataType = "NUMBER", IsRequired = true,
+            GradeRules = [new CriterionGradeRule { Grade = "A", MinValue = 0, MaxValue = 10 }] };
+        inspection.InspectionStandardVersion.Criteria.Add(criterion);
+        inspection.ResultDetails.Add(new InspectionResultDetail { InspectionCriterionId = 1, InspectionCriterion = criterion, NumericValue = 5 });
     }
 
     // ── GetByIdAsync (detail view) ────────────────────────────────────────────

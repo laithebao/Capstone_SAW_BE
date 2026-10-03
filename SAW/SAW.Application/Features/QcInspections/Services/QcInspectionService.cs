@@ -461,8 +461,17 @@ public sealed class QcInspectionService(IQcInspectionRepository repository) : IQ
         string actorRole,
         CancellationToken ct)
     {
-        var inspection = await repository.GetInspectionDetailAsync(inspectionId, ct)
-            ?? throw new NotFoundException($"Không tìm thấy phiếu kiểm định ID {inspectionId}.");
+        var inspection = await repository.FinalizeAsync(inspectionId, actorAccountId,
+            inspection => FinalizeInspection(inspection, actorAccountId, actorRole), ct);
+        return new FinalizeQcResultDto(inspection.QcInspectionId, inspection.InspectionCode,
+            inspection.QcResult!, inspection.QualityGrade, inspection.ProductBatch.BatchStatus,
+            inspection.QcResult == "PASS"
+                ? $"Lô hàng đạt chất lượng hạng {inspection.QualityGrade}. Được duyệt nhập kho."
+                : $"Lô hàng KHÔNG ĐẠT. Lý do: {inspection.ProductBatch.RejectionReason}");
+    }
+
+    private static void FinalizeInspection(QcInspection inspection, int actorAccountId, string actorRole)
+    {
 
         EnsureOwnership(inspection, actorAccountId, actorRole);
 
@@ -478,18 +487,10 @@ public sealed class QcInspectionService(IQcInspectionRepository repository) : IQ
         var criteria = version.Criteria.ToDictionary(c => c.InspectionCriterionId);
 
         // Validate: all REQUIRED criteria must have value
-        foreach (var detail in inspection.ResultDetails)
+        foreach (var criterion in criteria.Values.Where(c => c.IsRequired))
         {
-            if (!criteria.TryGetValue(detail.InspectionCriterionId, out var criterion)) continue;
-            if (!criterion.IsRequired) continue;
-
-            var hasValue = criterion.DataType switch
-            {
-                "NUMBER"  => detail.NumericValue.HasValue,
-                "TEXT"    => !string.IsNullOrWhiteSpace(detail.TextValue),
-                "BOOLEAN" => detail.BooleanValue.HasValue,
-                _         => false
-            };
+            var detail = inspection.ResultDetails.SingleOrDefault(d => d.InspectionCriterionId == criterion.InspectionCriterionId);
+            var hasValue = detail is not null && HasValue(detail, criterion);
 
             if (!hasValue)
                 throw new BadRequestException(
@@ -500,6 +501,21 @@ public sealed class QcInspectionService(IQcInspectionRepository repository) : IQ
         // Run evaluation engine
         var (overallGrade, qcResult, failReason) =
             RunGradeEngine(inspection.ResultDetails, criteria);
+        if (inspection.LabResult is { } lab)
+        {
+            var defects = new List<string>();
+            if (lab.PathogenStatus == "FAIL")
+            {
+                if (string.IsNullOrWhiteSpace(lab.PathogenName)) throw new BadRequestException("Kết quả vi sinh FAIL thiếu tên vi sinh vật.");
+                defects.Add("Vi sinh không đạt: " + lab.PathogenName);
+            }
+            if (lab.ChemicalResidueStatus == "FAIL")
+            {
+                if (lab.ResidueValue is null or < 0) throw new BadRequestException("Kết quả dư lượng FAIL thiếu giá trị hợp lệ.");
+                defects.Add($"Dư lượng hóa học không đạt: {lab.ResidueValue} {lab.ResidueUnit}");
+            }
+            if (defects.Count > 0) { overallGrade = "E"; qcResult = "FAIL"; failReason = string.Join("; ", defects); }
+        }
 
         // Update inspection
         inspection.QcResult          = qcResult;
@@ -522,24 +538,10 @@ public sealed class QcInspectionService(IQcInspectionRepository repository) : IQ
         }
         else
         {
-            // PASS — grade D/E goes to QUARANTINE for additional review
-            newBatchStatus    = overallGrade is "D" or "E" ? "QUARANTINE" : "APPROVED_FOR_STORAGE";
+            newBatchStatus    = "APPROVED_FOR_STORAGE";
             batch.BatchStatus = newBatchStatus;
+            batch.RejectionReason = null;
         }
-
-        await repository.SaveChangesAsync(ct);
-
-        var summary = qcResult == "PASS"
-            ? $"Lô hàng đạt chất lượng hạng {overallGrade}. Trạng thái: {newBatchStatus}."
-            : $"Lô hàng KHÔNG ĐẠT. Lý do: {failReason}";
-
-        return new FinalizeQcResultDto(
-            inspection.QcInspectionId,
-            inspection.InspectionCode,
-            qcResult,
-            overallGrade,
-            newBatchStatus,
-            summary);
     }
 
     // ═══════════════════════════════════════════════════════════════════════════
@@ -573,6 +575,8 @@ public sealed class QcInspectionService(IQcInspectionRepository repository) : IQ
         if (inspection.InspectionStatus != "COMPLETED")
         {
             inspection.QcResult         = "FAIL";
+            inspection.QualityGrade     = "E";
+            batch.QualityGrade          = "E";
             inspection.InspectionStatus = "COMPLETED";
             inspection.CompletedAt      = DateTime.UtcNow;
         }
@@ -657,7 +661,13 @@ public sealed class QcInspectionService(IQcInspectionRepository repository) : IQ
         foreach (var detail in details)
         {
             if (!criteria.TryGetValue(detail.InspectionCriterionId, out var criterion))
-                continue;
+                throw new BadRequestException("Kết quả không thuộc phiên bản tiêu chuẩn của phiếu.");
+            if (!HasValue(detail, criterion))
+            {
+                detail.EvaluatedGrade = null;
+                detail.IsPassed = !criterion.IsRequired;
+                continue; // Missing optional input is not evidence of a serious defect.
+            }
 
             switch (criterion.DataType.ToUpperInvariant())
             {
@@ -670,10 +680,16 @@ public sealed class QcInspectionService(IQcInspectionRepository repository) : IQ
                 case "TEXT":
                     EvaluateText(detail, criterion);
                     break;
+                default:
+                    throw new BadRequestException("Kiểu dữ liệu tiêu chí không hợp lệ.");
             }
+            if (criterion.DataType != "BOOLEAN" && (detail.EvaluatedGrade is null || !GradeOrder.Contains(detail.EvaluatedGrade.ToUpperInvariant())))
+                throw new BadRequestException($"Không xác định được hạng cho tiêu chí '{criterion.CriterionCode}'. Vui lòng kiểm tra dữ liệu và cấu hình tiêu chuẩn.");
+            if (detail.EvaluatedGrade is not null) detail.EvaluatedGrade = detail.EvaluatedGrade.ToUpperInvariant();
+            if (detail.EvaluatedGrade == "E") detail.IsPassed = false;
         }
 
-        // Phase 2: Check BOOLEAN critical failures (immediate FAIL, no grade)
+        // Phase 2: Serious BOOLEAN failure forces overall E; individual BOOLEAN remains ungraded.
         foreach (var detail in details)
         {
             if (!criteria.TryGetValue(detail.InspectionCriterionId, out var criterion)) continue;
@@ -681,7 +697,7 @@ public sealed class QcInspectionService(IQcInspectionRepository repository) : IQ
                 && !detail.IsPassed
                 && criterion.IsCritical)
             {
-                return (null, "FAIL",
+                return ("E", "FAIL",
                     $"Tiêu chí bắt buộc '{criterion.CriterionCode} – {criterion.CriterionName}' " +
                     "không đạt (BOOLEAN: Không đạt/Not Detected Failed).");
             }
@@ -694,7 +710,7 @@ public sealed class QcInspectionService(IQcInspectionRepository repository) : IQ
             if (criterion.DataType.Equals("BOOLEAN", StringComparison.OrdinalIgnoreCase)) continue;
             if (criterion.IsCritical && !detail.IsPassed)
             {
-                return (null, "FAIL",
+                return ("E", "FAIL",
                     $"Tiêu chí nghiêm trọng '{criterion.CriterionCode} – {criterion.CriterionName}' " +
                     $"không đạt ngưỡng cho phép (hạng: {detail.EvaluatedGrade ?? "không xác định"}).");
             }
@@ -713,16 +729,25 @@ public sealed class QcInspectionService(IQcInspectionRepository repository) : IQ
 
         if (gradedDetails.Count == 0)
         {
-            // No gradable criteria → default to A if all passed
-            return ("A", "PASS", null);
+            throw new BadRequestException("Không đủ dữ liệu hoặc cấu hình NUMBER/TEXT để phân hạng chất lượng.");
         }
 
         // Worst grade wins
         var worstGrade = GradeOrder
             .LastOrDefault(g => gradedDetails.Any(d => d.EvaluatedGrade == g));
 
-        return (worstGrade ?? "A", "PASS", null);
+        return worstGrade == "E"
+            ? ("E", "FAIL", "Lô hàng có tiêu chí chất lượng hạng E: " + string.Join(", ", gradedDetails.Where(d => d.EvaluatedGrade == "E").Select(d => criteria[d.InspectionCriterionId].CriterionCode)))
+            : (worstGrade!, "PASS", null);
     }
+
+    private static bool HasValue(InspectionResultDetail detail, InspectionCriterion criterion) => criterion.DataType.ToUpperInvariant() switch
+    {
+        "NUMBER" => detail.NumericValue.HasValue,
+        "TEXT" => !string.IsNullOrWhiteSpace(detail.TextValue),
+        "BOOLEAN" => detail.BooleanValue.HasValue,
+        _ => throw new BadRequestException("Kiểu dữ liệu tiêu chí không hợp lệ.")
+    };
 
     private static void EvaluateBoolean(
         InspectionResultDetail detail,
