@@ -72,8 +72,18 @@ public sealed class ProductBatchesController(IProductBatchService service) : Con
         Ok(ApiResponse<ProductBatchFilterOptions>.Success(await service.GetFilterOptionsAsync(cancellationToken)));
 
     [HttpGet("{id:long}")]
-    public async Task<ActionResult<ApiResponse<ProductBatchDetail>>> Get(long id, CancellationToken cancellationToken) =>
-        Ok(ApiResponse<ProductBatchDetail>.Success(await service.GetAsync(id, cancellationToken)));
+    public async Task<ActionResult<ApiResponse<ProductBatchDetail>>> Get(long id, CancellationToken cancellationToken)
+    {
+        var detail = await service.GetAsync(id, cancellationToken);
+        if (!User.IsInRole("OPERATION_STAFF"))
+            detail = detail with
+            {
+                CanUpdateReceivingInformation = false,
+                ReceivingUpdateLockReason = detail.ReceivingUpdateLockReason
+                    ?? "Bạn không có quyền cập nhật thông tin kiểm nhận."
+            };
+        return Ok(ApiResponse<ProductBatchDetail>.Success(detail));
+    }
 
     private int ActorId()
     {

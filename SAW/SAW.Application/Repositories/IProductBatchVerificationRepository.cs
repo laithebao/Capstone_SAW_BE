@@ -9,6 +9,6 @@ public interface IProductBatchVerificationRepository
         BatchStatusHistory history, CancellationToken cancellationToken);
     Task<bool> RejectAsync(long batchId, int supplierId, string reason,
         BatchStatusHistory history, CancellationToken cancellationToken);
-    Task<bool> UpdateAsync(long batchId, DateTime? expectedUpdatedAt, DateTime expectedCreatedAt, int accountId,
+    Task<ProductBatchReceivingUpdateResult> UpdateAsync(long batchId, DateTime? expectedUpdatedAt, DateTime expectedCreatedAt, int accountId,
         VerifiedReceivingDetails details, CancellationToken cancellationToken);
 }
