@@ -56,6 +56,4 @@ public interface IQcInspectionRepository
     // ── Save ──────────────────────────────────────────────────────────────────
 
     Task SaveChangesAsync(CancellationToken ct);
-
-    Task<QcInspection> FinalizeAsync(long id, int actorAccountId, Action<QcInspection> evaluate, CancellationToken ct);
 }

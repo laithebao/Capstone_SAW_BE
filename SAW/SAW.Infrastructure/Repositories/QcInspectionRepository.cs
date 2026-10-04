@@ -1,6 +1,4 @@
 using Microsoft.EntityFrameworkCore;
-using System.Data;
-using SAW.Application.Exceptions;
 using SAW.Application.Repositories;
 using SAW.Domain.Entities;
 using SAW.Infrastructure.Persistence;
@@ -51,8 +49,6 @@ public sealed class QcInspectionRepository(AppDbContext db) : IQcInspectionRepos
             .Include(q => q.QcAccount)
             .Include(q => q.InspectionStandardVersion)
                 .ThenInclude(v => v.InspectionStandardSet)
-            .Include(q => q.InspectionStandardVersion)
-                .ThenInclude(v => v.Criteria).ThenInclude(c => c.GradeRules)
             .Include(q => q.SensoryResult)
             .Include(q => q.LabResult)
             .Include(q => q.ResultDetails)
@@ -141,58 +137,4 @@ public sealed class QcInspectionRepository(AppDbContext db) : IQcInspectionRepos
 
     public Task SaveChangesAsync(CancellationToken ct)
         => db.SaveChangesAsync(ct);
-
-    public async Task<QcInspection> FinalizeAsync(long id, int actorAccountId, Action<QcInspection> evaluate, CancellationToken ct)
-    {
-        var attemptedCommit = false;
-        return await db.Database.CreateExecutionStrategy().ExecuteAsync(async () =>
-        {
-            // Finalization owns its unit of work. Reload after any rolled-back retry.
-            db.ChangeTracker.Clear();
-            await db.Database.OpenConnectionAsync(ct);
-            try
-            {
-                await db.Database.ExecuteSqlInterpolatedAsync($"EXEC sys.sp_set_session_context @key=N'AccountID', @value={actorAccountId}", ct);
-                await using var tx = await db.Database.BeginTransactionAsync(IsolationLevel.Serializable, ct);
-                var batchId = await db.QcInspections.Where(q => q.QcInspectionId == id).Select(q => (long?)q.ProductBatchId).SingleOrDefaultAsync(ct)
-                    ?? throw new NotFoundException($"Không tìm thấy phiếu kiểm định ID {id}.");
-                var inspections = await db.QcInspections.FromSqlInterpolated($"SELECT * FROM QC_INSPECTION WITH (UPDLOCK,HOLDLOCK) WHERE ProductBatchID={batchId}")
-                    .OrderByDescending(q => q.StartedAt).ThenByDescending(q => q.QcInspectionId).ToListAsync(ct);
-                if (inspections[0].QcInspectionId != id) throw new ConflictException("Đã có phiếu QC mới hơn. Vui lòng tải lại lô.");
-                await db.ProductBatches.FromSqlInterpolated($"SELECT * FROM PRODUCT_BATCH WITH (UPDLOCK,HOLDLOCK) WHERE ProductBatchID={batchId}").SingleAsync(ct);
-                var inspection = (await GetInspectionDetailAsync(id, ct))!;
-                if (attemptedCommit && inspection.InspectionStatus == "COMPLETED") return inspection;
-                if (inspection.InspectionStatus != "COMPLETED" && inspection.ProductBatch.BatchStatus != "PENDING_QC")
-                    throw new ConflictException("Trạng thái lô đã thay đổi. Không thể hoàn tất phiếu QC này.");
-                var oldStatus = inspection.ProductBatch.BatchStatus;
-                var previousHistory = await db.BatchStatusHistories.Where(h => h.ProductBatchId == batchId).MaxAsync(h => (long?)h.BatchStatusHistoryId, ct) ?? 0;
-                evaluate(inspection);
-                // Detail immutability trigger rejects writes after COMPLETED: persist evaluated
-                // criteria first, then complete the header + batch, within the SAME transaction.
-                var header = db.Entry(inspection); var batch = db.Entry(inspection.ProductBatch);
-                var headerValues = header.CurrentValues.Clone(); var batchValues = batch.CurrentValues.Clone();
-                header.CurrentValues.SetValues(header.OriginalValues); batch.CurrentValues.SetValues(batch.OriginalValues);
-                header.State = EntityState.Unchanged; batch.State = EntityState.Unchanged;
-                await db.SaveChangesAsync(ct);
-                header.CurrentValues.SetValues(headerValues); batch.CurrentValues.SetValues(batchValues);
-                await db.SaveChangesAsync(ct);
-                if (!await db.BatchStatusHistories.AnyAsync(h => h.ProductBatchId == batchId && h.BatchStatusHistoryId > previousHistory && h.NewStatus == inspection.ProductBatch.BatchStatus, ct))
-                {
-                    db.BatchStatusHistories.Add(new BatchStatusHistory { ProductBatchId = batchId, OldStatus = oldStatus,
-                        NewStatus = inspection.ProductBatch.BatchStatus, ChangedByAccountId = actorAccountId,
-                        ChangedAt = DateTime.UtcNow, ChangeReason = "Hoàn tất QC " + inspection.InspectionCode });
-                    await db.SaveChangesAsync(ct);
-                }
-                attemptedCommit = true;
-                await tx.CommitAsync(ct);
-                return inspection;
-            }
-            finally
-            {
-                if (db.Database.GetDbConnection().State == ConnectionState.Open)
-                    await db.Database.ExecuteSqlRawAsync("EXEC sys.sp_set_session_context @key=N'AccountID', @value=NULL", CancellationToken.None);
-                await db.Database.CloseConnectionAsync();
-            }
-        });
-    }
 }
