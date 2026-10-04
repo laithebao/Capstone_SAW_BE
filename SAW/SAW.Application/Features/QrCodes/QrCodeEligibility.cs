@@ -11,7 +11,7 @@ public static class QrCodeEligibility
     public static bool HasAcceptedQc(ProductBatch batch, QcInspection? latest) =>
         latest is { InspectionStatus: "COMPLETED", QcResult: "PASS", CompletedAt: not null }
         && latest.CompletedAt >= latest.StartedAt
-        && latest.QualityGrade is "A" or "B" or "C" or "D"
+        && latest.QualityGrade is "A" or "B" or "C" or "D" or "E"
         && latest.QualityGrade == batch.QualityGrade;
 
     public static bool CanCreate(ProductBatch batch, QcInspection? latest) =>

@@ -54,7 +54,7 @@ public sealed class GoodsReceiptQueryRepository(AppDbContext db) : IGoodsReceipt
             && !b.GoodsReceipts.Any(r => r.ReceiptStatus == "DRAFT" || r.ReceiptStatus == "COMMITTED")
             && b.QcInspections.OrderByDescending(q => q.StartedAt).ThenByDescending(q => q.QcInspectionId).Take(1)
                 .Any(q => q.InspectionStatus == "COMPLETED" && q.CompletedAt != null && q.QcResult == "PASS"
-                    && (q.QualityGrade == "A" || q.QualityGrade == "B" || q.QualityGrade == "C" || q.QualityGrade == "D") && q.QualityGrade == b.QualityGrade));
+                    && (q.QualityGrade == "A" || q.QualityGrade == "B" || q.QualityGrade == "C" || q.QualityGrade == "D" || q.QualityGrade == "E") && q.QualityGrade == b.QualityGrade));
         if (supplierId.HasValue) rows = rows.Where(b => b.SupplierId == supplierId);
         if (!string.IsNullOrEmpty(search)) rows = rows.Where(b => b.BatchCode.Contains(search) || b.ProductName.Contains(search));
         var total = await rows.CountAsync(ct);
