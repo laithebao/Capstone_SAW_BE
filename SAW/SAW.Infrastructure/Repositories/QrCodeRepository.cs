@@ -30,7 +30,7 @@ public sealed class QrCodeRepository(AppDbContext db) : IQrCodeRepository
             .Where(b => b.QcInspections.OrderByDescending(q => q.StartedAt).ThenByDescending(q => q.QcInspectionId)
                 .Take(1).Any(q => q.InspectionStatus == "COMPLETED" && q.QcResult == "PASS"
                     && q.CompletedAt != null && q.CompletedAt >= q.StartedAt
-                    && (q.QualityGrade == "A" || q.QualityGrade == "B" || q.QualityGrade == "C" || q.QualityGrade == "D")
+                    && (q.QualityGrade == "A" || q.QualityGrade == "B" || q.QualityGrade == "C" || q.QualityGrade == "D" || q.QualityGrade == "E")
                     && q.QualityGrade == b.QualityGrade))
             .OrderBy(b => b.ProductBatchId).Select(b => b.ProductBatchId).Take(Math.Clamp(take, 1, 100)).ToListAsync(ct);
 

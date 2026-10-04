@@ -522,8 +522,8 @@ public sealed class QcInspectionService(IQcInspectionRepository repository) : IQ
         }
         else
         {
-            // PASS — grade D/E goes to QUARANTINE for additional review
-            newBatchStatus    = overallGrade is "D" or "E" ? "QUARANTINE" : "APPROVED_FOR_STORAGE";
+            // PASS — all grades (A–E) go to APPROVED_FOR_STORAGE
+            newBatchStatus    = "APPROVED_FOR_STORAGE";
             batch.BatchStatus = newBatchStatus;
         }
 

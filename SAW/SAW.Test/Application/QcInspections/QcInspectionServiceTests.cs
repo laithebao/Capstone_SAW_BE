@@ -899,7 +899,7 @@ public sealed class QcInspectionServiceTests
     }
 
     [Fact]
-    public async Task UC53_FinalizeAsync_GradeDOrE_BatchGoesToQuarantine()
+    public async Task UC53_FinalizeAsync_GradeDOrE_BatchGoesToApprovedForStorage()
     {
         var criterion = new InspectionCriterion
         {
@@ -928,7 +928,7 @@ public sealed class QcInspectionServiceTests
 
         Assert.Equal("PASS", result.QcResult);
         Assert.Equal("D", result.QualityGrade);
-        Assert.Equal("QUARANTINE", result.NewBatchStatus);
+        Assert.Equal("APPROVED_FOR_STORAGE", result.NewBatchStatus);
     }
 
     [Fact]
@@ -1007,7 +1007,6 @@ public sealed class QcInspectionServiceTests
 
     [Theory]
     [InlineData("PENDING_QC")]
-    [InlineData("QUARANTINE")]
     [InlineData("APPROVED_FOR_STORAGE")]
     public async Task UC54_RejectBatchAsync_WithRejectableStatus_RejectsBatch(string batchStatus)
     {
