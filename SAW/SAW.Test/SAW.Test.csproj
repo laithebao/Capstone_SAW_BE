@@ -21,6 +21,7 @@
   <ItemGroup>
     <ProjectReference Include="..\SAW.Application\SAW.Application.csproj" />
     <ProjectReference Include="..\SAW.Domain\SAW.Domain.csproj" />
+    <ProjectReference Include="..\SAW.API\SAW.API.csproj" />
   </ItemGroup>
 
   <ItemGroup>

@@ -101,9 +101,11 @@ public class DeclareSupplierProfileRequest
         // Ghép file đính kèm từ EvidenceDocumentUrls nếu Frontend gửi riêng
         if (EvidenceDocumentUrls != null && EvidenceDocumentUrls.Any())
         {
-            for (int i = 0; i < EvidenceDocumentUrls.Count; i++)
+            var legacyUrls = EvidenceDocumentUrls
+                .Where(url => !url.StartsWith("/api/supplier-files/", StringComparison.Ordinal)).ToList();
+            for (int i = 0; i < legacyUrls.Count; i++)
             {
-                var url = EvidenceDocumentUrls[i];
+                var url = legacyUrls[i];
                 if (i < result.Count)
                 {
                     result[i].EvidenceFileUrl = url;

@@ -1,4 +1,4 @@
-﻿using Microsoft.EntityFrameworkCore;
+using Microsoft.EntityFrameworkCore;
 using SAW.Application.Features.Suppliers.DTOs;
 using SAW.Application.Repositories.Suppliers;
 using SAW.Domain.Entities;
@@ -17,7 +17,7 @@ public class SupplierRepository : ISupplierRepository
 
     public async Task<SupplierProfileResponse?> GetProfileByAccountIdAsync(int accountId, CancellationToken cancellationToken = default)
     {
-        return await (from s in _context.Set<Supplier>()
+        var profile = await (from s in _context.Set<Supplier>()
                       join a in _context.Set<Account>() on s.AccountId equals a.AccountId
                       where s.AccountId == accountId
                       select new SupplierProfileResponse
@@ -45,6 +45,7 @@ public class SupplierRepository : ISupplierRepository
                           PhoneNumber = s.PhoneNumber ?? a.PhoneNumber,
                           Email = s.Email ?? a.Email,
                           LegalRepresentative = s.ContactPerson,
+                          SupplierType = s.Note,
                           LogoUrl = a.AvatarUrl,
                           CropTypes = (from sct in _context.Set<SupplierCropType>()
                                        join ct in _context.Set<CropType>() on sct.CropTypeId equals ct.CropTypeId
@@ -70,6 +71,14 @@ public class SupplierRepository : ISupplierRepository
                                                 IsActive = sc.IsActive
                                             }).ToList()
                       }).FirstOrDefaultAsync(cancellationToken);
+        if (profile != null)
+        {
+            profile.Documents = await SupplierFileLinks.Documents(_context, profile.SupplierId, null, cancellationToken);
+            profile.Documents.AddRange(profile.Certifications.Where(c => !string.IsNullOrWhiteSpace(c.EvidenceFileUrl))
+                .Select(c => new SupplierDocumentDto { FileName = c.CertificationName, FileUrl = c.EvidenceFileUrl! }));
+        }
+        return profile;
+
     }
 
     public async Task<bool> HasProfileAsync(int accountId, CancellationToken cancellationToken = default)
@@ -111,7 +120,7 @@ public class SupplierRepository : ISupplierRepository
         return $"{prefix}{Guid.NewGuid().ToString()[..3].ToUpper()}";
     }
 
-    public async Task AddSupplierAsync(Supplier supplier, List<int> cropTypeIds, List<SupplierCertificationInputDto> certifications, List<SupplierGrowingAreaInputDto> growingAreas, CancellationToken cancellationToken = default)
+    public async Task AddSupplierAsync(Supplier supplier, List<int> cropTypeIds, List<SupplierCertificationInputDto> certifications, List<SupplierGrowingAreaInputDto> growingAreas, string? logoUrl, List<string>? documentUrls, CancellationToken cancellationToken = default)
     {
         var strategy = _context.Database.CreateExecutionStrategy();
 
@@ -159,6 +168,8 @@ public class SupplierRepository : ISupplierRepository
                     _context.Set<SupplierCropType>().AddRange(supplierCropTypes);
                 }
 
+                await SupplierFileLinks.ReplaceDocuments(_context, supplier.AccountId, supplier.SupplierId, null, documentUrls, cancellationToken);
+                await SupplierFileLinks.SaveAvatar(_context, supplier.AccountId, supplier.SupplierId, logoUrl, cancellationToken);
                 if (certifications != null && certifications.Any())
                 {
                     var supplierCerts = certifications
@@ -214,7 +225,7 @@ public class SupplierRepository : ISupplierRepository
         return existsInSupplier || existsInDistributor;
     }
 
-    public async Task UpdateSupplierAsync(Supplier supplier, List<int> cropTypeIds, List<SupplierCertificationInputDto> certifications, List<SupplierGrowingAreaInputDto> growingAreas, string oldValuesJson, CancellationToken cancellationToken = default)
+    public async Task UpdateSupplierAsync(Supplier supplier, List<int> cropTypeIds, List<SupplierCertificationInputDto> certifications, List<SupplierGrowingAreaInputDto> growingAreas, string oldValuesJson, string? logoUrl, List<string>? documentUrls, CancellationToken cancellationToken = default)
     {
         var strategy = _context.Database.CreateExecutionStrategy();
 
@@ -230,51 +241,34 @@ public class SupplierRepository : ISupplierRepository
                     .Where(sga => sga.SupplierId == supplier.SupplierId)
                     .ToListAsync(cancellationToken);
 
-                _context.Set<SupplierGrowingArea>().RemoveRange(oldGrowingAreas);
-
-                // 2. Thêm danh sách vùng trồng mới (ĐÃ FIX AN TOÀN KHÓA NGOẠI)
-                if (growingAreas != null && growingAreas.Any())
+                var areaIds = growingAreas.Select(a => a.GrowingAreaId).Distinct().ToList();
+                var foundAreas = await _context.GrowingAreas.Where(a => areaIds.Contains(a.GrowingAreaId)).CountAsync(cancellationToken);
+                if (foundAreas != areaIds.Count || areaIds.Count != growingAreas.Count)
+                    throw new ArgumentException("Vùng trồng không hợp lệ hoặc bị chọn trùng.");
+                _context.SupplierGrowingAreas.RemoveRange(oldGrowingAreas.Where(a => !areaIds.Contains(a.GrowingAreaId)));
+                foreach (var input in growingAreas)
                 {
-                    var inputAreaIds = growingAreas.Select(ga => ga.GrowingAreaId).Distinct().ToList();
-
-                    var existingAreaIds = await _context.Set<GrowingArea>()
-                        .Where(ga => inputAreaIds.Contains(ga.GrowingAreaId))
-                        .Select(ga => ga.GrowingAreaId)
-                        .ToListAsync(cancellationToken);
-
-                    var invalidIds = inputAreaIds.Except(existingAreaIds).ToList();
-                    if (invalidIds.Any())
+                    var link = oldGrowingAreas.SingleOrDefault(a => a.GrowingAreaId == input.GrowingAreaId);
+                    if (link == null)
                     {
-                        throw new ArgumentException($"Các Vùng trồng có ID [{string.Join(", ", invalidIds)}] không tồn tại trong cơ sở dữ liệu.");
+                        link = new SupplierGrowingArea { SupplierId = supplier.SupplierId, GrowingAreaId = input.GrowingAreaId, JoinedAt = DateTime.UtcNow };
+                        _context.SupplierGrowingAreas.Add(link);
                     }
-
-                    var newGrowingAreas = growingAreas.Select(ga => new SupplierGrowingArea
-                    {
-                        SupplierId = supplier.SupplierId,
-                        GrowingAreaId = ga.GrowingAreaId,
-                        AreaInHectares = ga.AreaInHectares,
-                        JoinedAt = DateTime.UtcNow
-                    });
-
-                    _context.Set<SupplierGrowingArea>().AddRange(newGrowingAreas);
+                    link.AreaInHectares = input.AreaInHectares;
                 }
-
-                var oldCropTypes = await _context.Set<SupplierCropType>()
-                    .Where(sct => sct.SupplierId == supplier.SupplierId)
-                    .ToListAsync(cancellationToken);
-                _context.Set<SupplierCropType>().RemoveRange(oldCropTypes);
-
-                if (cropTypeIds != null && cropTypeIds.Any())
+                var oldCrops = await _context.SupplierCropTypes.Where(c => c.SupplierId == supplier.SupplierId).ToListAsync(cancellationToken);
+                var cropIds = cropTypeIds.Distinct().ToList();
+                _context.SupplierCropTypes.RemoveRange(oldCrops.Where(c => !cropIds.Contains(c.CropTypeId)));
+                foreach (var cropId in cropIds)
                 {
-                    var newCropTypes = cropTypeIds.Select(ctId => new SupplierCropType
-                    {
-                        SupplierId = supplier.SupplierId,
-                        CropTypeId = ctId,
-                        IsActive = true
-                    });
-                    _context.Set<SupplierCropType>().AddRange(newCropTypes);
+                    var link = oldCrops.SingleOrDefault(c => c.CropTypeId == cropId);
+                    if (link != null) link.IsActive = true;
+                    else _context.SupplierCropTypes.Add(new SupplierCropType { SupplierId = supplier.SupplierId, CropTypeId = cropId, IsActive = true });
                 }
 
+                await SupplierFileLinks.ReplaceDocuments(_context, supplier.AccountId, supplier.SupplierId, null, documentUrls, cancellationToken);
+                await SupplierFileLinks.SaveAvatar(_context, supplier.AccountId, supplier.SupplierId, logoUrl, cancellationToken);
+                supplier.UpdatedAt = DateTime.UtcNow;
                 var oldCerts = await _context.Set<SupplierCertification>()
                     .Where(sc => sc.SupplierId == supplier.SupplierId)
                     .ToListAsync(cancellationToken);

@@ -1,412 +1,150 @@
-using System;
-using System.Collections.Generic;
-using System.Linq;
-using System.Text;
-using System.Threading.Tasks;
-
+using SAW.Application.Exceptions;
 using SAW.Application.Features.Suppliers.DTOs;
 using SAW.Application.Repositories.Suppliers;
 using SAW.Domain.Entities;
 
 namespace SAW.Application.Features.Suppliers.Commands;
 
-public class SupplierBatchCommandService : ISupplierBatchCommandService
+public class SupplierBatchCommandService(IProductBatchRepository batches, ISupplierRepository suppliers) : ISupplierBatchCommandService
 {
-    private readonly IProductBatchRepository _productBatchRepository;
-    private readonly ISupplierRepository _supplierRepository;
+    public Task<SupplierBatchListResponse> GetDeclaredBatchesAsync(int accountId, GetSupplierBatchesQueryRequest request, CancellationToken ct = default) =>
+        batches.GetBatchesBySupplierAccountIdAsync(accountId, request, ct);
 
-    public SupplierBatchCommandService(
-        IProductBatchRepository productBatchRepository,
-        ISupplierRepository supplierRepository)
+    private async Task<Supplier> GetSupplier(int accountId, CancellationToken ct)
     {
-        _productBatchRepository = productBatchRepository;
-        _supplierRepository = supplierRepository;
+        var supplier = await suppliers.GetEntityByAccountIdAsync(accountId, ct)
+            ?? throw new KeyNotFoundException("Vui lòng khai báo hồ sơ nhà cung cấp trước.");
+        if (supplier.ProfileStatus != "ACTIVE") throw new UnauthorizedAccessException("Hồ sơ nhà cung cấp chưa hoạt động.");
+        return supplier;
     }
 
-    public async Task<SupplierBatchListResponse> GetDeclaredBatchesAsync(int currentAccountId, GetSupplierBatchesQueryRequest request, CancellationToken cancellationToken = default)
+    private async Task<decimal> Validate(int supplierId, DeclareProductBatchRequest request, CancellationToken ct)
     {
-        return await _productBatchRepository.GetBatchesBySupplierAccountIdAsync(currentAccountId, request, cancellationToken);
+        var today = DateOnly.FromDateTime(DateTime.UtcNow.AddHours(7));
+        var weight = SupplierBatchValidation.ValidateAndCalculateWeight(request, today);
+        if (!await batches.IsCropTypeRegisteredForSupplierAsync(supplierId, request.CropTypeId, ct))
+            throw new ArgumentException("Nông sản chưa được đăng ký hoặc không còn hoạt động.");
+        if (!await batches.IsGrowingAreaRegisteredForSupplierAsync(supplierId, request.GrowingAreaId, ct))
+            throw new ArgumentException("Vùng trồng không thuộc nhà cung cấp hiện tại.");
+        return weight;
     }
 
-    public async Task<SupplierBatchItemResponse> DeclareBatchAsync(int currentAccountId, DeclareProductBatchRequest request, CancellationToken cancellationToken = default)
+    public async Task<SupplierBatchItemResponse> DeclareBatchAsync(int accountId, DeclareProductBatchRequest request, CancellationToken ct = default)
     {
-        // 1. Lấy thông tin Supplier Profile từ AccountId
-        var supplier = await _supplierRepository.GetEntityByAccountIdAsync(currentAccountId, cancellationToken);
-        if (supplier == null)
+        var supplier = await GetSupplier(accountId, ct);
+        var weight = await Validate(supplier.SupplierId, request, ct);
+        var batch = new ProductBatch
         {
-            throw new KeyNotFoundException("Vui lòng khai báo thông tin nhà cung cấp trước khi khai báo thông tin lô hàng.");
-        }
-
-        // 2. Validate HarvestDate (không được ở tương lai)
-        var today = DateOnly.FromDateTime(DateTime.UtcNow);
-        if (request.HarvestDate > today)
-        {
-            throw new ArgumentException("Ngày thu hoạch không được ở tương lai.");
-        }
-
-        // 3. Validate ExpectedDeliveryDate
-        if (request.ExpectedDeliveryDate.HasValue && request.ExpectedDeliveryDate.Value < request.HarvestDate)
-        {
-            throw new ArgumentException("Ngày giao hàng dự kiến không hợp lệ.");
-        }
-
-        // 4. Kiểm tra CropType có được đăng ký bởi Supplier này không
-        var isRegistered = await _productBatchRepository.IsCropTypeRegisteredForSupplierAsync(supplier.SupplierId, request.CropTypeId, cancellationToken);
-        if (!isRegistered)
-        {
-            throw new InvalidOperationException("Loại cây trồng đã chọn chưa được đăng ký cho nhà cung cấp này.");
-        }
-
-        // 5. Tính toán WeightInKg theo Đơn vị & Quy cách đóng gói
-        decimal calculatedWeightKg = 0;
-        var unitLower = request.Unit.Trim().ToLower();
-
-        if (unitLower == "kg" || unitLower == "kilogram")
-        {
-            calculatedWeightKg = request.DeclaredQuantity;
-        }
-        else if (unitLower == "tấn" || unitLower == "tan" || unitLower == "ton")
-        {
-            calculatedWeightKg = request.DeclaredQuantity * 1000m;
-        }
-        else if (request.PackageCount.HasValue && request.PackageUnitWeightKg.HasValue)
-        {
-            calculatedWeightKg = request.PackageCount.Value * request.PackageUnitWeightKg.Value;
-        }
-        else
-        {
-            calculatedWeightKg = request.DeclaredQuantity; // Fallback
-        }
-
-        if (calculatedWeightKg <= 0)
-        {
-            throw new ArgumentException("Số lượng khai báo phải lớn hơn 0.");
-        }
-
-        // 6. Sinh mã lô hàng tự động
-        var batchCode = await _productBatchRepository.GenerateBatchCodeAsync(cancellationToken);
-
-        var nowUtc = DateTime.UtcNow;
-
-        // 7. Tạo Entity ProductBatch
-        var newBatch = new ProductBatch
-        {
-            BatchCode = batchCode,
-            SupplierId = supplier.SupplierId,
-            CropTypeId = request.CropTypeId,
-            GrowingAreaId = request.GrowingAreaId,
-            ProductName = request.ProductName.Trim(),
-            HarvestDate = request.HarvestDate,
-            DeclaredQuantity = request.DeclaredQuantity,
-            Unit = request.Unit.Trim(),
-            WeightInKg = calculatedWeightKg,
-            PackagingType = request.PackagingType,
-            PackageCount = request.PackageCount,
-            PackageUnitWeightKg = request.PackageUnitWeightKg,
-            ExpectedMinTempC = request.ExpectedMinTempC,
-            ExpectedMaxTempC = request.ExpectedMaxTempC,
-            ExpectedMinHumidityPct = request.ExpectedMinHumidityPct,
-            ExpectedMaxHumidityPct = request.ExpectedMaxHumidityPct,
-            ExpectedDeliveryDate = request.ExpectedDeliveryDate,
-            ExpiryDate = request.ExpiryDate,
-            BatchStatus = "SUBMITTED",
-            Note = request.Note,
-            CreatedAt = nowUtc
+            BatchCode = await batches.GenerateBatchCodeAsync(ct), SupplierId = supplier.SupplierId,
+            BatchStatus = "SUBMITTED", CreatedAt = DateTime.UtcNow
         };
-
-        // 8. Tạo lịch sử trạng thái ban đầu (BatchStatusHistory)
-        var statusHistory = new BatchStatusHistory
-        {
-            OldStatus = null,
-            NewStatus = "SUBMITTED",
-            ChangedByAccountId = currentAccountId,
-            ChangeReason = "Khai báo lô hàng mới từ phía Nhà cung cấp.",
-            ChangedAt = nowUtc
-        };
-
-        // 9. Lưu vào DB
-        await _productBatchRepository.AddProductBatchAsync(newBatch, statusHistory, cancellationToken);
-
-        // 10. Trả về Response
-        return new SupplierBatchItemResponse
-        {
-            BatchId = newBatch.ProductBatchId,
-            BatchCode = newBatch.BatchCode,
-            ProductName = newBatch.ProductName,
-            QuantityInTons = newBatch.Unit.ToLower().Contains("kg") ? newBatch.DeclaredQuantity / 1000m : newBatch.DeclaredQuantity,
-            SubmittedDate = newBatch.CreatedAt,
-            Status = newBatch.BatchStatus,
-            StatusDisplayName = "Chờ duyệt"
-        };
+        Apply(batch, request, weight);
+        var history = History(batch, accountId, null, "SUBMITTED", "Khai báo lô hàng.");
+        await batches.AddProductBatchAsync(batch, history, request.EvidenceDocumentUrls, ct);
+        return Item(batch);
     }
 
-    public async Task<SupplierBatchItemResponse> UpdateDeclaredBatchAsync(long batchId, int currentAccountId, UpdateProductBatchRequest request, CancellationToken cancellationToken = default)
+    public async Task<SupplierBatchItemResponse> UpdateDeclaredBatchAsync(long id, int accountId, UpdateProductBatchRequest request, CancellationToken ct = default)
     {
-        // 1. Kiểm tra Nhà cung cấp hiện tại
-        var supplier = await _supplierRepository.GetEntityByAccountIdAsync(currentAccountId, cancellationToken);
-        if (supplier == null)
-        {
-            throw new UnauthorizedAccessException("Bạn không có quyền chỉnh sửa lô hàng này.");
-        }
-
-        // 2. Tìm lô hàng theo BatchId
-        var existingBatch = await _productBatchRepository.GetBatchByIdAsync(batchId, cancellationToken);
-        if (existingBatch == null)
-        {
-            throw new KeyNotFoundException("Không tìm thấy thông tin lô hàng.");
-        }
-
-        // 3. Kiểm tra lô hàng có thuộc sở hữu của Nhà cung cấp này không
-        if (existingBatch.SupplierId != supplier.SupplierId)
-        {
-            throw new UnauthorizedAccessException("Bạn không có quyền chỉnh sửa lô hàng này.");
-        }
-
-        // 4. Kiểm tra trạng thái lô hàng (chỉ cho phép sửa khi SUBMITTED)
-        if (existingBatch.BatchStatus != "SUBMITTED")
-        {
-            throw new InvalidOperationException("Khai báo lô hàng này không còn có thể chỉnh sửa.");
-        }
-
-        // 5. Kiểm tra HarvestDate không ở tương lai
-        var today = DateOnly.FromDateTime(DateTime.UtcNow);
-        if (request.HarvestDate > today)
-        {
-            throw new ArgumentException("Ngày thu hoạch không được ở tương lai.");
-        }
-
-        // 6. Kiểm tra ExpectedDeliveryDate
-        if (request.ExpectedDeliveryDate.HasValue && request.ExpectedDeliveryDate.Value < request.HarvestDate)
-        {
-            throw new ArgumentException("Ngày giao hàng dự kiến không hợp lệ.");
-        }
-
-        // 7. Kiểm tra CropType có được đăng ký bởi Supplier này không
-        var isRegistered = await _productBatchRepository.IsCropTypeRegisteredForSupplierAsync(supplier.SupplierId, request.CropTypeId, cancellationToken);
-        if (!isRegistered)
-        {
-            throw new InvalidOperationException("Loại cây trồng đã chọn chưa được đăng ký cho nhà cung cấp này.");
-        }
-
-        // 8. Tính toán lại WeightInKg
-        decimal calculatedWeightKg = 0;
-        var unitLower = request.Unit.Trim().ToLower();
-
-        if (unitLower == "kg" || unitLower == "kilogram")
-        {
-            calculatedWeightKg = request.DeclaredQuantity;
-        }
-        else if (unitLower == "tấn" || unitLower == "tan" || unitLower == "ton")
-        {
-            calculatedWeightKg = request.DeclaredQuantity * 1000m;
-        }
-        else if (request.PackageCount.HasValue && request.PackageUnitWeightKg.HasValue)
-        {
-            calculatedWeightKg = request.PackageCount.Value * request.PackageUnitWeightKg.Value;
-        }
-        else
-        {
-            calculatedWeightKg = request.DeclaredQuantity;
-        }
-
-        if (calculatedWeightKg <= 0)
-        {
-            throw new ArgumentException("Số lượng khai báo phải lớn hơn 0.");
-        }
-
-        var currentStatus = existingBatch.BatchStatus;
-        var nowUtc = DateTime.UtcNow;
-
-        // 9. Cập nhật thông tin Lô hàng
-        existingBatch.CropTypeId = request.CropTypeId;
-        existingBatch.GrowingAreaId = request.GrowingAreaId;
-        existingBatch.ProductName = request.ProductName.Trim();
-        existingBatch.HarvestDate = request.HarvestDate;
-        existingBatch.DeclaredQuantity = request.DeclaredQuantity;
-        existingBatch.Unit = request.Unit.Trim();
-        existingBatch.WeightInKg = calculatedWeightKg;
-        existingBatch.PackagingType = request.PackagingType;
-        existingBatch.PackageCount = request.PackageCount;
-        existingBatch.PackageUnitWeightKg = request.PackageUnitWeightKg;
-        existingBatch.ExpectedMinTempC = request.ExpectedMinTempC;
-        existingBatch.ExpectedMaxTempC = request.ExpectedMaxTempC;
-        existingBatch.ExpectedMinHumidityPct = request.ExpectedMinHumidityPct;
-        existingBatch.ExpectedMaxHumidityPct = request.ExpectedMaxHumidityPct;
-        existingBatch.ExpectedDeliveryDate = request.ExpectedDeliveryDate;
-        existingBatch.ExpiryDate = request.ExpiryDate;
-        existingBatch.Note = request.Note;
-        existingBatch.UpdatedAt = nowUtc;
-
-        // 10. Ghi nhận lịch sử thay đổi (Audit History)
-        var statusHistory = new BatchStatusHistory
-        {
-            ProductBatchId = existingBatch.ProductBatchId,
-            OldStatus = currentStatus,
-            NewStatus = currentStatus,
-            ChangedByAccountId = currentAccountId,
-            ChangeReason = "Cập nhật thông tin khai báo lô hàng.",
-            ChangedAt = nowUtc
-        };
-
-        // 11. Lưu xuống DB
-        await _productBatchRepository.UpdateProductBatchAsync(existingBatch, statusHistory, cancellationToken);
-
-        // 12. Trả về Response
-        return new SupplierBatchItemResponse
-        {
-            BatchId = existingBatch.ProductBatchId,
-            BatchCode = existingBatch.BatchCode,
-            ProductName = existingBatch.ProductName,
-            QuantityInTons = existingBatch.Unit.ToLower().Contains("kg") ? existingBatch.DeclaredQuantity / 1000m : existingBatch.DeclaredQuantity,
-            SubmittedDate = existingBatch.CreatedAt,
-            Status = existingBatch.BatchStatus,
-            StatusDisplayName = "Chờ duyệt"
-        };
+        var supplier = await GetSupplier(accountId, ct);
+        var batch = await OwnedBatch(id, supplier.SupplierId, ct);
+        if (batch.BatchStatus != "SUBMITTED") throw new ConflictException("Lô hàng đã được xử lý. Vui lòng tải lại dữ liệu.");
+        if (request.ExpectedCreatedAt is null) throw new ArgumentException("Thiếu phiên bản lô hàng. Vui lòng tải lại dữ liệu.");
+        var weight = await Validate(supplier.SupplierId, request, ct);
+        Apply(batch, request, weight);
+        await batches.UpdateProductBatchAsync(batch,
+            History(batch, accountId, "SUBMITTED", "SUBMITTED", "Cập nhật khai báo lô hàng."),
+            request.ExpectedCreatedAt.Value, request.ExpectedUpdatedAt, request.EvidenceDocumentUrls, ct);
+        return Item(batch);
     }
 
-    public async Task<SupplierBatchStatusResponse> GetBatchStatusDetailAsync(long batchId, int currentAccountId, CancellationToken cancellationToken = default)
+    public async Task CancelBatchAsync(long id, int accountId, CancelSupplierBatchRequest request, CancellationToken ct = default)
     {
-        // 1. Kiểm tra Hồ sơ Nhà cung cấp
-        var supplier = await _supplierRepository.GetEntityByAccountIdAsync(currentAccountId, cancellationToken);
-        if (supplier == null)
-        {
-            throw new UnauthorizedAccessException("Không tìm thấy thông tin hồ sơ nhà cung cấp.");
-        }
+        var supplier = await GetSupplier(accountId, ct);
+        var batch = await OwnedBatch(id, supplier.SupplierId, ct);
+        if (batch.BatchStatus != "SUBMITTED") throw new ConflictException("Lô hàng đã được xử lý nên không thể hủy. Vui lòng tải lại dữ liệu.");
+        if (request.ExpectedCreatedAt is null) throw new ArgumentException("Thiếu phiên bản lô hàng. Vui lòng tải lại dữ liệu.");
+        batch.BatchStatus = "CANCELLED";
+        await batches.UpdateProductBatchAsync(batch,
+            History(batch, accountId, "SUBMITTED", "CANCELLED", "Nhà cung cấp hủy lô hàng."),
+            request.ExpectedCreatedAt.Value, request.ExpectedUpdatedAt, null, ct);
+    }
 
-        // 2. Lấy thông tin lô hàng chi tiết
-        var batch = await _productBatchRepository.GetBatchStatusDetailByIdAsync(batchId, cancellationToken);
-        if (batch == null)
-        {
-            throw new KeyNotFoundException("Không tìm thấy thông tin lô hàng.");
-        }
+    private async Task<ProductBatch> OwnedBatch(long id, int supplierId, CancellationToken ct)
+    {
+        var batch = await batches.GetBatchByIdAsync(id, ct) ?? throw new KeyNotFoundException("Không tìm thấy lô hàng.");
+        if (batch.SupplierId != supplierId) throw new UnauthorizedAccessException("Bạn không có quyền truy cập lô hàng này.");
+        return batch;
+    }
 
-        // 3. Kiểm tra quyền truy cập
-        if (batch.SupplierId != supplier.SupplierId)
-        {
-            throw new UnauthorizedAccessException("Bạn không có quyền xem thông tin lô hàng này.");
-        }
-
-        // 4. Tính tổng ReceivedQuantity từ các GoodsReceipt có trạng thái COMMITTED
-        decimal receivedQuantity = await _productBatchRepository.GetCommittedReceivedQuantityAsync(batchId, cancellationToken);
-
-        // 5. Lấy kết quả QC & Quality Grade gần nhất
-        var latestQc = batch.QcInspections?
-            .OrderByDescending(q => q.CompletedAt ?? q.StartedAt)
-            .FirstOrDefault();
-
-        string? qcResult = latestQc?.QcResult;
-        string? qualityGrade = latestQc?.QualityGrade;
-        string? rejectionReason = batch.BatchStatus == "REJECTED" && !string.IsNullOrWhiteSpace(batch.RejectionReason)
-            ? batch.RejectionReason
-            : (latestQc?.QcResult == "FAILED" || latestQc?.QcResult == "REJECTED")
-                ? latestQc.Note
-                : null;
-
-        // 6. Lấy Lịch sử trạng thái xử lý
-        var histories = await _productBatchRepository.GetBatchStatusHistoryAsync(batchId, cancellationToken);
-        var historyDtos = histories.Select(h => new BatchStatusHistoryDto
-        {
-            OldStatus = h.OldStatus ?? string.Empty,
-            NewStatus = h.NewStatus ?? string.Empty,
-            ChangeReason = h.ChangeReason,
-            // Fix triệt để lệch múi giờ: Đưa về UtcKind an toàn
-            ChangedAt = h.ChangedAt.Kind == DateTimeKind.Utc
-                ? h.ChangedAt
-                : DateTime.SpecifyKind(DateTime.SpecifyKind(h.ChangedAt, DateTimeKind.Unspecified), DateTimeKind.Utc)
-        }).ToList();
-
-        // 7. Map dữ liệu trả về Response
+    public async Task<SupplierBatchStatusResponse> GetBatchStatusDetailAsync(long id, int accountId, CancellationToken ct = default)
+    {
+        var supplier = await GetSupplier(accountId, ct);
+        var batch = await batches.GetBatchStatusDetailByIdAsync(id, ct) ?? throw new KeyNotFoundException("Không tìm thấy lô hàng.");
+        if (batch.SupplierId != supplier.SupplierId) throw new UnauthorizedAccessException("Bạn không có quyền xem lô hàng này.");
+        var qc = batch.QcInspections.Where(q => q.InspectionStatus == "COMPLETED")
+            .OrderByDescending(q => q.CompletedAt ?? q.StartedAt).ThenByDescending(q => q.QcInspectionId).FirstOrDefault();
+        var history = await batches.GetBatchStatusHistoryAsync(id, ct);
         return new SupplierBatchStatusResponse
         {
-            BatchId = batch.ProductBatchId,
-            BatchCode = batch.BatchCode,
-            ProductName = batch.ProductName,
-            CropTypeName = batch.CropType?.CropName ?? string.Empty,
-            AreaName = batch.GrowingArea?.AreaName ?? string.Empty,
-            Province = batch.GrowingArea?.Province ?? string.Empty,
-            District = batch.GrowingArea?.District ?? string.Empty,
-            Ward = batch.GrowingArea?.Ward ?? string.Empty,
-            HarvestDate = batch.HarvestDate,
-            DeclaredQuantity = batch.DeclaredQuantity,
-            Unit = batch.Unit,
-            PackagingType = batch.PackagingType,
-            PackageCount = batch.PackageCount,
-            PackageUnitWeightKg = batch.PackageUnitWeightKg,
-            ExpectedMinTempC = batch.ExpectedMinTempC,
-            ExpectedMaxTempC = batch.ExpectedMaxTempC,
-            ExpectedMinHumidityPct = batch.ExpectedMinHumidityPct,
-            ExpectedMaxHumidityPct = batch.ExpectedMaxHumidityPct,
-            ExpiryDate = batch.ExpiryDate,
-            ReceivedQuantity = receivedQuantity,
-            WeightInKg = batch.WeightInKg,
-            CurrentStatus = batch.BatchStatus,
-            StatusDisplayName = GetStatusDisplayName(batch.BatchStatus),
-            QcResult = qcResult,
-            QualityGrade = qualityGrade,
-            RejectionReason = rejectionReason,
-            WarehouseNote = batch.Note,
-            ExpectedDeliveryDate = batch.ExpectedDeliveryDate,
-            CreatedAt = batch.CreatedAt,
-            StatusHistory = historyDtos
+            BatchId = id, BatchCode = batch.BatchCode, ProductName = batch.ProductName,
+            CropTypeId = batch.CropTypeId, GrowingAreaId = batch.GrowingAreaId,
+            CropTypeName = batch.CropType?.CropName ?? "", AreaName = batch.GrowingArea?.AreaName ?? "",
+            Province = batch.GrowingArea?.Province ?? "", District = batch.GrowingArea?.District ?? "", Ward = batch.GrowingArea?.Ward ?? "",
+            HarvestDate = batch.HarvestDate, DeclaredQuantity = batch.DeclaredQuantity, Unit = batch.Unit,
+            WeightInKg = batch.WeightInKg, VerifiedQuantity = batch.VerifiedQuantity, VerifiedWeightInKg = batch.VerifiedWeightInKg,
+            PackagingType = batch.PackagingType, PackageCount = batch.PackageCount, PackageUnitWeightKg = batch.PackageUnitWeightKg,
+            ExpectedMinTempC = batch.ExpectedMinTempC, ExpectedMaxTempC = batch.ExpectedMaxTempC,
+            ExpectedMinHumidityPct = batch.ExpectedMinHumidityPct, ExpectedMaxHumidityPct = batch.ExpectedMaxHumidityPct,
+            ExpiryDate = batch.ExpiryDate, ExpectedDeliveryDate = batch.ExpectedDeliveryDate,
+            ReceivedQuantity = await batches.GetCommittedReceivedQuantityAsync(id, ct),
+            CurrentStatus = batch.BatchStatus, StatusDisplayName = SupplierBatchStatuses.Label(batch.BatchStatus),
+            QcResult = qc?.QcResult, QualityGrade = batch.QualityGrade ?? qc?.QualityGrade,
+            RejectionReason = batch.RejectionReason ?? (qc?.QcResult == "FAILED" ? qc.Note : null),
+            SupplierNote = batch.Note, WarehouseNote = batch.ReceivingNote,
+            CreatedAt = batch.CreatedAt, UpdatedAt = batch.UpdatedAt,
+            Documents = await batches.GetDocumentsAsync(id, ct),
+            StatusHistory = history.Select(h => new BatchStatusHistoryDto
+            {
+                OldStatus = h.OldStatus ?? "", NewStatus = h.NewStatus,
+                ChangeReason = h.ChangeReason, ChangedAt = h.ChangedAt,
+                ChangedBy = h.ChangedByAccount?.FullName
+            }).ToList()
         };
     }
 
-    public async Task CancelBatchAsync(long batchId, int currentAccountId, CancellationToken cancellationToken = default)
+    private static void Apply(ProductBatch b, DeclareProductBatchRequest r, decimal weight)
     {
-        // 1. Kiểm tra Hồ sơ Nhà cung cấp từ currentAccountId
-        var supplier = await _supplierRepository.GetEntityByAccountIdAsync(currentAccountId, cancellationToken);
-        if (supplier == null)
-        {
-            throw new UnauthorizedAccessException("Bạn không có quyền hủy lô hàng này.");
-        }
-
-        // 2. Tìm lô hàng theo BatchId
-        var existingBatch = await _productBatchRepository.GetBatchByIdAsync(batchId, cancellationToken);
-        if (existingBatch == null)
-        {
-            throw new KeyNotFoundException("Không tìm thấy thông tin lô hàng.");
-        }
-
-        // 3. Kiểm tra lô hàng có thuộc sở hữu của Nhà cung cấp này không
-        if (existingBatch.SupplierId != supplier.SupplierId)
-        {
-            throw new UnauthorizedAccessException("Bạn không có quyền hủy lô hàng này.");
-        }
-
-        // 4. Kiểm tra trạng thái lô hàng (chỉ cho phép hủy khi đang SUBMITTED)
-        if (existingBatch.BatchStatus != "SUBMITTED")
-        {
-            throw new InvalidOperationException("Lô hàng này không thể hủy ở trạng thái hiện tại.");
-        }
-
-        var oldStatus = existingBatch.BatchStatus;
-        existingBatch.BatchStatus = "CANCELLED";
-
-        var statusHistory = new BatchStatusHistory
-        {
-            ProductBatchId = existingBatch.ProductBatchId,
-            OldStatus = oldStatus,
-            NewStatus = "CANCELLED",
-            ChangedByAccountId = currentAccountId,
-            ChangeReason = "Hủy khai báo lô hàng từ phía Nhà cung cấp.",
-            ChangedAt = DateTime.UtcNow
-        };
-
-        await _productBatchRepository.UpdateProductBatchAsync(existingBatch, statusHistory, cancellationToken);
+        b.CropTypeId = r.CropTypeId; b.GrowingAreaId = r.GrowingAreaId; b.ProductName = r.ProductName.Trim();
+        b.HarvestDate = r.HarvestDate; b.DeclaredQuantity = r.DeclaredQuantity; b.Unit = r.Unit.Trim(); b.WeightInKg = weight;
+        b.PackagingType = Clean(r.PackagingType); b.PackageCount = r.PackageCount; b.PackageUnitWeightKg = r.PackageUnitWeightKg;
+        b.ExpectedMinTempC = r.ExpectedMinTempC; b.ExpectedMaxTempC = r.ExpectedMaxTempC;
+        b.ExpectedMinHumidityPct = r.ExpectedMinHumidityPct; b.ExpectedMaxHumidityPct = r.ExpectedMaxHumidityPct;
+        b.ExpectedDeliveryDate = r.ExpectedDeliveryDate; b.ExpiryDate = r.ExpiryDate; b.Note = Clean(r.Note);
     }
-
-    private static string GetStatusDisplayName(string status) => status switch
+    private static string? Clean(string? s) => string.IsNullOrWhiteSpace(s) ? null : s.Trim();
+    private static SupplierBatchItemResponse Item(ProductBatch b) => new()
     {
-        "SUBMITTED" => "Đã khai báo / Chờ duyệt",
-        "APPROVED" => "Đã duyệt",
-        "REJECTED" => "Đã từ chối",
-        "RECEIVING" => "Đang nhận hàng",
-        "RECEIVED" => "Đã nhận hàng",
-        "IN_QC" => "Đang kiểm định QC",
-        "QC_PASSED" => "QC Đạt",
-        "QC_FAILED" => "QC Không đạt",
-        "STORED" => "Đã nhập kho",
-        "CANCELLED" => "Đã hủy",
-        _ => status
+        BatchId = b.ProductBatchId, BatchCode = b.BatchCode, ProductName = b.ProductName,
+        QuantityInTons = b.WeightInKg / 1000m, SubmittedDate = b.CreatedAt,
+        Status = b.BatchStatus, StatusDisplayName = SupplierBatchStatuses.Label(b.BatchStatus)
+    };
+    private static BatchStatusHistory History(ProductBatch b, int accountId, string? oldStatus, string newStatus, string reason) => new()
+    {
+        ProductBatchId = b.ProductBatchId, OldStatus = oldStatus, NewStatus = newStatus,
+        ChangedByAccountId = accountId, ChangeReason = reason, ChangedAt = DateTime.UtcNow
+    };
+}
+
+public static class SupplierBatchStatuses
+{
+    public static readonly string[] Approved = ["APPROVED_FOR_STORAGE", "RECEIVED", "IN_STOCK", "RESERVED", "PARTIALLY_ISSUED", "ISSUED"];
+    public static readonly string[] All = ["PENDING_PREDECLARATION", "SUBMITTED", "PENDING_QC", "APPROVED_FOR_STORAGE", "QUARANTINE", "REJECTED", "RECEIVED", "IN_STOCK", "RESERVED", "PARTIALLY_ISSUED", "ISSUED", "CANCELLED"];
+    public static string Label(string status) => status switch
+    {
+        "PENDING_PREDECLARATION" => "Chờ khai báo", "SUBMITTED" => "Chờ tiếp nhận", "PENDING_QC" => "Chờ kiểm định QC",
+        "APPROVED_FOR_STORAGE" => "Đã duyệt nhập kho", "QUARANTINE" => "Cách ly", "REJECTED" => "Bị từ chối",
+        "RECEIVED" => "Đã nhận hàng", "IN_STOCK" => "Đã nhập kho", "RESERVED" => "Đã giữ hàng",
+        "PARTIALLY_ISSUED" => "Đã xuất một phần", "ISSUED" => "Đã xuất hết", "CANCELLED" => "Đã hủy", _ => status
     };
 }

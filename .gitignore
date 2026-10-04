@@ -10,6 +10,8 @@
 
 # Database scripts and local database exports
 *.sql
+!docs/AddSupplierFiles.sql
+**/App_Data/SupplierFiles/
 *.sqlproj.user
 *.bak
 *.bacpac
@@ -517,3 +519,6 @@ secrets.json
 *.keystore
 
 # Local database backups and generated deployment artifacts
+
+# Local Supplier handover notes
+/docs/Supplier-fixes.md
