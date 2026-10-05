@@ -21,7 +21,7 @@ public class SupplierFilesController(AppDbContext db, IConfiguration config, IWe
 
     [HttpPost]
     [RequestSizeLimit(12 * 1024 * 1024)]
-    public async Task<IActionResult> Upload([FromForm] IFormFile file, [FromQuery] string purpose = "DOCUMENT", CancellationToken ct = default)
+    public async Task<IActionResult> Upload(IFormFile file, [FromQuery] string purpose = "DOCUMENT", CancellationToken ct = default)
     {
         purpose = purpose.ToUpperInvariant();
         if (AccountId <= 0) return Unauthorized();

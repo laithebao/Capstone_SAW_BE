@@ -93,4 +93,62 @@ public class SupplierBatchCommandServiceTests
         Assert.Equal("Supplier note", result.SupplierNote); Assert.Equal("Receiving note", result.WarehouseNote);
         Assert.Equal(240m, result.VerifiedQuantity); Assert.Equal(_created, result.CreatedAt);
     }
+
+    private void SetupDetail(ProductBatch batch)
+    {
+        _batches.Setup(r => r.GetBatchStatusDetailByIdAsync(5, It.IsAny<CancellationToken>())).ReturnsAsync(batch);
+        _batches.Setup(r => r.GetBatchStatusHistoryAsync(5, It.IsAny<CancellationToken>())).ReturnsAsync([]);
+        _batches.Setup(r => r.GetDocumentsAsync(5, It.IsAny<CancellationToken>())).ReturnsAsync([]);
+    }
+
+    [Theory]
+    [InlineData("DRAFT")]
+    [InlineData("IN_PROGRESS")]
+    [InlineData("COMPLETED")]
+    public async Task DetailExposesLatestInspectionStatusWithoutChangingBatchStatus(string inspectionStatus)
+    {
+        var batch = Batch("PENDING_QC");
+        batch.QcInspections.Add(new QcInspection { QcInspectionId = 1, StartedAt = _created,
+            InspectionStatus = "COMPLETED", CompletedAt = _created.AddHours(1), QcResult = "PASS" });
+        batch.QcInspections.Add(new QcInspection { QcInspectionId = 2, StartedAt = _created.AddDays(1),
+            InspectionStatus = inspectionStatus, CompletedAt = inspectionStatus == "COMPLETED" ? _created.AddDays(2) : null,
+            QcResult = inspectionStatus == "COMPLETED" ? "FAIL" : null, Note = "Inspection reason" });
+        SetupDetail(batch);
+        var result = await Service.GetBatchStatusDetailAsync(5, 1);
+        Assert.Equal(inspectionStatus, result.QcInspectionStatus);
+        Assert.Equal("PENDING_QC", result.CurrentStatus);
+        Assert.Equal(inspectionStatus == "COMPLETED" ? "FAIL" : "PASS", result.QcResult);
+        Assert.Equal(inspectionStatus == "COMPLETED" ? _created.AddDays(2) : _created.AddHours(1), result.QcCompletedAt);
+        Assert.Equal(inspectionStatus == "COMPLETED" ? "Inspection reason" : null, result.RejectionReason);
+        _batches.Verify(r => r.UpdateProductBatchAsync(It.IsAny<ProductBatch>(), It.IsAny<BatchStatusHistory>(),
+            It.IsAny<DateTime>(), It.IsAny<DateTime?>(), It.IsAny<List<string>?>(), It.IsAny<CancellationToken>()), Times.Never);
+    }
+
+    [Fact]
+    public async Task DetailUsesCommittedWarehouseDateAndIgnoresLaterInspections()
+    {
+        var batch = Batch("ISSUED");
+        batch.GoodsReceipts.Add(new GoodsReceipt { ReceiptStatus = "DRAFT", CommittedAt = _created });
+        batch.GoodsReceipts.Add(new GoodsReceipt { ReceiptStatus = "COMMITTED", CommittedAt = _created.AddDays(2) });
+        batch.GoodsReceipts.Add(new GoodsReceipt { ReceiptStatus = "COMMITTED", CommittedAt = _created.AddDays(3) });
+        batch.QcInspections.Add(new QcInspection { QcInspectionId = 1, StartedAt = _created,
+            InspectionStatus = "COMPLETED", CompletedAt = _created.AddDays(1), QcResult = "PASS" });
+        batch.QcInspections.Add(new QcInspection { QcInspectionId = 2, StartedAt = _created.AddDays(4),
+            InspectionStatus = "IN_PROGRESS" });
+        SetupDetail(batch);
+        var result = await Service.GetBatchStatusDetailAsync(5, 1);
+        Assert.Equal(_created.AddDays(2), result.WarehousedAt);
+        Assert.Equal("COMPLETED", result.QcInspectionStatus);
+        Assert.Equal("PASS", result.QcResult);
+        Assert.Equal(_created.AddDays(1), result.QcCompletedAt);
+        Assert.Equal("ISSUED", result.CurrentStatus);
+    }
+
+    [Fact]
+    public async Task DetailRejectsOtherSuppliersBatchBeforeReadingHistory()
+    {
+        SetupDetail(Batch(supplierId: 99));
+        await Assert.ThrowsAsync<UnauthorizedAccessException>(() => Service.GetBatchStatusDetailAsync(5, 1));
+        _batches.Verify(r => r.GetBatchStatusHistoryAsync(It.IsAny<long>(), It.IsAny<CancellationToken>()), Times.Never);
+    }
 }

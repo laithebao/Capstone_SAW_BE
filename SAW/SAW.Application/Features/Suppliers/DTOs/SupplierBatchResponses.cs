@@ -91,6 +91,9 @@ public class SupplierBatchStatusResponse
     public string CurrentStatus { get; set; } = string.Empty;
     public string StatusDisplayName { get; set; } = string.Empty;
     public string? QcResult { get; set; }
+    public string? QcInspectionStatus { get; set; }
+    public DateTime? QcCompletedAt { get; set; }
+    public DateTime? WarehousedAt { get; set; }
     public string? QualityGrade { get; set; }
     public string? RejectionReason { get; set; }
     public string? WarehouseNote { get; set; }

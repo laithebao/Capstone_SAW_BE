@@ -158,6 +158,7 @@ public class ProductBatchRepository(AppDbContext db) : IProductBatchRepository
     }
     public Task<ProductBatch?> GetBatchStatusDetailByIdAsync(long id, CancellationToken ct = default) =>
         db.ProductBatches.AsNoTracking().Include(b => b.CropType).Include(b => b.GrowingArea).Include(b => b.QcInspections)
+            .Include(b => b.GoodsReceipts.Where(g => g.ReceiptStatus == "COMMITTED")).AsSplitQuery()
             .SingleOrDefaultAsync(b => b.ProductBatchId == id, ct);
     public async Task<decimal> GetCommittedReceivedQuantityAsync(long id, CancellationToken ct = default) =>
         await db.GoodsReceipts.Where(g => g.ProductBatchId == id && g.ReceiptStatus == "COMMITTED")

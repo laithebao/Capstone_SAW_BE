@@ -82,7 +82,14 @@ public class SupplierBatchCommandService(IProductBatchRepository batches, ISuppl
         var supplier = await GetSupplier(accountId, ct);
         var batch = await batches.GetBatchStatusDetailByIdAsync(id, ct) ?? throw new KeyNotFoundException("Không tìm thấy lô hàng.");
         if (batch.SupplierId != supplier.SupplierId) throw new UnauthorizedAccessException("Bạn không có quyền xem lô hàng này.");
-        var qc = batch.QcInspections.Where(q => q.InspectionStatus == "COMPLETED")
+        var warehousedAt = batch.GoodsReceipts.Where(g => g.ReceiptStatus == "COMMITTED")
+            .Select(g => g.CommittedAt).Min();
+        // Supplier progress ends at warehouse entry, including when a later inspection exists.
+        var inspections = batch.QcInspections.Where(q => warehousedAt == null || q.StartedAt <= warehousedAt.Value);
+        var latestInspection = inspections.OrderByDescending(q => q.StartedAt)
+            .ThenByDescending(q => q.QcInspectionId).FirstOrDefault();
+        var qc = inspections.Where(q => q.InspectionStatus == "COMPLETED" &&
+                (warehousedAt == null || q.CompletedAt <= warehousedAt.Value))
             .OrderByDescending(q => q.CompletedAt ?? q.StartedAt).ThenByDescending(q => q.QcInspectionId).FirstOrDefault();
         var history = await batches.GetBatchStatusHistoryAsync(id, ct);
         return new SupplierBatchStatusResponse
@@ -100,7 +107,9 @@ public class SupplierBatchCommandService(IProductBatchRepository batches, ISuppl
             ReceivedQuantity = await batches.GetCommittedReceivedQuantityAsync(id, ct),
             CurrentStatus = batch.BatchStatus, StatusDisplayName = SupplierBatchStatuses.Label(batch.BatchStatus),
             QcResult = qc?.QcResult, QualityGrade = batch.QualityGrade ?? qc?.QualityGrade,
-            RejectionReason = batch.RejectionReason ?? (qc?.QcResult == "FAILED" ? qc.Note : null),
+            QcInspectionStatus = latestInspection?.InspectionStatus, QcCompletedAt = qc?.CompletedAt,
+            WarehousedAt = warehousedAt,
+            RejectionReason = batch.RejectionReason ?? (qc?.QcResult is "FAIL" or "FAILED" ? qc.Note : null),
             SupplierNote = batch.Note, WarehouseNote = batch.ReceivingNote,
             CreatedAt = batch.CreatedAt, UpdatedAt = batch.UpdatedAt,
             Documents = await batches.GetDocumentsAsync(id, ct),
