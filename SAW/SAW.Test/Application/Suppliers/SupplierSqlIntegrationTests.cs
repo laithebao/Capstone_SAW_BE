@@ -40,6 +40,10 @@ public class SupplierSqlIntegrationTests : IAsyncLifetime
     private readonly string _storage = Path.Combine(Path.GetTempPath(), "saw-supplier-files-" + Guid.NewGuid().ToString("N"));
     private ProductBatchRepository Repository(AppDbContext? db = null) => new(db ?? _db);
     private SupplierBatchCommandService Service(AppDbContext? db = null) => new(Repository(db), new SupplierRepository(db ?? _db));
+    private sealed class FixedTime(DateTimeOffset utc) : TimeProvider
+    {
+        public override DateTimeOffset GetUtcNow() => utc;
+    }
 
     public async Task InitializeAsync()
     {
@@ -225,6 +229,141 @@ public class SupplierSqlIntegrationTests : IAsyncLifetime
         var filtered = await Service().GetDeclaredBatchesAsync(_accountId, new() { Status = "APPROVED_FOR_STORAGE" });
         Assert.Single(filtered.Batches.Items); Assert.Equal(1, filtered.Summary.TotalDeclaredBatches);
         Assert.Equal(1, filtered.Summary.ApprovedBatches); Assert.Equal(0, filtered.Summary.PendingApprovalBatches);
+    }
+
+    [SupplierSqlFact]
+    public async Task GrowingAreaFilterDistinguishesAreasInSameProvinceBeforePaging()
+    {
+        var otherArea = new GrowingArea { AreaName = "Area C", Region = "South", Province = "Same province", District = "Same district", Ward = "Other ward" };
+        _db.GrowingAreas.Add(otherArea);
+        await _db.SaveChangesAsync();
+        _db.SupplierGrowingAreas.Add(new() { SupplierId = _supplierId, GrowingAreaId = otherArea.GrowingAreaId });
+        await _db.SaveChangesAsync();
+        var selectedIds = new List<long>();
+        for (var i = 0; i < 3; i++) selectedIds.Add((await Service().DeclareBatchAsync(_accountId, Declaration())).BatchId);
+        var other = Declaration();
+        other.GrowingAreaId = otherArea.GrowingAreaId;
+        await Service().DeclareBatchAsync(_accountId, other);
+
+        var firstPage = await Service().GetDeclaredBatchesAsync(_accountId, new() { GrowingAreaId = _areaId, PageSize = 2 });
+        var secondPage = await Service().GetDeclaredBatchesAsync(_accountId, new() { GrowingAreaId = _areaId, PageSize = 2, PageIndex = 2 });
+        Assert.Equal(3, firstPage.Batches.TotalCount);
+        Assert.Equal(3, firstPage.Summary.TotalDeclaredBatches);
+        Assert.Equal(2, firstPage.Batches.TotalPages);
+        Assert.Equal(2, firstPage.Batches.Items.Count);
+        Assert.Single(secondPage.Batches.Items);
+        Assert.Equal(selectedIds.Order(), firstPage.Batches.Items.Concat(secondPage.Batches.Items).Select(b => b.BatchId).Order());
+    }
+
+    [SupplierSqlFact]
+    public async Task StoredFilterKeepsLaterWarehouseStatusesAtSupplierFinalMilestone()
+    {
+        var storedIds = new List<long>();
+        foreach (var status in new[] { "IN_STOCK", "RESERVED", "PARTIALLY_ISSUED", "ISSUED" })
+        {
+            var item = await Service().DeclareBatchAsync(_accountId, Declaration());
+            await _db.Database.ExecuteSqlInterpolatedAsync($"UPDATE dbo.PRODUCT_BATCH SET BatchStatus={status} WHERE ProductBatchID={item.BatchId}");
+            storedIds.Add(item.BatchId);
+        }
+        await Service().DeclareBatchAsync(_accountId, Declaration());
+        var response = await Service().GetDeclaredBatchesAsync(_accountId, new() { Status = "IN_STOCK" });
+        Assert.Equal(4, response.Batches.TotalCount);
+        Assert.Equal(storedIds.Order(), response.Batches.Items.Select(b => b.BatchId).Order());
+        Assert.All(response.Batches.Items, b => { Assert.Equal("IN_STOCK", b.Status); Assert.Equal("Đã nhập kho", b.StatusDisplayName); });
+        Assert.Single((await Service().GetDeclaredBatchesAsync(_accountId, new() { Status = "SUBMITTED" })).Batches.Items);
+    }
+
+    [SupplierSqlFact]
+    public async Task ConcurrentDeclarationsReceiveUniquePersistedShortCodes()
+    {
+        var clock = new FixedTime(new DateTimeOffset(2060, 1, 1, 17, 0, 0, TimeSpan.Zero));
+        var codes = await Task.WhenAll(Enumerable.Range(0, 24).Select(async _ =>
+        {
+            await using var context = new AppDbContext(_options);
+            var service = new SupplierBatchCommandService(new ProductBatchRepository(context, clock), new SupplierRepository(context));
+            return (await service.DeclareBatchAsync(_accountId, Declaration())).BatchCode;
+        }));
+        Assert.Equal(24, codes.Distinct().Count());
+        Assert.All(codes, code => Assert.Matches(@"^LH-20600102-\d{4}$", code));
+        Assert.Equal(24, await _db.ProductBatches.CountAsync(batch => batch.SupplierId == _supplierId));
+        var savedCounter = await _db.ProductBatchDailyCounters.SingleAsync(counter => counter.CodeDate == new DateOnly(2060, 1, 2));
+        Assert.Equal(codes.Max(code => int.Parse(code.Split('-')[2])), savedCounter.LastNumber);
+        await using var reopened = new AppDbContext(_options);
+        var next = await new ProductBatchRepository(reopened, clock).GenerateBatchCodeAsync();
+        Assert.Equal(savedCounter.LastNumber + 1, int.Parse(next.Split('-')[2]));
+    }
+
+    [SupplierSqlFact]
+    public async Task DailyCodeCounterChangesDateAtVietnamMidnightAndKeepsOldCodes()
+    {
+        var before = new ProductBatchRepository(_db, new FixedTime(new DateTimeOffset(2061, 1, 1, 16, 59, 59, TimeSpan.Zero)));
+        var after = new ProductBatchRepository(_db, new FixedTime(new DateTimeOffset(2061, 1, 1, 17, 0, 0, TimeSpan.Zero)));
+        Assert.Equal("LH-20610101-0001", await before.GenerateBatchCodeAsync());
+        Assert.Equal("LH-20610101-0002", await before.GenerateBatchCodeAsync());
+        Assert.Equal("LH-20610102-0001", await after.GenerateBatchCodeAsync());
+        var legacy = await Service().DeclareBatchAsync(_accountId, Declaration());
+        const string legacyCode = "LH-20261005-17da0453a0e84f549d24a98928f603fd";
+        await _db.Database.ExecuteSqlInterpolatedAsync($"UPDATE dbo.PRODUCT_BATCH SET BatchCode={legacyCode} WHERE ProductBatchID={legacy.BatchId}");
+        Assert.Equal(legacyCode, (await Service().GetBatchStatusDetailAsync(legacy.BatchId, _accountId)).BatchCode);
+        Assert.Equal(legacy.BatchId, Assert.Single((await Service().GetDeclaredBatchesAsync(_accountId, new() { Keyword = legacyCode })).Batches.Items).BatchId);
+    }
+
+    [SupplierSqlFact]
+    public async Task SupplierListSummaryFilterAndDetailAgreeAfterEntryAndLaterInspection()
+    {
+        foreach (var status in new[] { "QUARANTINE", "REJECTED", "PENDING_QC", "ISSUED" })
+        {
+            var item = await Service().DeclareBatchAsync(_accountId, Declaration());
+            _db.BatchStatusHistories.Add(new() { ProductBatchId = item.BatchId, OldStatus = "APPROVED_FOR_STORAGE", NewStatus = "IN_STOCK",
+                ChangedAt = DateTime.UtcNow, ChangedByAccountId = _accountId });
+            await _db.SaveChangesAsync();
+            await _db.Database.ExecuteSqlInterpolatedAsync($"UPDATE dbo.PRODUCT_BATCH SET BatchStatus={status} WHERE ProductBatchID={item.BatchId}");
+            Assert.Equal("IN_STOCK", (await Service().GetBatchStatusDetailAsync(item.BatchId, _accountId)).CurrentStatus);
+            Assert.Equal(status, (await Repository().GetBatchByIdAsync(item.BatchId))!.BatchStatus);
+        }
+        var preStorage = await Service().DeclareBatchAsync(_accountId, Declaration());
+        await _db.Database.ExecuteSqlInterpolatedAsync($"UPDATE dbo.PRODUCT_BATCH SET BatchStatus=N'QUARANTINE' WHERE ProductBatchID={preStorage.BatchId}");
+        var stored = await Service().GetDeclaredBatchesAsync(_accountId, new() { Status = "IN_STOCK", PageSize = 2 });
+        Assert.Equal(4, stored.Batches.TotalCount); Assert.Equal(2, stored.Batches.TotalPages);
+        Assert.Equal(4, stored.Summary.ApprovedBatches);
+        Assert.Equal(0, stored.Summary.PendingQCBatches); Assert.Equal(0, stored.Summary.RejectedBatches);
+        Assert.All(stored.Batches.Items, item => Assert.Equal("IN_STOCK", item.Status));
+        var quarantined = await Service().GetDeclaredBatchesAsync(_accountId, new() { Status = "QUARANTINE" });
+        Assert.Equal(preStorage.BatchId, Assert.Single(quarantined.Batches.Items).BatchId);
+        Assert.Equal("QUARANTINE", (await Service().GetBatchStatusDetailAsync(preStorage.BatchId, _accountId)).CurrentStatus);
+        Assert.Equal(0, quarantined.Summary.ApprovedBatches);
+        Assert.Empty((await Service().GetDeclaredBatchesAsync(_accountId, new() { Status = "REJECTED" })).Batches.Items);
+        await Assert.ThrowsAsync<ArgumentException>(() => Service().GetDeclaredBatchesAsync(_accountId, new() { Status = "ISSUED" }));
+    }
+
+    [SupplierSqlFact]
+    public async Task DraftReceiptDoesNotFinishSupplierProgressButCommittedReceiptDoes()
+    {
+        var item = await Service().DeclareBatchAsync(_accountId, Declaration());
+        await _db.Database.ExecuteSqlInterpolatedAsync($"UPDATE dbo.PRODUCT_BATCH SET BatchStatus=N'APPROVED_FOR_STORAGE' WHERE ProductBatchID={item.BatchId}");
+        var location = new WarehouseLocation { LocationCode = Guid.NewGuid().ToString("N"), ZoneName = "Supplier test zone" };
+        _db.WarehouseLocations.Add(location);
+        await _db.SaveChangesAsync();
+        var receipt = new GoodsReceipt { ReceiptCode = Guid.NewGuid().ToString("N"), ProductBatchId = item.BatchId,
+            WarehouseLocationId = location.WarehouseLocationId, OperationAccountId = _accountId,
+            ReceivedQuantity = 10, Unit = "Thùng", WeightInKg = 100, ReceiptStatus = "DRAFT" };
+        _db.GoodsReceipts.Add(receipt);
+        await _db.SaveChangesAsync();
+        var draftDetail = await Service().GetBatchStatusDetailAsync(item.BatchId, _accountId);
+        Assert.Equal("APPROVED_FOR_STORAGE", draftDetail.CurrentStatus);
+        Assert.Null(draftDetail.WarehousedAt); Assert.Equal(0, draftDetail.ReceivedQuantity);
+        Assert.Empty((await Service().GetDeclaredBatchesAsync(_accountId, new() { Status = "IN_STOCK" })).Batches.Items);
+        Assert.Single((await Service().GetDeclaredBatchesAsync(_accountId, new() { Status = "APPROVED_FOR_STORAGE" })).Batches.Items);
+
+        receipt.ReceiptStatus = "COMMITTED"; receipt.CommittedAt = DateTime.UtcNow;
+        await _db.SaveChangesAsync();
+        await _db.Database.ExecuteSqlInterpolatedAsync($"UPDATE dbo.PRODUCT_BATCH SET BatchStatus=N'QUARANTINE' WHERE ProductBatchID={item.BatchId}");
+        var committedDetail = await Service().GetBatchStatusDetailAsync(item.BatchId, _accountId);
+        Assert.Equal("IN_STOCK", committedDetail.CurrentStatus);
+        Assert.NotNull(committedDetail.WarehousedAt); Assert.Equal(10, committedDetail.ReceivedQuantity);
+        var stored = await Service().GetDeclaredBatchesAsync(_accountId, new() { Status = "IN_STOCK" });
+        Assert.Single(stored.Batches.Items); Assert.Equal(1, stored.Summary.ApprovedBatches);
+        Assert.Empty((await Service().GetDeclaredBatchesAsync(_accountId, new() { Status = "QUARANTINE" })).Batches.Items);
     }
 
     [SupplierSqlFact]

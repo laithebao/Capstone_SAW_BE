@@ -56,6 +56,7 @@ public class AppDbContext : DbContext
 
     // 05. Product Batch
     public DbSet<ProductBatch> ProductBatches => Set<ProductBatch>();
+    public DbSet<ProductBatchDailyCounter> ProductBatchDailyCounters => Set<ProductBatchDailyCounter>();
     public DbSet<BatchStatusHistory> BatchStatusHistories => Set<BatchStatusHistory>();
 
     // 06. Warehouse

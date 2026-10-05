@@ -141,7 +141,57 @@ public class SupplierBatchCommandServiceTests
         Assert.Equal("COMPLETED", result.QcInspectionStatus);
         Assert.Equal("PASS", result.QcResult);
         Assert.Equal(_created.AddDays(1), result.QcCompletedAt);
-        Assert.Equal("ISSUED", result.CurrentStatus);
+        Assert.Equal("IN_STOCK", result.CurrentStatus);
+        Assert.Equal("ISSUED", batch.BatchStatus);
+    }
+
+    [Theory]
+    [InlineData("IN_STOCK")]
+    [InlineData("RESERVED")]
+    [InlineData("PARTIALLY_ISSUED")]
+    [InlineData("ISSUED")]
+    [InlineData("QUARANTINE")]
+    [InlineData("REJECTED")]
+    [InlineData("PENDING_QC")]
+    public async Task SupplierDetailStopsAtWarehouseEntryWithoutChangingWarehouseState(string warehouseStatus)
+    {
+        var batch = Batch(warehouseStatus);
+        batch.QualityGrade = "C";
+        batch.RejectionReason = "Later warehouse rejection";
+        batch.GoodsReceipts.Add(new GoodsReceipt { ReceiptStatus = "COMMITTED", CommittedAt = _created.AddDays(2) });
+        batch.QcInspections.Add(new QcInspection { QcInspectionId = 1, StartedAt = _created,
+            InspectionStatus = "COMPLETED", CompletedAt = _created.AddDays(1), QcResult = "PASS", QualityGrade = "A" });
+        batch.QcInspections.Add(new QcInspection { QcInspectionId = 2, StartedAt = _created.AddDays(3),
+            InspectionStatus = "COMPLETED", CompletedAt = _created.AddDays(4), QcResult = "FAIL", QualityGrade = "C" });
+        SetupDetail(batch);
+        _batches.Setup(r => r.GetBatchStatusHistoryAsync(5, It.IsAny<CancellationToken>())).ReturnsAsync([
+            new() { BatchStatusHistoryId = 3, OldStatus = "IN_STOCK", NewStatus = warehouseStatus, ChangedAt = _created.AddDays(3) },
+            new() { BatchStatusHistoryId = 2, OldStatus = "APPROVED_FOR_STORAGE", NewStatus = "IN_STOCK", ChangedAt = _created.AddDays(2) },
+            new() { BatchStatusHistoryId = 1, OldStatus = "PENDING_QC", NewStatus = "APPROVED_FOR_STORAGE", ChangedAt = _created.AddDays(1) }
+        ]);
+        var result = await Service.GetBatchStatusDetailAsync(5, 1);
+        Assert.Equal("IN_STOCK", result.CurrentStatus);
+        Assert.Equal("Đã nhập kho", result.StatusDisplayName);
+        Assert.Equal("PASS", result.QcResult); Assert.Equal("A", result.QualityGrade);
+        Assert.Null(result.RejectionReason);
+        Assert.Equal(2, result.StatusHistory.Count);
+        Assert.DoesNotContain(result.StatusHistory, item => item.OldStatus == "IN_STOCK");
+        Assert.Equal(warehouseStatus, batch.BatchStatus);
+    }
+
+    [Fact]
+    public async Task SupplierDetailUsesHistoricEntryWhenLegacyBatchHasNoCommittedReceipt()
+    {
+        var batch = Batch("QUARANTINE");
+        SetupDetail(batch);
+        _batches.Setup(r => r.GetBatchStatusHistoryAsync(5, It.IsAny<CancellationToken>())).ReturnsAsync([
+            new() { OldStatus = "IN_STOCK", NewStatus = "QUARANTINE", ChangedAt = _created.AddDays(3) },
+            new() { OldStatus = "APPROVED_FOR_STORAGE", NewStatus = "IN_STOCK", ChangedAt = _created.AddDays(2) }
+        ]);
+        var result = await Service.GetBatchStatusDetailAsync(5, 1);
+        Assert.Equal("IN_STOCK", result.CurrentStatus);
+        Assert.Equal(_created.AddDays(2), result.WarehousedAt);
+        Assert.Single(result.StatusHistory);
     }
 
     [Fact]

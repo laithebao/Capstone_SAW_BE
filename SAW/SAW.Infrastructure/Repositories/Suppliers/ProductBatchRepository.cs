@@ -8,7 +8,7 @@ using SAW.Infrastructure.Persistence;
 
 namespace SAW.Infrastructure.Repositories.Suppliers;
 
-public class ProductBatchRepository(AppDbContext db) : IProductBatchRepository
+public class ProductBatchRepository(AppDbContext db, TimeProvider? timeProvider = null) : IProductBatchRepository
 {
     public async Task<SupplierBatchListResponse> GetBatchesBySupplierAccountIdAsync(int accountId, GetSupplierBatchesQueryRequest r, CancellationToken ct = default)
     {
@@ -17,30 +17,36 @@ public class ProductBatchRepository(AppDbContext db) : IProductBatchRepository
         if (supplier.ProfileStatus != "ACTIVE") throw new UnauthorizedAccessException("Hồ sơ nhà cung cấp chưa hoạt động.");
         if (r.PageIndex < 1 || r.PageSize is < 1 or > 100 || r.FromDate > r.ToDate)
             throw new ArgumentException("Phân trang hoặc khoảng ngày không hợp lệ.");
-        var query = db.ProductBatches.AsNoTracking().Where(b => b.SupplierId == supplier.SupplierId);
+        var query = db.ProductBatches.AsNoTracking().Where(b => b.SupplierId == supplier.SupplierId)
+            .Select(SupplierBatchPresentation.Projection);
         if (!string.IsNullOrWhiteSpace(r.Keyword))
         {
             var kw = r.Keyword.Trim();
-            query = query.Where(b => b.BatchCode.Contains(kw) || b.ProductName.Contains(kw));
+            query = query.Where(b => b.Batch.BatchCode.Contains(kw) || b.Batch.ProductName.Contains(kw));
         }
         if (!string.IsNullOrWhiteSpace(r.Status))
         {
             var status = r.Status.Trim().ToUpperInvariant();
-            if (!SupplierBatchStatuses.All.Contains(status)) throw new ArgumentException("Trạng thái lô hàng không hợp lệ.");
-            query = query.Where(b => b.BatchStatus == status);
+            if (!SupplierBatchPresentation.VisibleStatuses.Contains(status)) throw new ArgumentException("Trạng thái lô hàng không hợp lệ.");
+            query = query.Where(b => b.Status == status);
         }
-        if (!string.IsNullOrWhiteSpace(r.Province)) query = query.Where(b => b.GrowingArea.Province == r.Province.Trim());
-        if (r.FromDate.HasValue) query = query.Where(b => b.CreatedAt >= r.FromDate.Value);
+        if (!string.IsNullOrWhiteSpace(r.Province)) query = query.Where(b => b.Batch.GrowingArea.Province == r.Province.Trim());
+        if (r.GrowingAreaId.HasValue)
+        {
+            if (r.GrowingAreaId.Value <= 0) throw new ArgumentException("Vùng trồng không hợp lệ.");
+            query = query.Where(b => b.Batch.GrowingAreaId == r.GrowingAreaId.Value);
+        }
+        if (r.FromDate.HasValue) query = query.Where(b => b.Batch.CreatedAt >= r.FromDate.Value);
         if (r.ToDate.HasValue)
         {
             var exclusiveEnd = r.ToDate.Value.Date.AddDays(1);
-            query = query.Where(b => b.CreatedAt < exclusiveEnd);
+            query = query.Where(b => b.Batch.CreatedAt < exclusiveEnd);
         }
         switch (r.ConsumptionStatus)
         {
-            case "IN_STOCK": query = query.Where(b => b.Inventories.Any(i => i.QuantityOnHand > 0) && b.BatchStatus != "PARTIALLY_ISSUED"); break;
-            case "CONSUMING": query = query.Where(b => b.BatchStatus == "PARTIALLY_ISSUED"); break;
-            case "CONSUMED": query = query.Where(b => b.BatchStatus == "ISSUED"); break;
+            case "IN_STOCK": query = query.Where(b => b.Batch.Inventories.Any(i => i.QuantityOnHand > 0) && b.Batch.BatchStatus != "PARTIALLY_ISSUED"); break;
+            case "CONSUMING": query = query.Where(b => b.Batch.BatchStatus == "PARTIALLY_ISSUED"); break;
+            case "CONSUMED": query = query.Where(b => b.Batch.BatchStatus == "ISSUED"); break;
             case null: case "": break;
             default: throw new ArgumentException("Trạng thái tiêu thụ không hợp lệ.");
         }
@@ -48,21 +54,22 @@ public class ProductBatchRepository(AppDbContext db) : IProductBatchRepository
         var summary = new SupplierBatchSummaryResponse
         {
             TotalDeclaredBatches = count,
-            PendingApprovalBatches = await query.CountAsync(b => b.BatchStatus == "SUBMITTED" || b.BatchStatus == "PENDING_PREDECLARATION", ct),
-            PendingQCBatches = await query.CountAsync(b => b.BatchStatus == "PENDING_QC", ct),
-            ApprovedBatches = await query.CountAsync(b => SupplierBatchStatuses.Approved.Contains(b.BatchStatus), ct),
-            RejectedBatches = await query.CountAsync(b => b.BatchStatus == "REJECTED", ct)
+            PendingApprovalBatches = await query.CountAsync(b => b.Status == "SUBMITTED" || b.Status == "PENDING_PREDECLARATION", ct),
+            PendingQCBatches = await query.CountAsync(b => b.Status == "PENDING_QC", ct),
+            ApprovedBatches = await query.CountAsync(b => b.Status == "APPROVED_FOR_STORAGE" || b.Status == "RECEIVED" || b.Status == "IN_STOCK", ct),
+            RejectedBatches = await query.CountAsync(b => b.Status == "REJECTED", ct)
         };
-        var items = await query.OrderByDescending(b => b.CreatedAt).ThenByDescending(b => b.ProductBatchId)
+        var items = await query.OrderByDescending(b => b.Batch.CreatedAt).ThenByDescending(b => b.Batch.ProductBatchId)
             .Skip(checked((r.PageIndex - 1) * r.PageSize)).Take(r.PageSize)
             .Select(b => new SupplierBatchItemResponse
             {
-                BatchId = b.ProductBatchId, BatchCode = b.BatchCode, ProductName = b.ProductName, Note = b.Note,
-                AreaName = b.GrowingArea.AreaName, Province = b.GrowingArea.Province,
-                District = b.GrowingArea.District, Ward = b.GrowingArea.Ward,
-                QuantityInTons = b.WeightInKg / 1000m, SubmittedDate = b.CreatedAt, Status = b.BatchStatus,
-                ConsumptionStatus = b.BatchStatus == "ISSUED" ? "CONSUMED" : b.BatchStatus == "PARTIALLY_ISSUED" ? "CONSUMING" :
-                    b.Inventories.Any(i => i.QuantityOnHand > 0) ? "IN_STOCK" : null
+                BatchId = b.Batch.ProductBatchId, BatchCode = b.Batch.BatchCode, ProductName = b.Batch.ProductName, Note = b.Batch.Note,
+                AreaName = b.Batch.GrowingArea.AreaName, Province = b.Batch.GrowingArea.Province,
+                District = b.Batch.GrowingArea.District, Ward = b.Batch.GrowingArea.Ward,
+                QuantityInTons = b.Batch.WeightInKg / 1000m, SubmittedDate = b.Batch.CreatedAt,
+                Status = b.Status,
+                ConsumptionStatus = b.Batch.BatchStatus == "ISSUED" ? "CONSUMED" : b.Batch.BatchStatus == "PARTIALLY_ISSUED" ? "CONSUMING" :
+                    b.Batch.Inventories.Any(i => i.QuantityOnHand > 0) ? "IN_STOCK" : null
             }).ToListAsync(ct);
         foreach (var item in items)
         {
@@ -77,8 +84,36 @@ public class ProductBatchRepository(AppDbContext db) : IProductBatchRepository
         db.SupplierCropTypes.AnyAsync(s => s.SupplierId == supplierId && s.CropTypeId == cropId && s.IsActive && s.CropType.IsActive, ct);
     public Task<bool> IsGrowingAreaRegisteredForSupplierAsync(int supplierId, int areaId, CancellationToken ct = default) =>
         db.SupplierGrowingAreas.AnyAsync(s => s.SupplierId == supplierId && s.GrowingAreaId == areaId, ct);
-    public Task<string> GenerateBatchCodeAsync(CancellationToken ct = default) =>
-        Task.FromResult($"LH-{DateTime.UtcNow:yyyyMMdd}-{Guid.NewGuid():N}"[..44]);
+    public Task<string> GenerateBatchCodeAsync(CancellationToken ct = default)
+    {
+        var localDate = DateOnly.FromDateTime((timeProvider ?? TimeProvider.System)
+            .GetUtcNow().ToOffset(TimeSpan.FromHours(7)).DateTime);
+        return db.Database.CreateExecutionStrategy().ExecuteAsync(async () =>
+        {
+            await using var transaction = await db.Database.BeginTransactionAsync(ct);
+            // Lock the date's row (or its key range on the first allocation of the day).
+            // The persisted counter is shared by every supplier and API instance.
+            var numbers = await db.Database.SqlQuery<int>($"""
+                DECLARE @last int;
+                SELECT @last = [LastNumber]
+                FROM dbo.PRODUCT_BATCH_DAILY_COUNTER WITH (UPDLOCK, HOLDLOCK)
+                WHERE [CodeDate] = {localDate};
+                IF @last IS NULL
+                BEGIN
+                    SET @last = 1;
+                    INSERT dbo.PRODUCT_BATCH_DAILY_COUNTER ([CodeDate], [LastNumber]) VALUES ({localDate}, @last);
+                END
+                ELSE
+                BEGIN
+                    SET @last = @last + 1;
+                    UPDATE dbo.PRODUCT_BATCH_DAILY_COUNTER SET [LastNumber] = @last WHERE [CodeDate] = {localDate};
+                END;
+                SELECT @last AS [Value];
+                """).ToListAsync(ct);
+            await transaction.CommitAsync(ct);
+            return $"LH-{localDate:yyyyMMdd}-{numbers.Single():D4}";
+        });
+    }
 
     public Task AddProductBatchAsync(ProductBatch batch, BatchStatusHistory history, List<string>? urls, CancellationToken ct = default) =>
         db.Database.CreateExecutionStrategy().ExecuteAsync(async () =>

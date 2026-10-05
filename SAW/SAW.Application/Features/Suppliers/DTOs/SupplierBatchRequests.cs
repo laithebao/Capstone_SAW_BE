@@ -12,6 +12,8 @@ public class GetSupplierBatchesQueryRequest
     public string? Keyword { get; set; }
     public string? Status { get; set; }
     public string? Province { get; set; } // Lọc theo Tỉnh
+    [Range(1, int.MaxValue)]
+    public int? GrowingAreaId { get; set; }
     public string? ConsumptionStatus { get; set; }
     public DateTime? FromDate { get; set; }
     public DateTime? ToDate { get; set; }

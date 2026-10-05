@@ -82,8 +82,14 @@ public class SupplierBatchCommandService(IProductBatchRepository batches, ISuppl
         var supplier = await GetSupplier(accountId, ct);
         var batch = await batches.GetBatchStatusDetailByIdAsync(id, ct) ?? throw new KeyNotFoundException("Không tìm thấy lô hàng.");
         if (batch.SupplierId != supplier.SupplierId) throw new UnauthorizedAccessException("Bạn không có quyền xem lô hàng này.");
+        var history = await batches.GetBatchStatusHistoryAsync(id, ct);
+        // Hydrate the read-only presentation with the same history evidence used by the list query.
+        batch.StatusHistories = history;
+        var visibleStatus = SupplierBatchPresentation.Get(batch).Status;
         var warehousedAt = batch.GoodsReceipts.Where(g => g.ReceiptStatus == "COMMITTED")
             .Select(g => g.CommittedAt).Min();
+        warehousedAt ??= history.Where(h => h.NewStatus == "IN_STOCK")
+            .Select(h => (DateTime?)h.ChangedAt).Min();
         // Supplier progress ends at warehouse entry, including when a later inspection exists.
         var inspections = batch.QcInspections.Where(q => warehousedAt == null || q.StartedAt <= warehousedAt.Value);
         var latestInspection = inspections.OrderByDescending(q => q.StartedAt)
@@ -91,7 +97,6 @@ public class SupplierBatchCommandService(IProductBatchRepository batches, ISuppl
         var qc = inspections.Where(q => q.InspectionStatus == "COMPLETED" &&
                 (warehousedAt == null || q.CompletedAt <= warehousedAt.Value))
             .OrderByDescending(q => q.CompletedAt ?? q.StartedAt).ThenByDescending(q => q.QcInspectionId).FirstOrDefault();
-        var history = await batches.GetBatchStatusHistoryAsync(id, ct);
         return new SupplierBatchStatusResponse
         {
             BatchId = id, BatchCode = batch.BatchCode, ProductName = batch.ProductName,
@@ -105,15 +110,15 @@ public class SupplierBatchCommandService(IProductBatchRepository batches, ISuppl
             ExpectedMinHumidityPct = batch.ExpectedMinHumidityPct, ExpectedMaxHumidityPct = batch.ExpectedMaxHumidityPct,
             ExpiryDate = batch.ExpiryDate, ExpectedDeliveryDate = batch.ExpectedDeliveryDate,
             ReceivedQuantity = await batches.GetCommittedReceivedQuantityAsync(id, ct),
-            CurrentStatus = batch.BatchStatus, StatusDisplayName = SupplierBatchStatuses.Label(batch.BatchStatus),
-            QcResult = qc?.QcResult, QualityGrade = batch.QualityGrade ?? qc?.QualityGrade,
+            CurrentStatus = visibleStatus, StatusDisplayName = SupplierBatchStatuses.Label(visibleStatus),
+            QcResult = qc?.QcResult, QualityGrade = visibleStatus == "IN_STOCK" ? qc?.QualityGrade : batch.QualityGrade ?? qc?.QualityGrade,
             QcInspectionStatus = latestInspection?.InspectionStatus, QcCompletedAt = qc?.CompletedAt,
             WarehousedAt = warehousedAt,
-            RejectionReason = batch.RejectionReason ?? (qc?.QcResult is "FAIL" or "FAILED" ? qc.Note : null),
+            RejectionReason = visibleStatus == "IN_STOCK" ? null : batch.RejectionReason ?? (qc?.QcResult is "FAIL" or "FAILED" ? qc.Note : null),
             SupplierNote = batch.Note, WarehouseNote = batch.ReceivingNote,
             CreatedAt = batch.CreatedAt, UpdatedAt = batch.UpdatedAt,
             Documents = await batches.GetDocumentsAsync(id, ct),
-            StatusHistory = history.Select(h => new BatchStatusHistoryDto
+            StatusHistory = SupplierBatchPresentation.VisibleHistory(history, warehousedAt).Select(h => new BatchStatusHistoryDto
             {
                 OldStatus = h.OldStatus ?? "", NewStatus = h.NewStatus,
                 ChangeReason = h.ChangeReason, ChangedAt = h.ChangedAt,
