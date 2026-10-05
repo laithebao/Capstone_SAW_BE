@@ -10,6 +10,7 @@ public interface IProductBatchQueryRepository
     Task<ProductBatchFilterOptions> GetFilterOptionsAsync(CancellationToken cancellationToken);
     Task<ProductBatch?> GetByIdAsync(long id, CancellationToken cancellationToken);
     Task<ProductBatch?> GetWarehouseByIdAsync(long id, CancellationToken cancellationToken);
+    Task<bool> HasQcInspectionAsync(long id, CancellationToken cancellationToken);
     Task<IReadOnlyList<ProductBatchFilterOption>> GetSubmittedSuppliersAsync(CancellationToken cancellationToken);
     Task<IReadOnlyList<SubmittedDeclarationOption>> GetSubmittedBySupplierAsync(int supplierId, CancellationToken cancellationToken);
 }

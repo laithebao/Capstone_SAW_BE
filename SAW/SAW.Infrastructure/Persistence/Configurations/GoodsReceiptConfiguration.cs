@@ -8,7 +8,7 @@ public class GoodsReceiptConfiguration : IEntityTypeConfiguration<GoodsReceipt>
 {
     public void Configure(EntityTypeBuilder<GoodsReceipt> builder)
     {
-        builder.ToTable("GOODS_RECEIPT");
+        builder.ToTable("GOODS_RECEIPT", tb => tb.UseSqlOutputClause(false));
         builder.HasKey(x => x.GoodsReceiptId);
         builder.Property(x => x.GoodsReceiptId).HasColumnName("GoodsReceiptID").UseIdentityColumn();
         builder.Property(x => x.ReceiptCode).HasColumnName("ReceiptCode").HasMaxLength(50).IsRequired();

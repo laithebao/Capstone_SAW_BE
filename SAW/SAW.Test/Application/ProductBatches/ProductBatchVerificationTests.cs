@@ -225,7 +225,7 @@ public sealed class ProductBatchVerificationTests
         _query.Setup(x => x.GetWarehouseByIdAsync(7, It.IsAny<CancellationToken>()))
             .ReturnsAsync(batch);
         _verification.Setup(x => x.UpdateAsync(7, batch.UpdatedAt, batch.CreatedAt, 11,
-            It.IsAny<VerifiedReceivingDetails>(), It.IsAny<CancellationToken>())).ReturnsAsync(true);
+            It.IsAny<VerifiedReceivingDetails>(), It.IsAny<CancellationToken>())).ReturnsAsync(ProductBatchReceivingUpdateResult.Updated);
 
         await Service().UpdateAsync(7, 11, new UpdateProductBatchReceivingRequest(
             1200m, 1100m, batch.UpdatedAt, batch.CreatedAt, "   ", null, null, "  "), CancellationToken.None);
@@ -249,7 +249,7 @@ public sealed class ProductBatchVerificationTests
         _query.Setup(x => x.GetWarehouseByIdAsync(7, It.IsAny<CancellationToken>()))
             .ReturnsAsync(batch);
         _verification.Setup(x => x.UpdateAsync(7, batch.UpdatedAt, batch.CreatedAt, 11,
-            It.IsAny<VerifiedReceivingDetails>(), It.IsAny<CancellationToken>())).ReturnsAsync(false);
+            It.IsAny<VerifiedReceivingDetails>(), It.IsAny<CancellationToken>())).ReturnsAsync(ProductBatchReceivingUpdateResult.Conflict);
         await Assert.ThrowsAsync<ConflictException>(() => Service().UpdateAsync(7, 11,
             new UpdateProductBatchReceivingRequest(100m, 100m, batch.UpdatedAt, batch.CreatedAt), CancellationToken.None));
     }
@@ -297,7 +297,8 @@ public sealed class ProductBatchVerificationTests
             .ReturnsAsync(batch);
         _verification.Setup(x => x.UpdateAsync(7, null, batch.CreatedAt, 11,
             It.IsAny<VerifiedReceivingDetails>(), It.IsAny<CancellationToken>()))
-            .ReturnsAsync(true);
+            .ReturnsAsync(ProductBatchReceivingUpdateResult.Updated);
+
 
         await Service().UpdateAsync(7, 11,
             new UpdateProductBatchReceivingRequest(100m, 100m, null, batch.CreatedAt),
@@ -317,5 +318,43 @@ public sealed class ProductBatchVerificationTests
         _verification.Verify(x => x.RejectAsync(It.IsAny<long>(), It.IsAny<int>(),
             It.IsAny<string>(), It.IsAny<BatchStatusHistory>(),
             It.IsAny<CancellationToken>()), Times.Never);
+    }
+
+    [Theory]
+    [InlineData(true)]
+    [InlineData(false)]
+    public async Task Update_QcReceiptBeforeReadOrDuringSave_ReturnsSpecificConflict(bool visibleAtRead)
+    {
+        var batch = SubmittedBatch();
+        batch.BatchStatus = "PENDING_QC";
+        _query.Setup(x => x.GetWarehouseByIdAsync(7, It.IsAny<CancellationToken>())).ReturnsAsync(batch);
+        _query.Setup(x => x.HasQcInspectionAsync(7, It.IsAny<CancellationToken>())).ReturnsAsync(visibleAtRead);
+        _verification.Setup(x => x.UpdateAsync(7, null, batch.CreatedAt, 11,
+            It.IsAny<VerifiedReceivingDetails>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(ProductBatchReceivingUpdateResult.QcReceived);
+
+        var exception = await Assert.ThrowsAsync<ConflictException>(() => Service().UpdateAsync(7, 11,
+            new UpdateProductBatchReceivingRequest(100m, 100m, null, batch.CreatedAt), CancellationToken.None));
+        Assert.Equal(ProductBatchService.QcReceivingLockMessage, exception.Message);
+        _verification.Verify(x => x.UpdateAsync(7, null, batch.CreatedAt, 11,
+            It.IsAny<VerifiedReceivingDetails>(), It.IsAny<CancellationToken>()),
+            visibleAtRead ? Times.Never() : Times.Once());
+    }
+
+    [Theory]
+    [InlineData("PENDING_QC", false, true)]
+    [InlineData("PENDING_QC", true, false)]
+    [InlineData("APPROVED_FOR_STORAGE", false, false)]
+    public async Task Detail_DerivesAvailabilityWithoutWriting(string status, bool qcExists, bool allowed)
+    {
+        var batch = SubmittedBatch();
+        batch.BatchStatus = status;
+        _query.Setup(x => x.GetWarehouseByIdAsync(7, It.IsAny<CancellationToken>())).ReturnsAsync(batch);
+        _query.Setup(x => x.HasQcInspectionAsync(7, It.IsAny<CancellationToken>())).ReturnsAsync(qcExists);
+        var result = await Service().GetAsync(7, CancellationToken.None);
+        Assert.Equal(allowed, result.CanUpdateReceivingInformation);
+        if (qcExists) Assert.Equal(ProductBatchService.QcReceivingLockMessage, result.ReceivingUpdateLockReason);
+        else Assert.Equal(allowed, result.ReceivingUpdateLockReason is null);
+        _verification.VerifyNoOtherCalls();
     }
 }

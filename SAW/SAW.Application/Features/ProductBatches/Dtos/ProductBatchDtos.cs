@@ -27,7 +27,8 @@ public sealed record ProductBatchDetail(
     decimal? VerifiedPackageUnitWeightKg, string? ReceivingNote, string? RejectionReason,
     decimal? ExpectedMinTempC, decimal? ExpectedMaxTempC,
     decimal? ExpectedMinHumidityPct, decimal? ExpectedMaxHumidityPct,
-    int? ShelfLifeDaysSnapshot);
+    int? ShelfLifeDaysSnapshot,
+    bool CanUpdateReceivingInformation, string? ReceivingUpdateLockReason);
 
 public sealed record ProductBatchFilterOption(int Id, string Name);
 
