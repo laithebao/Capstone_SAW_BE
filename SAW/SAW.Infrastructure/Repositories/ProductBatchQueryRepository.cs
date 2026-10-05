@@ -91,6 +91,9 @@ public sealed class ProductBatchQueryRepository(AppDbContext dbContext) : IProdu
             .Include(x => x.GrowingArea)
             .SingleOrDefaultAsync(x => x.ProductBatchId == id, cancellationToken);
 
+    public Task<bool> HasQcInspectionAsync(long id, CancellationToken cancellationToken) =>
+        dbContext.QcInspections.AnyAsync(q => q.ProductBatchId == id, cancellationToken);
+
     public Task<ProductBatch?> GetWarehouseByIdAsync(long id, CancellationToken cancellationToken) =>
         WarehouseBatches()
             .Include(x => x.Supplier)

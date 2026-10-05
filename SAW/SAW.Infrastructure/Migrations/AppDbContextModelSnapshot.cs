@@ -2148,6 +2148,11 @@ namespace SAW.Infrastructure.Migrations
                         .IsUnique()
                         .HasDatabaseName("UQ_QR_CODE_Url");
 
+                    b.HasIndex(new[] { "ProductBatchId" }, "ActiveBatchQr")
+                        .IsUnique()
+                        .HasDatabaseName("UQ_QR_CODE_ActiveBatch")
+                        .HasFilter("[IsActive] = 1 AND [PackageCode] IS NULL");
+
                     b.ToTable("QR_CODE", (string)null);
                 });
 

@@ -13,6 +13,9 @@ using SAW.Application.Features.InspectionStandards;
 using SAW.Application.Features.AuditLogs;
 using SAW.Application.Repositories.Suppliers;
 using SAW.Infrastructure.Repositories.Suppliers;
+using SAW.Application.Features.QrCodes;
+using SAW.Application.Features.QrCodes.Interfaces;
+using SAW.Infrastructure.QrCodes;
 
 namespace SAW.Infrastructure.Extensions;
 
@@ -55,8 +58,17 @@ public static class ServiceCollectionExtensions
         services.AddScoped<ISupplierRepository, SupplierRepository>();
         services.AddScoped<IProductBatchRepository, ProductBatchRepository>();
         services.AddScoped<IProductBatchQueryRepository, ProductBatchQueryRepository>();
+        services.AddScoped<IGoodsReceiptQueryRepository, GoodsReceiptQueryRepository>();
+        services.AddScoped<IGoodsReceiptRepository, GoodsReceiptRepository>();
         services.AddScoped<IProductBatchVerificationRepository, ProductBatchVerificationRepository>();
         services.AddScoped<IQcInspectionRepository, QcInspectionRepository>();
+        services.AddScoped<IQrCodeRepository, QrCodeRepository>();
+        services.AddScoped<ITraceabilityRepository, TraceabilityRepository>();
+        services.AddSingleton(configuration.GetSection("QrCode").Get<QrCodeOptions>() ?? new QrCodeOptions());
+        services.AddSingleton(configuration.GetSection("Cloudinary").Get<CloudinaryOptions>() ?? new CloudinaryOptions());
+        services.AddSingleton<IQrCodeRenderer, PngQrCodeRenderer>();
+        services.AddHttpClient<IQrImageStorage, CloudinaryQrImageStorage>(client => client.Timeout = TimeSpan.FromSeconds(30));
+        services.AddHostedService<QrCodeGenerationWorker>();
 
         return services;
     }
