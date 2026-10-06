@@ -1,4 +1,4 @@
-﻿using System;
+using System;
 using System.Collections.Generic;
 using System.Linq;
 using System.Text;
@@ -14,5 +14,5 @@ public interface ISupplierBatchCommandService
     Task<SupplierBatchItemResponse> DeclareBatchAsync(int currentAccountId, DeclareProductBatchRequest request, CancellationToken cancellationToken = default);
     Task<SupplierBatchItemResponse> UpdateDeclaredBatchAsync(long batchId, int currentAccountId, UpdateProductBatchRequest request, CancellationToken cancellationToken = default);
     Task<SupplierBatchStatusResponse> GetBatchStatusDetailAsync(long batchId, int currentAccountId, CancellationToken cancellationToken = default);
-    Task CancelBatchAsync(long batchId, int currentAccountId, CancellationToken cancellationToken = default);
+    Task CancelBatchAsync(long batchId, int currentAccountId, CancelSupplierBatchRequest request, CancellationToken cancellationToken = default);
 }

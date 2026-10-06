@@ -1,4 +1,4 @@
-﻿using System;
+using System;
 using System.Collections.Generic;
 using System.Linq;
 using System.Text;
@@ -11,20 +11,20 @@ public class SupplierBatchItemResponse
     public long BatchId { get; set; }
     public string BatchCode { get; set; } = string.Empty;
     public string ProductName { get; set; } = string.Empty;
-    
+
     // Tách chi tiết Vùng trồng khớp với FE
-    public string? AreaName { get; set; } 
-    public string? Province { get; set; } 
+    public string? AreaName { get; set; }
+    public string? Province { get; set; }
     public string? District { get; set; }
     public string? Ward { get; set; }
-    
-    public string? Note { get; set; } 
+
+    public string? Note { get; set; }
     public decimal QuantityInTons { get; set; }
-    public DateTime SubmittedDate { get; set; } 
-    public DateTime? CompletedDate { get; set; } 
+    public DateTime SubmittedDate { get; set; }
+    public DateTime? CompletedDate { get; set; }
     public string Status { get; set; } = string.Empty;
     public string StatusDisplayName { get; set; } = string.Empty;
-    public string? ConsumptionStatus { get; set; } = "IN_STOCK"; 
+    public string? ConsumptionStatus { get; set; }
     public string? ConsumptionStatusDisplayName { get; set; } = "Tồn kho";
 }
 
@@ -54,29 +54,48 @@ public class SupplierBatchListResponse
 
 public class SupplierBatchStatusResponse
 {
+    public int CropTypeId { get; set; }
+    public int GrowingAreaId { get; set; }
+    public DateTime? UpdatedAt { get; set; }
+    public decimal? VerifiedQuantity { get; set; }
+    public decimal? VerifiedWeightInKg { get; set; }
+    public string? SupplierNote { get; set; }
+    public List<SupplierDocumentDto> Documents { get; set; } = new();
     public long BatchId { get; set; }
     public string BatchCode { get; set; } = string.Empty;
     public string ProductName { get; set; } = string.Empty;
     public string CropTypeName { get; set; } = string.Empty;
-    
+
     // Tách chi tiết Vùng trồng
     public string AreaName { get; set; } = string.Empty;
     public string Province { get; set; } = string.Empty;
     public string District { get; set; } = string.Empty;
     public string Ward { get; set; } = string.Empty;
-    
+
     public DateOnly HarvestDate { get; set; }
 
     public decimal DeclaredQuantity { get; set; }
     public string Unit { get; set; } = string.Empty;
-    public decimal ReceivedQuantity { get; set; } 
+    public string? PackagingType { get; set; }
+    public int? PackageCount { get; set; }
+    public decimal? PackageUnitWeightKg { get; set; }
+    public decimal? ExpectedMinTempC { get; set; }
+    public decimal? ExpectedMaxTempC { get; set; }
+    public decimal? ExpectedMinHumidityPct { get; set; }
+    public decimal? ExpectedMaxHumidityPct { get; set; }
+    public DateOnly? ExpiryDate { get; set; }
+
+    public decimal ReceivedQuantity { get; set; }
     public decimal WeightInKg { get; set; }
 
     public string CurrentStatus { get; set; } = string.Empty;
     public string StatusDisplayName { get; set; } = string.Empty;
-    public string? QcResult { get; set; } 
-    public string? QualityGrade { get; set; } 
-    public string? RejectionReason { get; set; } 
+    public string? QcResult { get; set; }
+    public string? QcInspectionStatus { get; set; }
+    public DateTime? QcCompletedAt { get; set; }
+    public DateTime? WarehousedAt { get; set; }
+    public string? QualityGrade { get; set; }
+    public string? RejectionReason { get; set; }
     public string? WarehouseNote { get; set; }
 
     public DateOnly? ExpectedDeliveryDate { get; set; }

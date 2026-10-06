@@ -76,6 +76,7 @@ public class SupplierCommandService : ISupplierCommandService
             request.CropTypeIds ?? new List<int>(),
             normalizedCertifications,
             request.GrowingAreas ?? new List<SupplierGrowingAreaInputDto>(),
+            request.LogoUrl, request.EvidenceDocumentUrls,
             cancellationToken
         );
 
@@ -122,7 +123,7 @@ public class SupplierCommandService : ISupplierCommandService
             request.CropTypeIds ?? new List<int>(),
             normalizedCertifications,
             request.GrowingAreas ?? new List<SupplierGrowingAreaInputDto>(),
-            oldValuesJson,
+            oldValuesJson, request.LogoUrl, request.EvidenceDocumentUrls,
             cancellationToken
         );
 

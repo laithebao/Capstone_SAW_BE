@@ -3,6 +3,7 @@ using System;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Infrastructure;
 using Microsoft.EntityFrameworkCore.Metadata;
+using Microsoft.EntityFrameworkCore.Migrations;
 using Microsoft.EntityFrameworkCore.Storage.ValueConversion;
 using SAW.Infrastructure.Persistence;
 
@@ -11,9 +12,11 @@ using SAW.Infrastructure.Persistence;
 namespace SAW.Infrastructure.Migrations
 {
     [DbContext(typeof(AppDbContext))]
-    partial class AppDbContextModelSnapshot : ModelSnapshot
+    [Migration("20261004171724_AddSupplierFiles")]
+    partial class AddSupplierFiles
     {
-        protected override void BuildModel(ModelBuilder modelBuilder)
+        /// <inheritdoc />
+        protected override void BuildTargetModel(ModelBuilder modelBuilder)
         {
 #pragma warning disable 612, 618
             modelBuilder
@@ -895,8 +898,6 @@ namespace SAW.Infrastructure.Migrations
                     b.HasIndex("WarehouseLocationId");
 
                     b.ToTable("GOODS_RECEIPT", (string)null);
-
-                    b.HasAnnotation("SqlServer:UseSqlOutputClause", false);
                 });
 
             modelBuilder.Entity("SAW.Domain.Entities.GrowingArea", b =>
@@ -1888,22 +1889,6 @@ namespace SAW.Infrastructure.Migrations
                     b.HasAnnotation("SqlServer:UseSqlOutputClause", false);
                 });
 
-            modelBuilder.Entity("SAW.Domain.Entities.ProductBatchDailyCounter", b =>
-                {
-                    b.Property<DateOnly>("CodeDate")
-                        .HasColumnType("date");
-
-                    b.Property<int>("LastNumber")
-                        .HasColumnType("int");
-
-                    b.HasKey("CodeDate");
-
-                    b.ToTable("PRODUCT_BATCH_DAILY_COUNTER", null, t =>
-                        {
-                            t.HasCheckConstraint("CK_PRODUCT_BATCH_DAILY_COUNTER_LastNumber", "[LastNumber] > 0");
-                        });
-                });
-
             modelBuilder.Entity("SAW.Domain.Entities.PurchaseOrder", b =>
                 {
                     b.Property<long>("PurchaseOrderId")
@@ -2165,11 +2150,6 @@ namespace SAW.Infrastructure.Migrations
                     b.HasIndex("TraceabilityUrl")
                         .IsUnique()
                         .HasDatabaseName("UQ_QR_CODE_Url");
-
-                    b.HasIndex(new[] { "ProductBatchId" }, "ActiveBatchQr")
-                        .IsUnique()
-                        .HasDatabaseName("UQ_QR_CODE_ActiveBatch")
-                        .HasFilter("[IsActive] = 1 AND [PackageCode] IS NULL");
 
                     b.ToTable("QR_CODE", (string)null);
                 });

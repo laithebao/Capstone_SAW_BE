@@ -1,4 +1,5 @@
-﻿using System.Security.Claims;
+using System.Security.Claims;
+using SAW.Application.Exceptions;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using SAW.Application.Features.Suppliers.Commands;
@@ -37,6 +38,14 @@ public class SupplierBatchesController : ControllerBase
         catch (UnauthorizedAccessException)
         {
             return StatusCode(403, new { message = "You are not allowed to view declared product batches." });
+        }
+        catch (ConflictException ex)
+        {
+            return Conflict(new { message = ex.Message });
+        }
+        catch (ArgumentException ex)
+        {
+            return BadRequest(new { message = ex.Message });
         }
         catch (Exception)
         {
@@ -79,10 +88,6 @@ public class SupplierBatchesController : ControllerBase
         {
             return NotFound(new { message = ex.Message }); // "Please declare supplier information..."
         }
-        catch (ArgumentException ex)
-        {
-            return BadRequest(new { message = ex.Message });
-        }
         catch (InvalidOperationException ex)
         {
             return BadRequest(new { message = ex.Message }); // "The selected crop type is not registered..."
@@ -90,6 +95,14 @@ public class SupplierBatchesController : ControllerBase
         catch (UnauthorizedAccessException)
         {
             return StatusCode(403, new { message = "You are not allowed to declare product batch information." });
+        }
+        catch (ConflictException ex)
+        {
+            return Conflict(new { message = ex.Message });
+        }
+        catch (ArgumentException ex)
+        {
+            return BadRequest(new { message = ex.Message });
         }
         catch (Exception)
         {
@@ -123,13 +136,17 @@ public class SupplierBatchesController : ControllerBase
         {
             return StatusCode(403, new { message = ex.Message }); // "You are not allowed to edit this batch."
         }
-        catch (ArgumentException ex)
-        {
-            return BadRequest(new { message = ex.Message });
-        }
         catch (InvalidOperationException ex)
         {
             return BadRequest(new { message = ex.Message }); // "This batch declaration can no longer be modified."
+        }
+        catch (ConflictException ex)
+        {
+            return Conflict(new { message = ex.Message });
+        }
+        catch (ArgumentException ex)
+        {
+            return BadRequest(new { message = ex.Message });
         }
         catch (Exception)
         {
@@ -154,13 +171,21 @@ public class SupplierBatchesController : ControllerBase
         {
             return StatusCode(403, new { message = "Supplier profile not found." });
         }
-        catch (UnauthorizedAccessException ex)
+        catch (UnauthorizedAccessException)
         {
             return StatusCode(403, new { message = "You are not allowed to view this batch." });
         }
         catch (KeyNotFoundException ex)
         {
             return NotFound(new { message = ex.Message }); // "Product batch not found."
+        }
+        catch (ConflictException ex)
+        {
+            return Conflict(new { message = ex.Message });
+        }
+        catch (ArgumentException ex)
+        {
+            return BadRequest(new { message = ex.Message });
         }
         catch (Exception)
         {
@@ -169,12 +194,12 @@ public class SupplierBatchesController : ControllerBase
     }
 
     [HttpPost("{id:long}/cancel")]
-    public async Task<IActionResult> CancelBatch([FromRoute] long id, CancellationToken cancellationToken)
+    public async Task<IActionResult> CancelBatch([FromRoute] long id, [FromBody] CancelSupplierBatchRequest request, CancellationToken cancellationToken)
     {
         try
         {
             var accountId = GetCurrentAccountId();
-            await _supplierBatchCommandService.CancelBatchAsync(id, accountId, cancellationToken);
+            await _supplierBatchCommandService.CancelBatchAsync(id, accountId, request, cancellationToken);
 
             return Ok(new { message = "Product batch cancelled successfully." });
         }
@@ -189,6 +214,14 @@ public class SupplierBatchesController : ControllerBase
         catch (InvalidOperationException ex)
         {
             return BadRequest(new { message = ex.Message }); // "This batch cannot be cancelled at its current status."
+        }
+        catch (ConflictException ex)
+        {
+            return Conflict(new { message = ex.Message });
+        }
+        catch (ArgumentException ex)
+        {
+            return BadRequest(new { message = ex.Message });
         }
         catch (Exception)
         {
