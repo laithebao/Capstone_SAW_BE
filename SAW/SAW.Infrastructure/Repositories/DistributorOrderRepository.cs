@@ -258,7 +258,7 @@ public sealed class DistributorOrderRepository(DbContextOptions<AppDbContext> op
             .SingleOrDefaultAsync(ct) ?? throw new NotFoundException("Không tìm thấy đơn hàng của bạn.");
     }
 
-    private static async Task EnsureHistoryAsync(AppDbContext db, long id, string? old, string status, int actor, string reason, CancellationToken ct)
+    private static async Task EnsureHistoryAsync(AppDbContext db, long id, string? old, string status, int actor, string? reason, CancellationToken ct)
     {
         // Production DB already records transitions in a trigger. Do not duplicate its rows.
         if (!await db.OrderStatusHistories.AnyAsync(h => h.PurchaseOrderId == id && h.NewStatus == status, ct))
