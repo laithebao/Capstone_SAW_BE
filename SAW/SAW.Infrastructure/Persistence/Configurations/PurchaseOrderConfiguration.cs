@@ -8,15 +8,18 @@ public class PurchaseOrderConfiguration : IEntityTypeConfiguration<PurchaseOrder
 {
     public void Configure(EntityTypeBuilder<PurchaseOrder> builder)
     {
-        builder.ToTable("PURCHASE_ORDER");
+        builder.ToTable("PURCHASE_ORDER", t => t.UseSqlOutputClause(false));
         builder.HasKey(x => x.PurchaseOrderId);
         builder.Property(x => x.PurchaseOrderId).HasColumnName("PurchaseOrderID").UseIdentityColumn();
         builder.Property(x => x.OrderCode).HasColumnName("OrderCode").HasMaxLength(50).IsRequired();
+        builder.Property(x => x.RequestId).HasColumnName("RequestId");
+        builder.HasIndex(x => new { x.DistributorId, x.RequestId }).IsUnique()
+            .HasFilter("[RequestId] IS NOT NULL").HasDatabaseName("UQ_PURCHASE_ORDER_Distributor_Request");
         builder.Property(x => x.DistributorId).HasColumnName("DistributorID").IsRequired();
         builder.Property(x => x.OrderStatus).HasColumnName("OrderStatus").HasMaxLength(30).HasDefaultValue("PENDING");
         builder.Property(x => x.DeliveryAddress).HasColumnName("DeliveryAddress").HasMaxLength(500).IsRequired();
         builder.Property(x => x.ContactPhone).HasColumnName("ContactPhone").HasMaxLength(30);
-        builder.Property(x => x.ExpectedDeliveryDate).HasColumnName("ExpectedDeliveryDate").IsRequired();
+        builder.Property(x => x.ExpectedDeliveryDate).HasColumnName("ExpectedDeliveryDate").IsRequired(false);
         builder.Property(x => x.OrderNote).HasColumnName("OrderNote").HasMaxLength(1000);
         builder.Property(x => x.SubtotalAmount).HasColumnName("SubtotalAmount").HasPrecision(18, 2).HasDefaultValue(0m);
         builder.Property(x => x.TaxAmount).HasColumnName("TaxAmount").HasPrecision(18, 2).HasDefaultValue(0m);
@@ -28,6 +31,9 @@ public class PurchaseOrderConfiguration : IEntityTypeConfiguration<PurchaseOrder
         builder.Property(x => x.CancellationReason).HasColumnName("CancellationReason").HasMaxLength(1000);
         builder.Property(x => x.CreatedAt).HasColumnName("CreatedAt").HasDefaultValueSql("SYSDATETIME()");
         builder.Property(x => x.UpdatedAt).HasColumnName("UpdatedAt");
+        builder.Property(x => x.ReceivedAt).HasColumnName("ReceivedAt");
+        builder.Property(x => x.ReceivedByAccountId).HasColumnName("ReceivedByAccountID");
+        builder.HasOne<Account>().WithMany().HasForeignKey(x => x.ReceivedByAccountId).OnDelete(DeleteBehavior.Restrict);
 
         builder.HasIndex(x => x.OrderCode).IsUnique().HasDatabaseName("UQ_PURCHASE_ORDER_Code");
 

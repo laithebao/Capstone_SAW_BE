@@ -4,13 +4,15 @@ public class PurchaseOrder
 {
     public long PurchaseOrderId { get; set; }
     public string OrderCode { get; set; } = default!;
+    public Guid? RequestId { get; set; }
     public int DistributorId { get; set; }
 
     public string OrderStatus { get; set; } = "PENDING";
 
     public string DeliveryAddress { get; set; } = default!;
     public string? ContactPhone { get; set; }
-    public DateOnly ExpectedDeliveryDate { get; set; }
+    // Optional date requested by the distributor; not a confirmed warehouse delivery schedule.
+    public DateOnly? ExpectedDeliveryDate { get; set; }
     public string? OrderNote { get; set; }
 
     public decimal SubtotalAmount { get; set; }
@@ -25,6 +27,8 @@ public class PurchaseOrder
 
     public DateTime CreatedAt { get; set; }
     public DateTime? UpdatedAt { get; set; }
+    public DateTime? ReceivedAt { get; set; }
+    public int? ReceivedByAccountId { get; set; }
 
     // Navigation
     public Distributor Distributor { get; set; } = default!;

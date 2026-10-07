@@ -60,6 +60,7 @@ public static class ServiceCollectionExtensions
         services.AddScoped<IProductBatchQueryRepository, ProductBatchQueryRepository>();
         services.AddScoped<IGoodsReceiptQueryRepository, GoodsReceiptQueryRepository>();
         services.AddScoped<IGoodsReceiptRepository, GoodsReceiptRepository>();
+        services.AddScoped<SAW.Application.Features.DistributorOrders.IDistributorOrderRepository, DistributorOrderRepository>();
         services.AddScoped<IProductBatchVerificationRepository, ProductBatchVerificationRepository>();
         services.AddScoped<IQcInspectionRepository, QcInspectionRepository>();
         services.AddScoped<IQrCodeRepository, QrCodeRepository>();

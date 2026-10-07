@@ -43,6 +43,8 @@ public static class ServiceCollectionExtensions
         services.AddScoped<IProductBatchQrCodeService, ProductBatchQrCodeService>();
         services.AddScoped<ITraceabilityService, TraceabilityService>();
         services.AddScoped<IGoodsReceiptService, GoodsReceiptService>();
+        services.AddScoped<SAW.Application.Features.DistributorOrders.IDistributorOrderService,
+            SAW.Application.Features.DistributorOrders.DistributorOrderService>();
 
         return services;
     }

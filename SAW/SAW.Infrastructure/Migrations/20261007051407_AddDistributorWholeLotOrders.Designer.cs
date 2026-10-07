@@ -3,6 +3,7 @@ using System;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Infrastructure;
 using Microsoft.EntityFrameworkCore.Metadata;
+using Microsoft.EntityFrameworkCore.Migrations;
 using Microsoft.EntityFrameworkCore.Storage.ValueConversion;
 using SAW.Infrastructure.Persistence;
 
@@ -11,9 +12,11 @@ using SAW.Infrastructure.Persistence;
 namespace SAW.Infrastructure.Migrations
 {
     [DbContext(typeof(AppDbContext))]
-    partial class AppDbContextModelSnapshot : ModelSnapshot
+    [Migration("20261007051407_AddDistributorWholeLotOrders")]
+    partial class AddDistributorWholeLotOrders
     {
-        protected override void BuildModel(ModelBuilder modelBuilder)
+        /// <inheritdoc />
+        protected override void BuildTargetModel(ModelBuilder modelBuilder)
         {
 #pragma warning disable 612, 618
             modelBuilder
@@ -1973,7 +1976,7 @@ namespace SAW.Infrastructure.Migrations
                         .HasColumnType("int")
                         .HasColumnName("DistributorID");
 
-                    b.Property<DateOnly?>("ExpectedDeliveryDate")
+                    b.Property<DateOnly>("ExpectedDeliveryDate")
                         .HasColumnType("date")
                         .HasColumnName("ExpectedDeliveryDate");
 
@@ -2013,10 +2016,6 @@ namespace SAW.Infrastructure.Migrations
                         .HasColumnType("nvarchar(1000)")
                         .HasColumnName("RejectionReason");
 
-                    b.Property<Guid?>("RequestId")
-                        .HasColumnType("uniqueidentifier")
-                        .HasColumnName("RequestId");
-
                     b.Property<decimal>("SubtotalAmount")
                         .ValueGeneratedOnAdd()
                         .HasPrecision(18, 2)
@@ -2046,36 +2045,17 @@ namespace SAW.Infrastructure.Migrations
 
                     b.HasIndex("ApprovedByAccountId");
 
+                    b.HasIndex("DistributorId");
+
                     b.HasIndex("OrderCode")
                         .IsUnique()
                         .HasDatabaseName("UQ_PURCHASE_ORDER_Code");
 
                     b.HasIndex("ReceivedByAccountId");
 
-                    b.HasIndex("DistributorId", "RequestId")
-                        .IsUnique()
-                        .HasDatabaseName("UQ_PURCHASE_ORDER_Distributor_Request")
-                        .HasFilter("[RequestId] IS NOT NULL");
-
                     b.ToTable("PURCHASE_ORDER", (string)null);
 
                     b.HasAnnotation("SqlServer:UseSqlOutputClause", false);
-                });
-
-            modelBuilder.Entity("SAW.Domain.Entities.PurchaseOrderDailyCounter", b =>
-                {
-                    b.Property<DateOnly>("CodeDate")
-                        .HasColumnType("date");
-
-                    b.Property<int>("LastNumber")
-                        .HasColumnType("int");
-
-                    b.HasKey("CodeDate");
-
-                    b.ToTable("PURCHASE_ORDER_DAILY_COUNTER", null, t =>
-                        {
-                            t.HasCheckConstraint("CK_PURCHASE_ORDER_DAILY_COUNTER_Number", "[LastNumber] > 0");
-                        });
                 });
 
             modelBuilder.Entity("SAW.Domain.Entities.QcInspection", b =>
