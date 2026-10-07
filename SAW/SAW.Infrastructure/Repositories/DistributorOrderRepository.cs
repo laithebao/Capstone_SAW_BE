@@ -48,6 +48,10 @@ public sealed class DistributorOrderRepository(DbContextOptions<AppDbContext> op
                 && (i.ReservedQuantity != 0 || i.Unit != "kg" || i.WarehouseLocation.LocationStatus != "ACTIVE"))
             && db.Inventories.Where(i => i.ProductBatchId == o.ProductBatchId).Sum(i => i.QuantityOnHand)
                 == o.ProductBatch.VerifiedWeightInKg
+            // A lot with an order still in progress is temporarily unavailable to every distributor.
+            // Rejected/cancelled orders release the lot; all other order states keep it off the catalog.
+            && !db.OrderDetails.Any(l => l.RequestedProductBatchId == o.ProductBatchId
+                && l.PurchaseOrder.OrderStatus != "REJECTED" && l.PurchaseOrder.OrderStatus != "CANCELLED")
             && !db.GoodsIssueDetails.Any(i => i.Inventory.ProductBatchId == o.ProductBatchId && i.GoodsIssue.IssueStatus == "COMMITTED")
             && db.QcInspections.Where(q => q.ProductBatchId == o.ProductBatchId)
                 .OrderByDescending(q => q.StartedAt).ThenByDescending(q => q.QcInspectionId).Take(1)

@@ -14,6 +14,7 @@
 !docs/DistributorWholeLotOrders.sql
 !docs/SetDistributorLotPrice.sql
 !docs/SeedDistributorDemo.sql
+!docs/SeedDistributorLotPrices.sql
 **/App_Data/SupplierFiles/
 *.sqlproj.user
 *.bak

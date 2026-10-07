@@ -23,7 +23,7 @@ Commit the entity/configuration changes, both files for each migration (`AddDist
 
 For each batch to sell, enter the batch ID and the agreed whole-lot price in `SetDistributorLotPrice.sql` and execute it. Prices are not invented or seeded automatically. Set `IsPublished=0` to stop offering a lot. Pricing management UI is deliberately not included because it belongs to another role/UC.
 
-Only published, positively priced, unexpired `IN_STOCK` lots with latest completed PASS QC (A–D), active crop/storage locations, no reservation or committed issue, and on-hand weight equal to verified whole-lot weight appear in the catalog. The catalog may therefore be empty until receiving and pricing data exist.
+Only published, positively priced, unexpired `IN_STOCK` lots with latest completed PASS QC (A–D), active crop/storage locations, no reservation or committed issue, and on-hand weight equal to verified whole-lot weight appear in the catalog. A lot linked to an order in any status other than `REJECTED` or `CANCELLED` is hidden from every distributor while that order remains active or has progressed. Rejected/cancelled orders release catalog visibility if the lot still meets all stock/QC/expiry rules. The catalog may therefore be empty until receiving and pricing data exist.
 
 ## Requested receipt date
 
@@ -33,7 +33,7 @@ The form labels this field “Ngày mong muốn nhận hàng” and leaves it em
 
 Each order line stores `RequestedQuantity=1`, `Unit=Lô`, `UnitPrice=whole-lot price`, and `RequestedWeightKg=full verified lot weight`. The existing computed `LineSubtotal=RequestedQuantity*UnitPrice` therefore yields the whole-lot price without changing the formula or other UCs. Order and line taxes are zero; no payment status is introduced.
 
-The browser sends batch IDs plus expected price/weight, never an editable purchase quantity. The server rechecks current prices, QC and stock inside a serializable transaction, rejects stale selections, and calculates totals itself. An idempotency request UUID prevents duplicate submission after a network retry. Pending orders do not reserve stock; different distributors can submit requests for the same lot until approval. A future approval implementation must atomically recheck availability and reserve the entire selected lot; it must not partially approve or substitute a different batch.
+The browser sends batch IDs plus expected price/weight, never an editable purchase quantity. The server rechecks current prices, QC, stock and other orders inside a serializable transaction, rejects stale selections, and calculates totals itself. An idempotency request UUID prevents duplicate submission after a network retry. A pending order hides its lots from the catalog immediately, without creating a warehouse inventory reservation. Rejected/cancelled orders release catalog visibility; approval must atomically recheck availability and reserve the entire selected lot, and must not partially approve or substitute a different batch.
 
 New orders use `PO-YYYYMMDD-01`, `PO-YYYYMMDD-02`, etc., based on the Vietnam calendar date (UTC+7); after 99 the suffix continues to 100. `PURCHASE_ORDER_DAILY_COUNTER` allocates numbers atomically inside the order transaction and resets by date. `RequestId` is independent of the displayed order code and uniquely scoped to the distributor, preserving idempotent retries. The numbering migration backfills request IDs from the previous UUID-based codes and initializes counters after any pre-existing numeric daily codes. Existing order codes are not renamed.
 
