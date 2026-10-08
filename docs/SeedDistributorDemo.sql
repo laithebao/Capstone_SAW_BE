@@ -5,6 +5,13 @@
 -- Re-running preserves existing demo orders, prices, accounts and completed actions.
 SET NOCOUNT ON;
 SET XACT_ABORT ON;
+SET ANSI_NULLS ON;
+SET QUOTED_IDENTIFIER ON;
+SET ANSI_PADDING ON;
+SET ANSI_WARNINGS ON;
+SET CONCAT_NULL_YIELDS_NULL ON;
+SET ARITHABORT ON;
+SET NUMERIC_ROUNDABORT OFF;
 IF DB_NAME() <> N'SmartAgriWarehouseDB'
     THROW 50300, 'Select SmartAgriWarehouseDB before running the demo seed.', 1;
 IF OBJECT_ID(N'dbo.BATCH_SALE_OFFER', N'U') IS NULL OR COL_LENGTH(N'dbo.PURCHASE_ORDER', N'ReceivedAt') IS NULL
@@ -25,6 +32,7 @@ BEGIN TRY
 
     DECLARE @Accounts TABLE (Username nvarchar(100), RoleCode nvarchar(40), FullName nvarchar(150));
     INSERT @Accounts VALUES
+        (N'demo_admin', N'ADMINISTRATOR', N'DEMO Quản trị viên'),
         (N'demo_distributor', N'DISTRIBUTOR', N'DEMO Nhà phân phối 1'),
         (N'demo_distributor2', N'DISTRIBUTOR', N'DEMO Nhà phân phối 2'),
         (N'demo_supplier', N'SUPPLIER', N'DEMO Nhà cung cấp'),
@@ -78,10 +86,16 @@ BEGIN TRY
         VALUES (N'DEMO-DIST-ZONE',N'Khu demo Distributor',1000,N'ACTIVE',@Now);
     DECLARE @Location int=(SELECT WarehouseLocationID FROM dbo.WAREHOUSE_LOCATION WHERE LocationCode=N'DEMO-DIST-ZONE');
 
-    DECLARE @Crops TABLE (Code nvarchar(30), Name nvarchar(100), Category nvarchar(100));
-    INSERT @Crops VALUES (N'DEMO-DIST-RICE',N'Gạo demo',N'Ngũ cốc'),(N'DEMO-DIST-MANGO',N'Xoài demo',N'Trái cây'),(N'DEMO-DIST-DRAGON',N'Thanh long demo',N'Trái cây');
-    INSERT dbo.CROP_TYPE (CropCode,CropName,CategoryName,DefaultUnit,IsActive,CreatedAt)
-    SELECT Code,Name,Category,N'kg',1,@Now FROM @Crops c WHERE NOT EXISTS (SELECT 1 FROM dbo.CROP_TYPE e WHERE e.CropCode=c.Code);
+    DECLARE @Crops TABLE (Code nvarchar(30), Name nvarchar(100), Category nvarchar(100), SafetyStockKg decimal(18,3));
+    INSERT @Crops VALUES
+        (N'DEMO-DIST-RICE',N'Gạo demo',N'Ngũ cốc',50),
+        (N'DEMO-DIST-MANGO',N'Xoài demo',N'Trái cây',70),
+        (N'DEMO-DIST-DRAGON',N'Thanh long demo',N'Trái cây',30);
+    INSERT dbo.CROP_TYPE (CropCode,CropName,CategoryName,SafetyStockLevelKg,DefaultUnit,IsActive,CreatedAt)
+    SELECT Code,Name,Category,SafetyStockKg,N'kg',1,@Now FROM @Crops c WHERE NOT EXISTS (SELECT 1 FROM dbo.CROP_TYPE e WHERE e.CropCode=c.Code);
+    UPDATE crop SET CropName=source.Name,CategoryName=source.Category,SafetyStockLevelKg=source.SafetyStockKg,
+        DefaultUnit=N'kg',IsActive=1,UpdatedAt=@Now
+    FROM dbo.CROP_TYPE crop JOIN @Crops source ON source.Code=crop.CropCode;
     INSERT dbo.SUPPLIER_CROP_TYPE (SupplierID,CropTypeID)
     SELECT @Supplier,c.CropTypeID FROM dbo.CROP_TYPE c JOIN @Crops d ON d.Code=c.CropCode
     WHERE NOT EXISTS (SELECT 1 FROM dbo.SUPPLIER_CROP_TYPE e WHERE e.SupplierID=@Supplier AND e.CropTypeID=c.CropTypeID);
@@ -234,7 +248,10 @@ BEGIN CATCH
     THROW;
 END CATCH;
 
-SELECT a.Username,a.Email,r.RoleCode FROM dbo.ACCOUNT a JOIN dbo.ROLE r ON r.RoleID=a.RoleID WHERE a.Username IN (N'demo_distributor',N'demo_distributor2');
+SELECT a.Username,a.Email,r.RoleCode,a.AccountStatus
+FROM dbo.ACCOUNT a JOIN dbo.ROLE r ON r.RoleID=a.RoleID
+WHERE a.Username IN (N'demo_admin',N'demo_manager1',N'demo_manager2',N'demo_qc',N'demo_operation',N'demo_supplier',N'demo_distributor',N'demo_distributor2')
+ORDER BY r.RoleCode,a.Username;
 SELECT o.OrderCode,o.OrderStatus,o.TotalAmount,a.Username AS Owner FROM dbo.PURCHASE_ORDER o JOIN dbo.DISTRIBUTOR d ON d.DistributorID=o.DistributorID JOIN dbo.ACCOUNT a ON a.AccountID=d.AccountID WHERE o.OrderCode LIKE N'DEMO-DIST-PO-%' ORDER BY o.OrderCode;
 SELECT b.BatchCode,b.ProductName,b.BatchStatus,b.ExpiryDate,i.QuantityOnHand,i.ReservedQuantity,i.AvailableQuantity,p.WholeLotPrice,p.IsPublished
 FROM dbo.PRODUCT_BATCH b JOIN dbo.INVENTORY i ON i.ProductBatchID=b.ProductBatchID LEFT JOIN dbo.BATCH_SALE_OFFER p ON p.ProductBatchID=b.ProductBatchID WHERE b.BatchCode LIKE N'DEMO-DIST-LOT-%' ORDER BY b.BatchCode;
