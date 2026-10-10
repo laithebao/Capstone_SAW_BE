@@ -73,12 +73,18 @@ public sealed class WarehouseInventoryRepository(AppDbContext db) : IWarehouseIn
     public async Task<WarehouseDistributorOrderDetail> RejectDistributorOrderAsync(int actorAccountId, long id, string reason, CancellationToken ct)
     {
         if (string.IsNullOrWhiteSpace(reason)) throw new ConflictException("Vui lòng nhập lý do từ chối đơn.");
-        var order = await db.PurchaseOrders.Include(o => o.Distributor).Include(o => o.OrderDetails).ThenInclude(d => d.CropType).Include(o => o.OrderDetails).ThenInclude(d => d.RequestedProductBatch).SingleOrDefaultAsync(o => o.PurchaseOrderId == id, ct)
-            ?? throw new NotFoundException("Không tìm thấy đơn nhà phân phối.");
-        if (order.OrderStatus != "PENDING") throw new ConflictException("Đơn đã được xử lý, không thể từ chối lại.");
-        order.OrderStatus = "REJECTED"; order.RejectedAt = DateTime.UtcNow; order.RejectionReason = reason.Trim(); order.UpdatedAt = DateTime.UtcNow;
-        await db.SaveChangesAsync(ct);
-        return await ToOrderDetail(order, ct);
+        var strategy = db.Database.CreateExecutionStrategy();
+        return await strategy.ExecuteAsync(async () =>
+        {
+            await using var transaction = await db.Database.BeginTransactionAsync(IsolationLevel.Serializable, ct);
+            var order = await db.PurchaseOrders.Include(o => o.Distributor).Include(o => o.OrderDetails).ThenInclude(d => d.CropType).Include(o => o.OrderDetails).ThenInclude(d => d.RequestedProductBatch).SingleOrDefaultAsync(o => o.PurchaseOrderId == id, ct)
+                ?? throw new NotFoundException("Không tìm thấy đơn nhà phân phối.");
+            if (order.OrderStatus != "PENDING") throw new ConflictException("Đơn đã được xử lý, không thể từ chối lại.");
+            order.OrderStatus = "REJECTED"; order.RejectedAt = DateTime.UtcNow; order.RejectionReason = reason.Trim(); order.UpdatedAt = DateTime.UtcNow;
+            await db.SaveChangesAsync(ct);
+            await transaction.CommitAsync(ct);
+            return await ToOrderDetail(order, ct);
+        });
     }
 
     private async Task<WarehouseDistributorOrderDetail> ToOrderDetail(SAW.Domain.Entities.PurchaseOrder order, CancellationToken ct)
