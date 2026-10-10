@@ -13,7 +13,14 @@ public sealed class WarehouseInventoryRepository(AppDbContext db) : IWarehouseIn
         if (!string.IsNullOrWhiteSpace(status)) query = query.Where(o => o.OrderStatus == status.ToUpper());
         var total = await query.CountAsync(ct);
         var rows = await query.OrderByDescending(o => o.CreatedAt).Skip((page - 1) * pageSize).Take(pageSize).ToListAsync(ct);
-        var items = rows.Select(o => new WarehouseDistributorOrderSummary(o.PurchaseOrderId, o.OrderCode, o.OrderStatus, o.Distributor.DistributorName, o.OrderDetails.Count, o.TotalAmount, o.CreatedAt, true)).ToList();
+        var items = new List<WarehouseDistributorOrderSummary>(rows.Count);
+        foreach (var order in rows)
+        {
+            var detail = await ToOrderDetail(order, ct);
+            items.Add(new WarehouseDistributorOrderSummary(order.PurchaseOrderId, order.OrderCode, order.OrderStatus,
+                order.Distributor.DistributorName, order.OrderDetails.Count, order.TotalAmount, order.CreatedAt,
+                detail.StockAvailable));
+        }
         return new(items, total, page, pageSize);
     }
 
@@ -29,6 +36,7 @@ public sealed class WarehouseInventoryRepository(AppDbContext db) : IWarehouseIn
         var order = await db.PurchaseOrders.Include(o => o.Distributor).Include(o => o.OrderDetails).ThenInclude(d => d.CropType).Include(o => o.OrderDetails).ThenInclude(d => d.RequestedProductBatch).SingleOrDefaultAsync(o => o.PurchaseOrderId == id, ct)
             ?? throw new KeyNotFoundException("Không tìm thấy đơn nhà phân phối.");
         if (order.OrderStatus != "PENDING") throw new InvalidOperationException("Chỉ đơn đang chờ duyệt mới được phê duyệt.");
+        if (order.Distributor.HasOverdueBalance) throw new InvalidOperationException("Không thể duyệt đơn của nhà phân phối đang có công nợ quá hạn.");
         var detail = await ToOrderDetail(order, ct);
         if (!detail.StockAvailable) throw new InvalidOperationException("Tồn kho hiện tại không đủ để phê duyệt đơn.");
         order.OrderStatus = "APPROVED"; order.ApprovedAt = DateTime.UtcNow; order.ApprovedByAccountId = actorAccountId; order.UpdatedAt = DateTime.UtcNow;
