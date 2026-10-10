@@ -60,6 +60,7 @@ public sealed class WarehouseInventoryRepository(AppDbContext db) : IWarehouseIn
             if (input is not null && input.UnitPrice < 0) throw new ConflictException("Đơn giá duyệt không hợp lệ.");
             if (input is not null) line.UnitPrice = input.UnitPrice;
         }
+        // Keep the persisted amount check consistent when the manager changes weight or price.
         order.SubtotalAmount = order.OrderDetails.Sum(line => line.ApprovedWeightKg * line.UnitPrice);
         order.TotalAmount = order.SubtotalAmount + order.TaxAmount;
         order.OrderStatus = "APPROVED"; order.ApprovedAt = DateTime.UtcNow; order.ApprovedByAccountId = actorAccountId; order.UpdatedAt = DateTime.UtcNow;
