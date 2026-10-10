@@ -38,6 +38,9 @@ public sealed class WarehouseInventoryRepository(AppDbContext db) : IWarehouseIn
 
     public async Task<WarehouseDistributorOrderDetail> ApproveDistributorOrderAsync(int actorAccountId, long id, WarehouseOrderApprovalRequest request, CancellationToken ct)
     {
+        var strategy = db.Database.CreateExecutionStrategy();
+        return await strategy.ExecuteAsync(async () =>
+        {
         await using var transaction = await db.Database.BeginTransactionAsync(IsolationLevel.Serializable, ct);
         var order = await db.PurchaseOrders.Include(o => o.Distributor).Include(o => o.OrderDetails).ThenInclude(d => d.CropType).Include(o => o.OrderDetails).ThenInclude(d => d.RequestedProductBatch).SingleOrDefaultAsync(o => o.PurchaseOrderId == id, ct)
             ?? throw new NotFoundException("Không tìm thấy đơn nhà phân phối.");
@@ -57,11 +60,13 @@ public sealed class WarehouseInventoryRepository(AppDbContext db) : IWarehouseIn
             if (input is not null && input.UnitPrice < 0) throw new ConflictException("Đơn giá duyệt không hợp lệ.");
             if (input is not null) line.UnitPrice = input.UnitPrice;
         }
-        order.TotalAmount = order.OrderDetails.Sum(line => line.ApprovedWeightKg * line.UnitPrice) + order.TaxAmount;
+        order.SubtotalAmount = order.OrderDetails.Sum(line => line.ApprovedWeightKg * line.UnitPrice);
+        order.TotalAmount = order.SubtotalAmount + order.TaxAmount;
         order.OrderStatus = "APPROVED"; order.ApprovedAt = DateTime.UtcNow; order.ApprovedByAccountId = actorAccountId; order.UpdatedAt = DateTime.UtcNow;
         await db.SaveChangesAsync(ct);
         await transaction.CommitAsync(ct);
         return await ToOrderDetail(order, ct);
+        });
     }
 
     public async Task<WarehouseDistributorOrderDetail> RejectDistributorOrderAsync(int actorAccountId, long id, string reason, CancellationToken ct)
