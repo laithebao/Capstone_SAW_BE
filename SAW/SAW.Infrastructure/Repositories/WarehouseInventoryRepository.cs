@@ -41,6 +41,7 @@ public sealed class WarehouseInventoryRepository(AppDbContext db) : IWarehouseIn
         var strategy = db.Database.CreateExecutionStrategy();
         return await strategy.ExecuteAsync(async () =>
         {
+        // Serialize rejection with approval so a pending order can transition only once.
         await using var transaction = await db.Database.BeginTransactionAsync(IsolationLevel.Serializable, ct);
         var order = await db.PurchaseOrders.Include(o => o.Distributor).Include(o => o.OrderDetails).ThenInclude(d => d.CropType).Include(o => o.OrderDetails).ThenInclude(d => d.RequestedProductBatch).SingleOrDefaultAsync(o => o.PurchaseOrderId == id, ct)
             ?? throw new NotFoundException("Không tìm thấy đơn nhà phân phối.");
