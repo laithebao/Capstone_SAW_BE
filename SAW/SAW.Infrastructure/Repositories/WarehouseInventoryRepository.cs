@@ -29,7 +29,7 @@ public sealed class WarehouseInventoryRepository(AppDbContext db) : IWarehouseIn
     public async Task<WarehouseDistributorOrderDetail> GetDistributorOrderAsync(long id, CancellationToken ct)
     {
         var order = await db.PurchaseOrders.AsNoTracking().Include(o => o.Distributor).Include(o => o.OrderDetails).ThenInclude(d => d.CropType).Include(o => o.OrderDetails).ThenInclude(d => d.RequestedProductBatch).SingleOrDefaultAsync(o => o.PurchaseOrderId == id, ct)
-            ?? throw new KeyNotFoundException("Không tìm thấy đơn nhà phân phối.");
+            ?? throw new NotFoundException("Không tìm thấy đơn nhà phân phối.");
         return await ToOrderDetail(order, ct);
     }
 
