@@ -1,6 +1,8 @@
 using Microsoft.EntityFrameworkCore;
 using SAW.Application.Features.WarehouseInventory;
+using SAW.Application.Exceptions;
 using SAW.Infrastructure.Persistence;
+using System.Data;
 
 namespace SAW.Infrastructure.Repositories;
 
@@ -33,15 +35,21 @@ public sealed class WarehouseInventoryRepository(AppDbContext db) : IWarehouseIn
 
     public async Task<WarehouseDistributorOrderDetail> ApproveDistributorOrderAsync(int actorAccountId, long id, CancellationToken ct)
     {
+        await using var transaction = await db.Database.BeginTransactionAsync(IsolationLevel.Serializable, ct);
         var order = await db.PurchaseOrders.Include(o => o.Distributor).Include(o => o.OrderDetails).ThenInclude(d => d.CropType).Include(o => o.OrderDetails).ThenInclude(d => d.RequestedProductBatch).SingleOrDefaultAsync(o => o.PurchaseOrderId == id, ct)
-            ?? throw new KeyNotFoundException("Không tìm thấy đơn nhà phân phối.");
-        if (order.OrderStatus != "PENDING") throw new InvalidOperationException("Chỉ đơn đang chờ duyệt mới được phê duyệt.");
-        if (order.Distributor.HasOverdueBalance) throw new InvalidOperationException("Không thể duyệt đơn của nhà phân phối đang có công nợ quá hạn.");
+            ?? throw new NotFoundException("Không tìm thấy đơn nhà phân phối.");
+        if (order.OrderStatus != "PENDING") throw new ConflictException("Đơn đã được xử lý hoặc đã bị hủy, không thể duyệt lại.");
+        if (order.Distributor.HasOverdueBalance) throw new ConflictException("Không thể duyệt đơn của nhà phân phối đang có công nợ quá hạn.");
         var detail = await ToOrderDetail(order, ct);
-        if (!detail.StockAvailable) throw new InvalidOperationException("Tồn kho hiện tại không đủ để phê duyệt đơn.");
+        if (!detail.StockAvailable) throw new ConflictException("Tồn kho đủ điều kiện hiện tại không đủ để phê duyệt đơn.");
+        foreach (var line in order.OrderDetails)
+        {
+            line.ApprovedQuantity = line.RequestedQuantity;
+            line.ApprovedWeightKg = line.RequestedWeightKg;
+        }
         order.OrderStatus = "APPROVED"; order.ApprovedAt = DateTime.UtcNow; order.ApprovedByAccountId = actorAccountId; order.UpdatedAt = DateTime.UtcNow;
-        db.OrderStatusHistories.Add(new() { PurchaseOrderId = id, OldStatus = "PENDING", NewStatus = "APPROVED", ChangedByAccountId = actorAccountId, ChangedAt = DateTime.UtcNow, ChangeReason = "Warehouse Manager approved" });
         await db.SaveChangesAsync(ct);
+        await transaction.CommitAsync(ct);
         return await ToOrderDetail(order, ct);
     }
 
@@ -49,7 +57,8 @@ public sealed class WarehouseInventoryRepository(AppDbContext db) : IWarehouseIn
     {
         var cropIds = order.OrderDetails.Where(d => d.RequestedProductBatchId == null).Select(d => d.CropTypeId).ToList();
         var batchIds = order.OrderDetails.Where(d => d.RequestedProductBatchId != null).Select(d => d.RequestedProductBatchId!.Value).ToList();
-        var stock = await db.Inventories.AsNoTracking().Where(i => batchIds.Contains(i.ProductBatchId) || cropIds.Contains(i.ProductBatch.CropTypeId)).GroupBy(i => new { i.ProductBatchId, i.ProductBatch.CropTypeId }).Select(g => new { g.Key.ProductBatchId, g.Key.CropTypeId, Available = g.Sum(i => i.AvailableQuantity) }).ToListAsync(ct);
+        var today = DateOnly.FromDateTime(DateTime.UtcNow);
+        var stock = await db.Inventories.AsNoTracking().Where(i => (batchIds.Contains(i.ProductBatchId) || cropIds.Contains(i.ProductBatch.CropTypeId)) && i.ProductBatch.BatchStatus == "IN_STOCK" && (i.ProductBatch.ExpiryDate == null || i.ProductBatch.ExpiryDate >= today)).GroupBy(i => new { i.ProductBatchId, i.ProductBatch.CropTypeId }).Select(g => new { g.Key.ProductBatchId, g.Key.CropTypeId, Available = g.Sum(i => i.AvailableQuantity) }).ToListAsync(ct);
         var lines = order.OrderDetails.Select(d => { var available = stock.Where(s => d.RequestedProductBatchId.HasValue ? s.ProductBatchId == d.RequestedProductBatchId : s.CropTypeId == d.CropTypeId).Sum(s => s.Available); return new WarehouseDistributorOrderLine(d.OrderDetailId, d.CropType.CropName, d.RequestedProductBatch?.BatchCode, d.RequestedWeightKg, available, d.UnitPrice, available >= d.RequestedWeightKg); }).ToList();
         return new(order.PurchaseOrderId, order.OrderCode, order.OrderStatus, order.Distributor.DistributorName, order.TotalAmount, order.CreatedAt, order.ExpectedDeliveryDate, lines.All(l => l.StockAvailable), lines);
     }
@@ -75,7 +84,7 @@ public sealed class WarehouseInventoryRepository(AppDbContext db) : IWarehouseIn
             var available = location.MaxWeightKg.HasValue
                 ? Math.Max(location.MaxWeightKg.Value - location.QuantityOnHandKg, 0)
                 : (decimal?)null;
-            var status = location.UtilizationPercent switch
+            var status = !location.MaxWeightKg.HasValue ? "UNCONFIGURED" : location.UtilizationPercent switch
             {
                 > 100 => "OVERCROWDED",
                 >= 90 => "NEAR_CAPACITY",
@@ -167,8 +176,8 @@ public sealed class WarehouseInventoryRepository(AppDbContext db) : IWarehouseIn
                     : null,
                 location.Inventories.Count(inventory => inventory.QuantityOnHand > 0),
                 location.Inventories.Count(inventory =>
-                    inventory.QuantityOnHand > 0 &&
-                    inventory.AvailableQuantity <= (inventory.ProductBatch.CropType.SafetyStockLevelKg ?? 0)),
+                    inventory.ProductBatch.CropType.SafetyStockLevelKg.HasValue &&
+                    inventory.AvailableQuantity <= inventory.ProductBatch.CropType.SafetyStockLevelKg.Value),
                 location.Inventories.Max(inventory => (DateTime?)inventory.LastUpdatedAt)))
             .ToListAsync(ct);
 }
