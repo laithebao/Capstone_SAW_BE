@@ -57,6 +57,7 @@ public sealed class WarehouseInventoryRepository(AppDbContext db) : IWarehouseIn
             if (input is not null && input.UnitPrice < 0) throw new ConflictException("Đơn giá duyệt không hợp lệ.");
             if (input is not null) line.UnitPrice = input.UnitPrice;
         }
+        order.TotalAmount = order.OrderDetails.Sum(line => line.ApprovedWeightKg * line.UnitPrice) + order.TaxAmount;
         order.OrderStatus = "APPROVED"; order.ApprovedAt = DateTime.UtcNow; order.ApprovedByAccountId = actorAccountId; order.UpdatedAt = DateTime.UtcNow;
         await db.SaveChangesAsync(ct);
         await transaction.CommitAsync(ct);
