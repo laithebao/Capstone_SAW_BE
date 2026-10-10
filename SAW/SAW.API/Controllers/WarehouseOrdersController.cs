@@ -17,5 +17,7 @@ public sealed class WarehouseOrdersController(IWarehouseInventoryService service
     [HttpGet("{id:long}")]
     public async Task<IActionResult> Get(long id, CancellationToken ct) => Ok(ApiResponse<WarehouseDistributorOrderDetail>.Success(await service.GetDistributorOrderAsync(id, ct)));
     [HttpPost("{id:long}/approve")]
-    public async Task<IActionResult> Approve(long id, CancellationToken ct) => Ok(ApiResponse<WarehouseDistributorOrderDetail>.Success(await service.ApproveDistributorOrderAsync(ActorId(), id, ct)));
+    public async Task<IActionResult> Approve(long id, [FromBody] WarehouseOrderApprovalRequest? request, CancellationToken ct) => Ok(ApiResponse<WarehouseDistributorOrderDetail>.Success(await service.ApproveDistributorOrderAsync(ActorId(), id, request ?? new([]), ct)));
+    [HttpPost("{id:long}/reject")]
+    public async Task<IActionResult> Reject(long id, [FromBody] string reason, CancellationToken ct) => Ok(ApiResponse<WarehouseDistributorOrderDetail>.Success(await service.RejectDistributorOrderAsync(ActorId(), id, reason, ct)));
 }

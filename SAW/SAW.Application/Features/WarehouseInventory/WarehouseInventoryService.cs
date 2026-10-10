@@ -13,4 +13,6 @@ public sealed class WarehouseInventoryService(IWarehouseInventoryRepository repo
     public Task<WarehouseDistributorOrderPage> GetDistributorOrdersAsync(string? status, int page, int pageSize, CancellationToken ct) => repository.GetDistributorOrdersAsync(status, page, pageSize, ct);
     public Task<WarehouseDistributorOrderDetail> GetDistributorOrderAsync(long id, CancellationToken ct) => repository.GetDistributorOrderAsync(id, ct);
     public Task<WarehouseDistributorOrderDetail> ApproveDistributorOrderAsync(int actorAccountId, long id, CancellationToken ct) => repository.ApproveDistributorOrderAsync(actorAccountId, id, ct);
+    public Task<WarehouseDistributorOrderDetail> ApproveDistributorOrderAsync(int actorAccountId, long id, WarehouseOrderApprovalRequest request, CancellationToken ct) => repository.ApproveDistributorOrderAsync(actorAccountId, id, request, ct);
+    public Task<WarehouseDistributorOrderDetail> RejectDistributorOrderAsync(int actorAccountId, long id, string reason, CancellationToken ct) => repository.RejectDistributorOrderAsync(actorAccountId, id, reason, ct);
 }

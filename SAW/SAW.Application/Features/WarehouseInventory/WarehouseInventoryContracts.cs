@@ -62,7 +62,10 @@ public sealed record ProductQualityDistributionChart(
 
 public sealed record WarehouseDistributorOrderLine(
     long OrderDetailId, string ProductName, string? BatchCode, decimal RequestedWeightKg,
-    decimal AvailableWeightKg, decimal UnitPrice, bool StockAvailable);
+    decimal AvailableWeightKg, decimal UnitPrice, decimal ApprovedWeightKg, bool StockAvailable);
+
+public sealed record WarehouseOrderApprovalLine(long OrderDetailId, decimal ApprovedWeightKg, decimal UnitPrice);
+public sealed record WarehouseOrderApprovalRequest(IReadOnlyList<WarehouseOrderApprovalLine> Lines);
 
 public sealed record WarehouseDistributorOrderSummary(
     long Id, string OrderCode, string Status, string DistributorName, int LineCount,
@@ -73,7 +76,7 @@ public sealed record WarehouseDistributorOrderPage(
 
 public sealed record WarehouseDistributorOrderDetail(
     long Id, string OrderCode, string Status, string DistributorName, decimal TotalAmount,
-    DateTime CreatedAt, DateOnly? ExpectedDeliveryDate, bool StockAvailable,
+    DateTime CreatedAt, DateOnly? ExpectedDeliveryDate, string DeliveryAddress, string? ContactPhone, string? OrderNote, bool StockAvailable,
     IReadOnlyList<WarehouseDistributorOrderLine> Lines);
 
 public interface IWarehouseInventoryRepository
@@ -84,6 +87,8 @@ public interface IWarehouseInventoryRepository
     Task<WarehouseDistributorOrderPage> GetDistributorOrdersAsync(string? status, int page, int pageSize, CancellationToken ct);
     Task<WarehouseDistributorOrderDetail> GetDistributorOrderAsync(long id, CancellationToken ct);
     Task<WarehouseDistributorOrderDetail> ApproveDistributorOrderAsync(int actorAccountId, long id, CancellationToken ct);
+    Task<WarehouseDistributorOrderDetail> ApproveDistributorOrderAsync(int actorAccountId, long id, WarehouseOrderApprovalRequest request, CancellationToken ct);
+    Task<WarehouseDistributorOrderDetail> RejectDistributorOrderAsync(int actorAccountId, long id, string reason, CancellationToken ct);
 }
 
 public interface IWarehouseInventoryService
@@ -94,4 +99,6 @@ public interface IWarehouseInventoryService
     Task<WarehouseDistributorOrderPage> GetDistributorOrdersAsync(string? status, int page, int pageSize, CancellationToken ct);
     Task<WarehouseDistributorOrderDetail> GetDistributorOrderAsync(long id, CancellationToken ct);
     Task<WarehouseDistributorOrderDetail> ApproveDistributorOrderAsync(int actorAccountId, long id, CancellationToken ct);
+    Task<WarehouseDistributorOrderDetail> ApproveDistributorOrderAsync(int actorAccountId, long id, WarehouseOrderApprovalRequest request, CancellationToken ct);
+    Task<WarehouseDistributorOrderDetail> RejectDistributorOrderAsync(int actorAccountId, long id, string reason, CancellationToken ct);
 }
