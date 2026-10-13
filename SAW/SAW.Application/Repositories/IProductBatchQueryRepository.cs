@@ -11,6 +11,7 @@ public interface IProductBatchQueryRepository
     Task<ProductBatch?> GetByIdAsync(long id, CancellationToken cancellationToken);
     Task<ProductBatch?> GetWarehouseByIdAsync(long id, CancellationToken cancellationToken);
     Task<bool> HasQcInspectionAsync(long id, CancellationToken cancellationToken);
+    Task<ProductBatchRelatedInformation> GetRelatedInformationAsync(long id, CancellationToken cancellationToken);
     Task<IReadOnlyList<ProductBatchFilterOption>> GetSubmittedSuppliersAsync(CancellationToken cancellationToken);
     Task<IReadOnlyList<SubmittedDeclarationOption>> GetSubmittedBySupplierAsync(int supplierId, CancellationToken cancellationToken);
 }

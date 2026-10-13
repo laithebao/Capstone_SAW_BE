@@ -12,6 +12,10 @@ public sealed class ProductBatchVerificationTests
     private readonly Mock<IProductBatchQueryRepository> _query = new();
     private readonly Mock<IProductBatchVerificationRepository> _verification = new();
 
+    public ProductBatchVerificationTests() => _query
+        .Setup(q => q.GetRelatedInformationAsync(It.IsAny<long>(), It.IsAny<CancellationToken>()))
+        .ReturnsAsync(ProductBatchRelatedInformation.Empty);
+
     private ProductBatchService Service() => new(_query.Object, _verification.Object);
 
     private static ProductBatch SubmittedBatch() => new()

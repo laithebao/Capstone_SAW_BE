@@ -14,6 +14,25 @@ namespace SAW.Test.Infrastructure.Traceability;
 
 public sealed class PublicTraceabilitySqlTests(ReceivingSqlFixture fixture) : IClassFixture<ReceivingSqlFixture>
 {
+    [ReceivingSqlFact]
+    public async Task Missing_or_insecure_image_and_reversed_qc_timestamp_return_410()
+    {
+        foreach (var variant in new[] { "missing", "http", "timestamp" })
+        {
+            var (batch, qr) = await AcceptedAsync();
+            await using var db = fixture.Context();
+            if (variant == "timestamp")
+                await db.QcInspections.Where(q => q.ProductBatchId == batch.ProductBatchId)
+                    .ExecuteUpdateAsync(s => s.SetProperty(q => q.CompletedAt, new DateTime(2026, 1, 1)));
+            else await db.QrCodes.Where(q => q.QrCodeId == qr.QrCodeId)
+                .ExecuteUpdateAsync(s => s.SetProperty(q => q.QrImageUrl, variant == "missing" ? "" : "http://image.test.invalid/qr.png"));
+            using var client = await fixture.ApiAsync();
+            using var response = await client.GetAsync("/api/public/traceability/" + qr.PublicToken);
+            Assert.Equal(HttpStatusCode.Gone, response.StatusCode);
+            using var json = JsonDocument.Parse(await response.Content.ReadAsStringAsync());
+            Assert.Equal(JsonValueKind.Null, json.RootElement.GetProperty("data").ValueKind);
+        }
+    }
     private async Task<(ProductBatch Batch, QrCode Qr)> AcceptedAsync()
     {
         var batch = await fixture.BatchAsync();

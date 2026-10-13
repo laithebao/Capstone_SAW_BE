@@ -7,6 +7,8 @@ using System.Text.Json;
 using Microsoft.Data.SqlClient;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Logging.Abstractions;
+using Microsoft.Extensions.DependencyInjection;
+using Moq;
 using SAW.Application.Features.QrCodes;
 using SAW.Application.Features.QrCodes.Interfaces;
 using SAW.Application.Features.QrCodes.Services;
@@ -20,6 +22,67 @@ namespace SAW.Test.Infrastructure.QrCodes;
 // Reuses the isolated SQL fixture only; never touches dev batches or QC module tests.
 public sealed class QrCodeSqlTests(ReceivingSqlFixture fixture) : IClassFixture<ReceivingSqlFixture>
 {
+    [ReceivingSqlFact]
+    public async Task Worker_later_sweep_retry_and_configuration_pause_restart_use_sql_fixture()
+    {
+        var batch = await AcceptedAsync("E");
+        var storage = new TestStorage { IsConfigured = false };
+        var workerLog = new WorkerTestLog();
+        var repo = new Mock<SAW.Application.Repositories.IQrCodeRepository>();
+        // Candidate lookup is real SQL, restricted to this test batch so earlier fixture rows are untouched.
+        repo.Setup(r => r.GetCandidatesAsync(It.IsAny<long>(), It.IsAny<int>(), It.IsAny<CancellationToken>()))
+            .Returns(async (long cursor, int size, CancellationToken ct) =>
+            {
+                await using var db = fixture.Context();
+                var ids = await new QrCodeRepository(db).GetCandidatesAsync(Math.Max(cursor, batch.ProductBatchId - 1), size, ct);
+                return (IReadOnlyList<long>)ids.Where(id => id == batch.ProductBatchId).ToArray();
+            });
+        using var provider = new ServiceCollection().AddScoped(_ => repo.Object)
+            .AddScoped<IQrImageStorage>(_ => storage)
+            .AddScoped<SAW.Infrastructure.Persistence.AppDbContext>(_ => fixture.Context())
+            .AddScoped<IProductBatchQrCodeService>(s => Service(s.GetRequiredService<SAW.Infrastructure.Persistence.AppDbContext>(), storage))
+            .BuildServiceProvider();
+        QrCodeGenerationWorker Worker() => new(provider.GetRequiredService<IServiceScopeFactory>(),
+            new QrCodeOptions { PublicFrontendBaseUrl = "https://saw.test.invalid", IntervalSeconds = 5, BatchSize = 100 },
+            workerLog);
+        using (var paused = Worker()) { await paused.StartAsync(default); await paused.StopAsync(default); }
+        Assert.Contains(workerLog.Messages, text => text.Contains("worker paused: configure"));
+        repo.Verify(r => r.GetCandidatesAsync(It.IsAny<long>(), It.IsAny<int>(), It.IsAny<CancellationToken>()), Times.Never);
+        await using (var check = fixture.Context()) Assert.False(await check.QrCodes.AnyAsync(q => q.ProductBatchId == batch.ProductBatchId));
+        storage.IsConfigured = true;
+        var attempts = 0;
+        storage.BeforeReturn = () => Interlocked.Increment(ref attempts) == 1
+            ? Task.FromException(new HttpRequestException("Isolated upload fault")) : Task.CompletedTask;
+        using (var restarted = Worker())
+        {
+            await restarted.StartAsync(default);
+            try
+            {
+                using var deadline = new CancellationTokenSource(TimeSpan.FromSeconds(30));
+                while (true)
+                {
+                    await using var db = fixture.Context();
+                    if (await db.QrCodes.AnyAsync(q => q.ProductBatchId == batch.ProductBatchId, deadline.Token)) break;
+                    await Task.Delay(100, deadline.Token);
+                }
+            }
+            finally { await restarted.StopAsync(default); }
+        }
+        Assert.Equal(2, attempts);
+        await using var saved = fixture.Context();
+        var qr = Assert.Single(await saved.QrCodes.Where(q => q.ProductBatchId == batch.ProductBatchId).ToListAsync());
+        Assert.True(qr.IsActive); Assert.Equal(64, qr.PublicToken!.Length); Assert.NotNull(qr.QrImageUrl);
+        var folder = Environment.GetEnvironmentVariable("SAW_TEST_EVIDENCE_DIRECTORY");
+        if (!string.IsNullOrEmpty(folder)) await File.WriteAllLinesAsync(Path.Combine(folder, "worker-pause-retry.log"), workerLog.Messages);
+    }
+    private sealed class WorkerTestLog : Microsoft.Extensions.Logging.ILogger<QrCodeGenerationWorker>
+    {
+        public List<string> Messages { get; } = [];
+        public IDisposable? BeginScope<TState>(TState state) where TState : notnull => null;
+        public bool IsEnabled(Microsoft.Extensions.Logging.LogLevel level) => true;
+        public void Log<TState>(Microsoft.Extensions.Logging.LogLevel level, Microsoft.Extensions.Logging.EventId id,
+            TState state, Exception? exception, Func<TState, Exception?, string> formatter) => Messages.Add(formatter(state, exception));
+    }
     private async Task<ProductBatch> AcceptedAsync(string grade = "A", string status = "APPROVED_FOR_STORAGE")
     {
         var batch = await fixture.BatchAsync();
@@ -239,7 +302,7 @@ public sealed class QrCodeSqlTests(ReceivingSqlFixture fixture) : IClassFixture<
 
     private sealed class TestStorage : IQrImageStorage
     {
-        public bool IsConfigured => true;
+        public bool IsConfigured { get; set; } = true;
         public ConcurrentBag<string> Uploaded { get; } = [];
         public ConcurrentBag<string> Deleted { get; } = [];
         public Func<Task>? BeforeReturn { get; set; }

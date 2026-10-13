@@ -94,6 +94,54 @@ public sealed class ProductBatchQueryRepository(AppDbContext dbContext) : IProdu
     public Task<bool> HasQcInspectionAsync(long id, CancellationToken cancellationToken) =>
         dbContext.QcInspections.AnyAsync(q => q.ProductBatchId == id, cancellationToken);
 
+    public async Task<ProductBatchRelatedInformation> GetRelatedInformationAsync(long id, CancellationToken ct)
+    {
+        // Same latest-inspection ordering as Goods Receipt, QR and public traceability.
+        // Never filter by result/status first: a newer draft must supersede an older PASS.
+        var qc = await dbContext.QcInspections.AsNoTracking().Where(q => q.ProductBatchId == id)
+            .OrderByDescending(q => q.StartedAt).ThenByDescending(q => q.QcInspectionId)
+            .Select(q => new ProductBatchQcSummary(q.QcInspectionId, q.InspectionCode,
+                q.InspectionStatus, q.QcResult, q.QualityGrade, q.StartedAt, q.CompletedAt,
+                q.QcAccount.FullName, q.Note)).FirstOrDefaultAsync(ct);
+        var receipts = await dbContext.GoodsReceipts.AsNoTracking().Where(r => r.ProductBatchId == id)
+            .OrderByDescending(r => r.ReceivedAt).ThenByDescending(r => r.GoodsReceiptId)
+            .Select(r => new ProductBatchGoodsReceipt(r.GoodsReceiptId, r.ReceiptCode, r.ReceiptStatus,
+                r.ReceivedAt, r.CommittedAt, r.WarehouseLocationId,
+                r.WarehouseLocation.LocationCode + " · " + r.WarehouseLocation.ZoneName + " / "
+                    + (r.WarehouseLocation.RackName ?? "—") + " / " + (r.WarehouseLocation.BinName ?? "—"),
+                r.OperationAccount.FullName, r.Note, r.ReceivedQuantity, r.Unit, r.WeightInKg)).ToListAsync(ct);
+        var history = await dbContext.BatchStatusHistories.AsNoTracking().Where(h => h.ProductBatchId == id)
+            .OrderByDescending(h => h.ChangedAt).ThenByDescending(h => h.BatchStatusHistoryId)
+            .Select(h => new ProductBatchStatusHistoryItem(h.BatchStatusHistoryId, h.ChangedAt,
+                h.OldStatus, h.NewStatus, h.ChangedByAccount == null ? null : h.ChangedByAccount.FullName,
+                h.ChangeReason)).ToListAsync(ct);
+
+        var transactions = receipts.Select(r => new ProductBatchWarehouseTransaction(r.Id,
+            "GOODS_RECEIPT", r.ReceiptCode, r.ReceiptStatus, r.CommittedAt ?? r.ReceivedAt,
+            r.ReceivedQuantity, r.Unit, r.WeightInKg, null, r.LocationName,
+            r.OperationStaffName, r.Note)).ToList();
+        // Read quantities from the stored documents, never from current inventory or batch values.
+        transactions.AddRange(await dbContext.GoodsIssueDetails.AsNoTracking()
+            .Where(d => d.Inventory.ProductBatchId == id)
+            .Select(d => new ProductBatchWarehouseTransaction(d.GoodsIssueDetailId, "GOODS_ISSUE",
+                d.GoodsIssue.IssueCode, d.GoodsIssue.IssueStatus, d.GoodsIssue.CommittedAt ?? d.GoodsIssue.IssuedAt,
+                d.IssuedQuantity, d.Unit, d.WeightInKg, d.Inventory.WarehouseLocation.LocationCode,
+                null, d.GoodsIssue.OperationAccount.FullName, d.GoodsIssue.Note)).ToListAsync(ct));
+        transactions.AddRange(await dbContext.StockTransfers.AsNoTracking().Where(t => t.ProductBatchId == id)
+            .Select(t => new ProductBatchWarehouseTransaction(t.StockTransferId, "STOCK_TRANSFER",
+                t.TransferCode, t.TransferStatus, t.TransferredAt, t.Quantity, t.Unit, null,
+                t.FromWarehouseLocation.LocationCode, t.ToWarehouseLocation.LocationCode,
+                t.OperationAccount.FullName, t.Note)).ToListAsync(ct));
+        transactions.AddRange(await dbContext.StockAdjustments.AsNoTracking()
+            .Where(a => a.Inventory.ProductBatchId == id)
+            .Select(a => new ProductBatchWarehouseTransaction(a.StockAdjustmentId, "STOCK_ADJUSTMENT",
+                a.AdjustmentCode, a.AdjustmentStatus, a.CreatedAt, a.DifferenceQuantity, a.Inventory.Unit,
+                null, a.Inventory.WarehouseLocation.LocationCode, null, a.CreatedByAccount.FullName,
+                a.Reason)).ToListAsync(ct));
+        return new(qc, receipts, history, transactions.OrderByDescending(t => t.RecordedAt)
+            .ThenBy(t => t.TransactionType, StringComparer.Ordinal).ThenByDescending(t => t.Id).ToList());
+    }
+
     public Task<ProductBatch?> GetWarehouseByIdAsync(long id, CancellationToken cancellationToken) =>
         WarehouseBatches()
             .Include(x => x.Supplier)
