@@ -9,6 +9,7 @@ using Microsoft.EntityFrameworkCore;
 using Microsoft.IdentityModel.Tokens;
 using SAW.Application.Exceptions;
 using SAW.Application.Features.DistributorOrders;
+using SAW.Application.Features.WarehouseInventory;
 using SAW.Domain.Entities;
 using SAW.Infrastructure.Repositories;
 using SAW.Test.Infrastructure.ProductBatches;
@@ -237,6 +238,36 @@ public sealed class DistributorOrderSqlTests : IClassFixture<DistributorSqlFixtu
         Assert.Contains(page.Items, l => l.BatchId == lots[5].BatchId);
         Assert.All(lots.Take(5), l => Assert.DoesNotContain(page.Items, row => row.BatchId == l.BatchId));
         foreach (var lot in lots.Take(5)) await Assert.ThrowsAsync<ConflictException>(() => Repository().CreateAsync(buyer, Request(lot), default));
+    }
+
+    [ReceivingSqlFact]
+    public async Task WarehousePublishesReceivedLot_ThenDistributorCatalogShowsIt()
+    {
+        var buyer = await BuyerAsync();
+        var lot = await LotAsync();
+        await using (var setup = fixture.Context())
+        {
+            var oldOffer = await setup.BatchSaleOffers.FindAsync(lot.BatchId);
+            setup.BatchSaleOffers.Remove(oldOffer!);
+            await setup.SaveChangesAsync();
+        }
+
+        Assert.DoesNotContain((await Repository().CatalogAsync(buyer, new(PageSize: 50), default)).Items,
+            row => row.BatchId == lot.BatchId);
+
+        await using (var warehouseDb = fixture.Context())
+        {
+            var warehouse = new WarehouseInventoryRepository(warehouseDb);
+            var candidate = Assert.Single((await warehouse.GetSaleOffersAsync(lot.BatchCode, 1, 20, default)).Items);
+            Assert.True(candidate.CanPublish);
+            var published = await warehouse.UpdateSaleOfferAsync(lot.BatchId,
+                new WarehouseSaleOfferUpdateRequest(1_750_000m, true), default);
+            Assert.True(published.IsPublished);
+        }
+
+        var catalog = await Repository().CatalogAsync(buyer, new(PageSize: 50), default);
+        var visible = Assert.Single(catalog.Items, row => row.BatchId == lot.BatchId);
+        Assert.Equal(1_750_000m, visible.WholeLotPrice);
     }
 
     [ReceivingSqlFact]

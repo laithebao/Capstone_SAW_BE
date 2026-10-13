@@ -60,6 +60,26 @@ public sealed record ProductQualityDistributionChart(
     DateTime GeneratedAt,
     IReadOnlyList<ProductQualityDistributionItem> Grades);
 
+public sealed record WarehouseSaleOfferItem(
+    long BatchId,
+    string BatchCode,
+    string ProductName,
+    string CropName,
+    string? QualityGrade,
+    string BatchStatus,
+    decimal VerifiedWeightKg,
+    decimal AvailableWeightKg,
+    decimal? WholeLotPrice,
+    bool IsPublished,
+    bool CanPublish,
+    string? IneligibilityReason,
+    DateTime? UpdatedAt);
+
+public sealed record WarehouseSaleOfferPage(
+    IReadOnlyList<WarehouseSaleOfferItem> Items, int TotalCount, int Page, int PageSize);
+
+public sealed record WarehouseSaleOfferUpdateRequest(decimal WholeLotPrice, bool IsPublished);
+
 public sealed record WarehouseDistributorOrderLine(
     long OrderDetailId, string ProductName, string? BatchCode, decimal RequestedWeightKg,
     decimal AvailableWeightKg, decimal UnitPrice, decimal ApprovedWeightKg, bool StockAvailable);
@@ -84,6 +104,8 @@ public interface IWarehouseInventoryRepository
     Task<WarehouseInventoryLevelChart> GetLevelChartAsync(CancellationToken ct);
     Task<WarehouseCapacityChart> GetCapacityChartAsync(CancellationToken ct);
     Task<ProductQualityDistributionChart> GetQualityDistributionChartAsync(CancellationToken ct);
+    Task<WarehouseSaleOfferPage> GetSaleOffersAsync(string? search, int page, int pageSize, CancellationToken ct);
+    Task<WarehouseSaleOfferItem> UpdateSaleOfferAsync(long batchId, WarehouseSaleOfferUpdateRequest request, CancellationToken ct);
     Task<WarehouseDistributorOrderPage> GetDistributorOrdersAsync(string? status, int page, int pageSize, CancellationToken ct);
     Task<WarehouseDistributorOrderDetail> GetDistributorOrderAsync(long id, CancellationToken ct);
     Task<WarehouseDistributorOrderDetail> ApproveDistributorOrderAsync(int actorAccountId, long id, CancellationToken ct);
@@ -96,6 +118,8 @@ public interface IWarehouseInventoryService
     Task<WarehouseInventoryLevelChart> GetLevelChartAsync(CancellationToken ct);
     Task<WarehouseCapacityChart> GetCapacityChartAsync(CancellationToken ct);
     Task<ProductQualityDistributionChart> GetQualityDistributionChartAsync(CancellationToken ct);
+    Task<WarehouseSaleOfferPage> GetSaleOffersAsync(string? search, int page, int pageSize, CancellationToken ct);
+    Task<WarehouseSaleOfferItem> UpdateSaleOfferAsync(long batchId, WarehouseSaleOfferUpdateRequest request, CancellationToken ct);
     Task<WarehouseDistributorOrderPage> GetDistributorOrdersAsync(string? status, int page, int pageSize, CancellationToken ct);
     Task<WarehouseDistributorOrderDetail> GetDistributorOrderAsync(long id, CancellationToken ct);
     Task<WarehouseDistributorOrderDetail> ApproveDistributorOrderAsync(int actorAccountId, long id, CancellationToken ct);

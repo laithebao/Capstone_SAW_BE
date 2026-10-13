@@ -21,4 +21,17 @@ public sealed class WarehouseInventoryController(IWarehouseInventoryService serv
     [HttpGet("quality-distribution")]
     public async Task<IActionResult> QualityDistribution(CancellationToken ct) =>
         Ok(ApiResponse<ProductQualityDistributionChart>.Success(await service.GetQualityDistributionChartAsync(ct)));
+
+    [HttpGet("sale-offers")]
+    public async Task<IActionResult> SaleOffers(
+        [FromQuery] string? search, [FromQuery] int page = 1, [FromQuery] int pageSize = 20,
+        CancellationToken ct = default) =>
+        Ok(ApiResponse<WarehouseSaleOfferPage>.Success(
+            await service.GetSaleOffersAsync(search, page, pageSize, ct)));
+
+    [HttpPut("sale-offers/{batchId:long}")]
+    public async Task<IActionResult> UpdateSaleOffer(
+        long batchId, [FromBody] WarehouseSaleOfferUpdateRequest request, CancellationToken ct) =>
+        Ok(ApiResponse<WarehouseSaleOfferItem>.Success(
+            await service.UpdateSaleOfferAsync(batchId, request, ct)));
 }

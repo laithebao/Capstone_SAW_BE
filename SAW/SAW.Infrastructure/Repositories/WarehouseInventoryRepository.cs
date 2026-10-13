@@ -2,12 +2,117 @@ using Microsoft.EntityFrameworkCore;
 using SAW.Application.Features.WarehouseInventory;
 using SAW.Application.Exceptions;
 using SAW.Infrastructure.Persistence;
+using SAW.Domain.Entities;
 using System.Data;
 
 namespace SAW.Infrastructure.Repositories;
 
 public sealed class WarehouseInventoryRepository(AppDbContext db) : IWarehouseInventoryRepository
 {
+    public async Task<WarehouseSaleOfferPage> GetSaleOffersAsync(
+        string? search, int page, int pageSize, CancellationToken ct)
+    {
+        page = Math.Max(page, 1);
+        pageSize = Math.Clamp(pageSize, 1, 100);
+        var query = db.ProductBatches.AsNoTracking().Where(batch => batch.Inventories.Any());
+        if (!string.IsNullOrWhiteSpace(search))
+        {
+            var keyword = search.Trim();
+            query = query.Where(batch => batch.BatchCode.Contains(keyword)
+                || batch.ProductName.Contains(keyword)
+                || batch.CropType.CropName.Contains(keyword));
+        }
+
+        var total = await query.CountAsync(ct);
+        var batchIds = await query
+            .OrderByDescending(batch => batch.UpdatedAt ?? batch.CreatedAt)
+            .ThenByDescending(batch => batch.ProductBatchId)
+            .Skip((page - 1) * pageSize)
+            .Take(pageSize)
+            .Select(batch => batch.ProductBatchId)
+            .ToListAsync(ct);
+        var items = new List<WarehouseSaleOfferItem>(batchIds.Count);
+        foreach (var batchId in batchIds)
+            items.Add(await GetSaleOfferItemAsync(batchId, ct));
+        return new(items, total, page, pageSize);
+    }
+
+    public async Task<WarehouseSaleOfferItem> UpdateSaleOfferAsync(
+        long batchId, WarehouseSaleOfferUpdateRequest request, CancellationToken ct)
+    {
+        var current = await GetSaleOfferItemAsync(batchId, ct);
+        if (request.IsPublished && !current.CanPublish)
+            throw new ConflictException(current.IneligibilityReason ?? "Lô hàng chưa đủ điều kiện công bố bán.");
+
+        var offer = await db.BatchSaleOffers.SingleOrDefaultAsync(x => x.ProductBatchId == batchId, ct);
+        if (offer is null)
+        {
+            offer = new BatchSaleOffer { ProductBatchId = batchId };
+            db.BatchSaleOffers.Add(offer);
+        }
+        offer.WholeLotPrice = request.WholeLotPrice;
+        offer.IsPublished = request.IsPublished;
+        offer.UpdatedAt = DateTime.UtcNow;
+        await db.SaveChangesAsync(ct);
+        return await GetSaleOfferItemAsync(batchId, ct);
+    }
+
+    private async Task<WarehouseSaleOfferItem> GetSaleOfferItemAsync(long batchId, CancellationToken ct)
+    {
+        var batch = await db.ProductBatches.AsNoTracking()
+            .Include(x => x.CropType)
+            .Include(x => x.Inventories).ThenInclude(x => x.WarehouseLocation)
+            .SingleOrDefaultAsync(x => x.ProductBatchId == batchId, ct)
+            ?? throw new NotFoundException("Không tìm thấy lô hàng.");
+        var offer = await db.BatchSaleOffers.AsNoTracking()
+            .SingleOrDefaultAsync(x => x.ProductBatchId == batchId, ct);
+        var latestQc = await db.QcInspections.AsNoTracking()
+            .Where(x => x.ProductBatchId == batchId)
+            .OrderByDescending(x => x.StartedAt)
+            .ThenByDescending(x => x.QcInspectionId)
+            .Select(x => new { x.InspectionStatus, x.QcResult, x.QualityGrade, x.StartedAt, x.CompletedAt })
+            .FirstOrDefaultAsync(ct);
+        var hasOpenOrder = await db.OrderDetails.AsNoTracking().AnyAsync(line =>
+            line.RequestedProductBatchId == batchId
+            && line.PurchaseOrder.OrderStatus != "REJECTED"
+            && line.PurchaseOrder.OrderStatus != "CANCELLED", ct);
+        var hasCommittedIssue = await db.GoodsIssueDetails.AsNoTracking().AnyAsync(line =>
+            line.Inventory.ProductBatchId == batchId && line.GoodsIssue.IssueStatus == "COMMITTED", ct);
+
+        var available = batch.Inventories.Sum(x => x.AvailableQuantity);
+        var reason = SaleIneligibilityReason(batch, latestQc?.InspectionStatus, latestQc?.QcResult,
+            latestQc?.QualityGrade, latestQc?.StartedAt, latestQc?.CompletedAt, hasOpenOrder, hasCommittedIssue);
+        return new WarehouseSaleOfferItem(
+            batch.ProductBatchId, batch.BatchCode, batch.ProductName, batch.CropType.CropName,
+            batch.QualityGrade, batch.BatchStatus, batch.VerifiedWeightInKg ?? batch.WeightInKg,
+            available, offer?.WholeLotPrice, offer?.IsPublished ?? false, reason is null, reason,
+            offer?.UpdatedAt);
+    }
+
+    private static string? SaleIneligibilityReason(
+        ProductBatch batch, string? inspectionStatus, string? qcResult, string? qcGrade,
+        DateTime? startedAt, DateTime? completedAt, bool hasOpenOrder, bool hasCommittedIssue)
+    {
+        if (batch.BatchStatus != "IN_STOCK") return "Lô hàng chưa ở trạng thái đã nhập kho.";
+        if (!batch.CropType.IsActive) return "Loại nông sản của lô đang ngừng hoạt động.";
+        var today = DateOnly.FromDateTime(DateTime.UtcNow.AddHours(7));
+        if (batch.ExpiryDate is { } expiry && expiry < today) return "Lô hàng đã hết hạn sử dụng.";
+        if (batch.VerifiedWeightInKg is null or <= 0) return "Lô hàng chưa có khối lượng nhập kho hợp lệ.";
+        if (batch.Inventories.Count == 0) return "Lô hàng chưa có tồn kho.";
+        if (batch.Inventories.Any(x => x.ReservedQuantity != 0)) return "Lô hàng đang được giữ chỗ.";
+        if (batch.Inventories.Any(x => x.Unit != "kg")) return "Đơn vị tồn kho của lô phải là kg.";
+        if (batch.Inventories.Any(x => x.WarehouseLocation.LocationStatus != "ACTIVE")) return "Vị trí chứa lô không hoạt động.";
+        if (batch.Inventories.Sum(x => x.QuantityOnHand) != batch.VerifiedWeightInKg.Value)
+            return "Chỉ được công bố khi toàn bộ khối lượng lô còn nguyên trong kho.";
+        if (hasOpenOrder) return "Lô hàng đang thuộc một đơn mua chưa kết thúc.";
+        if (hasCommittedIssue) return "Lô hàng đã có phiếu xuất kho hoàn tất.";
+        if (inspectionStatus != "COMPLETED" || completedAt < startedAt || qcResult != "PASS")
+            return "Lô hàng chưa hoàn tất kiểm định đạt yêu cầu.";
+        if (qcGrade != batch.QualityGrade || qcGrade is not ("A" or "B" or "C" or "D"))
+            return "Hạng chất lượng của lô không đủ điều kiện bán.";
+        return null;
+    }
+
     public async Task<WarehouseDistributorOrderPage> GetDistributorOrdersAsync(string? status, int page, int pageSize, CancellationToken ct)
     {
         page = Math.Clamp(page, 1, 1000); pageSize = Math.Clamp(pageSize, 1, 100);
