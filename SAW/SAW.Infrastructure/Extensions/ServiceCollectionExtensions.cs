@@ -15,6 +15,7 @@ using SAW.Application.Repositories.Suppliers;
 using SAW.Infrastructure.Repositories.Suppliers;
 using SAW.Application.Features.QrCodes;
 using SAW.Application.Features.QrCodes.Interfaces;
+using SAW.Application.Features.WarehouseInventory;
 using SAW.Infrastructure.QrCodes;
 
 namespace SAW.Infrastructure.Extensions;
@@ -60,6 +61,8 @@ public static class ServiceCollectionExtensions
         services.AddScoped<IProductBatchQueryRepository, ProductBatchQueryRepository>();
         services.AddScoped<IGoodsReceiptQueryRepository, GoodsReceiptQueryRepository>();
         services.AddScoped<IGoodsReceiptRepository, GoodsReceiptRepository>();
+        services.AddScoped<SAW.Application.Features.DistributorOrders.IDistributorOrderRepository, DistributorOrderRepository>();
+        services.AddScoped<IWarehouseInventoryRepository, WarehouseInventoryRepository>();
         services.AddScoped<IProductBatchVerificationRepository, ProductBatchVerificationRepository>();
         services.AddScoped<IQcInspectionRepository, QcInspectionRepository>();
         services.AddScoped<IQrCodeRepository, QrCodeRepository>();

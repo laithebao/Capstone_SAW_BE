@@ -76,6 +76,8 @@ public class AppDbContext : DbContext
 
     // 09. Orders & Picking
     public DbSet<PurchaseOrder> PurchaseOrders => Set<PurchaseOrder>();
+    public DbSet<BatchSaleOffer> BatchSaleOffers => Set<BatchSaleOffer>();
+    public DbSet<PurchaseOrderDailyCounter> PurchaseOrderDailyCounters => Set<PurchaseOrderDailyCounter>();
     public DbSet<OrderDetail> OrderDetails => Set<OrderDetail>();
     public DbSet<OrderStatusHistory> OrderStatusHistories => Set<OrderStatusHistory>();
     public DbSet<InventoryReservation> InventoryReservations => Set<InventoryReservation>();

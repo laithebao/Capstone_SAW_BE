@@ -17,6 +17,7 @@ using SAW.Application.Features.Traceability.Interfaces;
 using SAW.Application.Features.Traceability.Services;
 using SAW.Application.Features.GoodsReceipts.Interfaces;
 using SAW.Application.Features.GoodsReceipts.Services;
+using SAW.Application.Features.WarehouseInventory;
 
 namespace SAW.Application.Extensions;
 
@@ -43,6 +44,9 @@ public static class ServiceCollectionExtensions
         services.AddScoped<IProductBatchQrCodeService, ProductBatchQrCodeService>();
         services.AddScoped<ITraceabilityService, TraceabilityService>();
         services.AddScoped<IGoodsReceiptService, GoodsReceiptService>();
+        services.AddScoped<SAW.Application.Features.DistributorOrders.IDistributorOrderService,
+            SAW.Application.Features.DistributorOrders.DistributorOrderService>();
+        services.AddScoped<IWarehouseInventoryService, WarehouseInventoryService>();
 
         return services;
     }

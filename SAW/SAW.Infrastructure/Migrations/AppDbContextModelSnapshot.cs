@@ -281,6 +281,32 @@ namespace SAW.Infrastructure.Migrations
                     b.ToTable("AUDIT_LOG", (string)null);
                 });
 
+            modelBuilder.Entity("SAW.Domain.Entities.BatchSaleOffer", b =>
+                {
+                    b.Property<long>("ProductBatchId")
+                        .HasColumnType("bigint")
+                        .HasColumnName("ProductBatchID");
+
+                    b.Property<bool>("IsPublished")
+                        .HasColumnType("bit");
+
+                    b.Property<DateTime>("UpdatedAt")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("datetime2")
+                        .HasDefaultValueSql("SYSUTCDATETIME()");
+
+                    b.Property<decimal>("WholeLotPrice")
+                        .HasPrecision(18, 2)
+                        .HasColumnType("decimal(18,2)");
+
+                    b.HasKey("ProductBatchId");
+
+                    b.ToTable("BATCH_SALE_OFFER", null, t =>
+                        {
+                            t.HasCheckConstraint("CK_BATCH_SALE_OFFER_Price", "[WholeLotPrice] > 0");
+                        });
+                });
+
             modelBuilder.Entity("SAW.Domain.Entities.BatchStatusHistory", b =>
                 {
                     b.Property<long>("BatchStatusHistoryId")
@@ -1947,7 +1973,7 @@ namespace SAW.Infrastructure.Migrations
                         .HasColumnType("int")
                         .HasColumnName("DistributorID");
 
-                    b.Property<DateOnly>("ExpectedDeliveryDate")
+                    b.Property<DateOnly?>("ExpectedDeliveryDate")
                         .HasColumnType("date")
                         .HasColumnName("ExpectedDeliveryDate");
 
@@ -1970,6 +1996,14 @@ namespace SAW.Infrastructure.Migrations
                         .HasDefaultValue("PENDING")
                         .HasColumnName("OrderStatus");
 
+                    b.Property<DateTime?>("ReceivedAt")
+                        .HasColumnType("datetime2")
+                        .HasColumnName("ReceivedAt");
+
+                    b.Property<int?>("ReceivedByAccountId")
+                        .HasColumnType("int")
+                        .HasColumnName("ReceivedByAccountID");
+
                     b.Property<DateTime?>("RejectedAt")
                         .HasColumnType("datetime2")
                         .HasColumnName("RejectedAt");
@@ -1978,6 +2012,10 @@ namespace SAW.Infrastructure.Migrations
                         .HasMaxLength(1000)
                         .HasColumnType("nvarchar(1000)")
                         .HasColumnName("RejectionReason");
+
+                    b.Property<Guid?>("RequestId")
+                        .HasColumnType("uniqueidentifier")
+                        .HasColumnName("RequestId");
 
                     b.Property<decimal>("SubtotalAmount")
                         .ValueGeneratedOnAdd()
@@ -2008,13 +2046,36 @@ namespace SAW.Infrastructure.Migrations
 
                     b.HasIndex("ApprovedByAccountId");
 
-                    b.HasIndex("DistributorId");
-
                     b.HasIndex("OrderCode")
                         .IsUnique()
                         .HasDatabaseName("UQ_PURCHASE_ORDER_Code");
 
+                    b.HasIndex("ReceivedByAccountId");
+
+                    b.HasIndex("DistributorId", "RequestId")
+                        .IsUnique()
+                        .HasDatabaseName("UQ_PURCHASE_ORDER_Distributor_Request")
+                        .HasFilter("[RequestId] IS NOT NULL");
+
                     b.ToTable("PURCHASE_ORDER", (string)null);
+
+                    b.HasAnnotation("SqlServer:UseSqlOutputClause", false);
+                });
+
+            modelBuilder.Entity("SAW.Domain.Entities.PurchaseOrderDailyCounter", b =>
+                {
+                    b.Property<DateOnly>("CodeDate")
+                        .HasColumnType("date");
+
+                    b.Property<int>("LastNumber")
+                        .HasColumnType("int");
+
+                    b.HasKey("CodeDate");
+
+                    b.ToTable("PURCHASE_ORDER_DAILY_COUNTER", null, t =>
+                        {
+                            t.HasCheckConstraint("CK_PURCHASE_ORDER_DAILY_COUNTER_Number", "[LastNumber] > 0");
+                        });
                 });
 
             modelBuilder.Entity("SAW.Domain.Entities.QcInspection", b =>
@@ -3066,6 +3127,17 @@ namespace SAW.Infrastructure.Migrations
                     b.Navigation("Account");
                 });
 
+            modelBuilder.Entity("SAW.Domain.Entities.BatchSaleOffer", b =>
+                {
+                    b.HasOne("SAW.Domain.Entities.ProductBatch", "ProductBatch")
+                        .WithOne()
+                        .HasForeignKey("SAW.Domain.Entities.BatchSaleOffer", "ProductBatchId")
+                        .OnDelete(DeleteBehavior.Restrict)
+                        .IsRequired();
+
+                    b.Navigation("ProductBatch");
+                });
+
             modelBuilder.Entity("SAW.Domain.Entities.BatchStatusHistory", b =>
                 {
                     b.HasOne("SAW.Domain.Entities.Account", "ChangedByAccount")
@@ -3490,6 +3562,11 @@ namespace SAW.Infrastructure.Migrations
                         .OnDelete(DeleteBehavior.Cascade)
                         .IsRequired()
                         .HasConstraintName("FK_PURCHASE_ORDER_DISTRIBUTOR");
+
+                    b.HasOne("SAW.Domain.Entities.Account", null)
+                        .WithMany()
+                        .HasForeignKey("ReceivedByAccountId")
+                        .OnDelete(DeleteBehavior.Restrict);
 
                     b.Navigation("ApprovedByAccount");
 
