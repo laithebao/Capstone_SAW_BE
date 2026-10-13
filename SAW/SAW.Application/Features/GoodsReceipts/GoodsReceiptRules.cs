@@ -13,7 +13,7 @@ public static class GoodsReceiptRules
         if (batch.BatchStatus != "APPROVED_FOR_STORAGE")
             throw new ConflictException("Lô chưa được duyệt nhập kho hoặc đã được nhập kho.");
         if (latest is null || latest.InspectionStatus != "COMPLETED" || latest.CompletedAt is null
-            || latest.QcResult != "PASS" || latest.QualityGrade is not ("A" or "B" or "C" or "D")
+            || latest.QcResult != "PASS" || latest.QualityGrade is not ("A" or "B" or "C" or "D" or "E")
             || latest.QualityGrade != batch.QualityGrade)
             throw new ConflictException("Phiếu QC mới nhất chưa hoàn tất đạt yêu cầu. Vui lòng kiểm tra lại lô.");
         if (!ValidAmount(batch.VerifiedQuantity) || !ValidAmount(batch.VerifiedWeightInKg))

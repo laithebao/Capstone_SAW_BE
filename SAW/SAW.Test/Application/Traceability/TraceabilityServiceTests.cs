@@ -59,6 +59,19 @@ public sealed class TraceabilityServiceTests
     }
 
     [Theory]
+    [InlineData("APPROVED_FOR_STORAGE")]
+    [InlineData("IN_STOCK")]
+    public async Task E_pass_is_publicly_readable(string status)
+    {
+        _repository.Setup(r => r.GetByPublicTokenAsync(Token, It.IsAny<CancellationToken>()))
+            .ReturnsAsync(Data(status, grade: "E", batchGrade: "E"));
+        var response = await new TraceabilityService(_repository.Object).GetAsync(Token, default);
+        Assert.Equal("E", response.Quality.Grade);
+        Assert.Equal("PASS", response.Quality.Result);
+        Assert.Equal("QC_COMPLETED", Assert.Single(response.Milestones).Type);
+    }
+
+    [Theory]
     [InlineData("REJECTED", true, "COMPLETED", "PASS", "A", "A")]
     [InlineData("QUARANTINE", true, "COMPLETED", "PASS", "D", "D")]
     [InlineData("CANCELLED", true, "COMPLETED", "PASS", "A", "A")]
@@ -68,7 +81,8 @@ public sealed class TraceabilityServiceTests
     [InlineData("IN_STOCK", true, "DRAFT", "PASS", "A", "A")]
     [InlineData("IN_STOCK", true, "IN_PROGRESS", "PASS", "A", "A")]
     [InlineData("IN_STOCK", true, "COMPLETED", "FAIL", "A", "A")]
-    [InlineData("IN_STOCK", true, "COMPLETED", "PASS", "E", "E")]
+    [InlineData("IN_STOCK", true, "COMPLETED", "FAIL", "B", "B")]
+    [InlineData("IN_STOCK", true, "COMPLETED", "FAIL", "E", "E")]
     [InlineData("IN_STOCK", true, "COMPLETED", "PASS", "A", "B")]
     public async Task InactiveOrInconsistentData_IsGone(string status, bool active, string qcStatus, string result, string grade, string batchGrade)
     {

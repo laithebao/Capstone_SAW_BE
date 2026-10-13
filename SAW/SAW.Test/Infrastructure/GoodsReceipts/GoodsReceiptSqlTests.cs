@@ -11,12 +11,19 @@ using Microsoft.Data.SqlClient;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Diagnostics;
 using Microsoft.IdentityModel.Tokens;
+using Microsoft.Extensions.Logging.Abstractions;
+using Moq;
 using SAW.Application.Exceptions;
 using SAW.Application.Features.GoodsReceipts.Dtos;
 using SAW.Application.Features.GoodsReceipts.Services;
+using SAW.Application.Features.QrCodes;
+using SAW.Application.Features.QrCodes.Interfaces;
+using SAW.Application.Features.QrCodes.Services;
+using SAW.Application.Features.Traceability.Services;
 using SAW.Domain.Entities;
 using SAW.Infrastructure.Persistence;
 using SAW.Infrastructure.Repositories;
+using SAW.Infrastructure.QrCodes;
 using SAW.Test.Infrastructure.ProductBatches;
 
 namespace SAW.Test.Infrastructure.GoodsReceipts;
@@ -85,14 +92,15 @@ public sealed class GoodsReceiptSqlTests(GoodsReceiptSqlFixture fixture) : IClas
         await repo.ConfirmAsync(id, new(r.WarehouseLocationId, r.ReceivedAt, r.Note), F.ActorId, default);
     }
 
-    private async Task<(ProductBatch Batch, WarehouseLocation Location)> EligibleAsync(decimal weight = 1000, decimal? capacity = null)
+    private async Task<(ProductBatch Batch, WarehouseLocation Location)> EligibleAsync(decimal weight = 1000, decimal? capacity = null,
+        string grade = "B", string result = "PASS")
     {
         var batch = await F.BatchAsync();
         await using var db = F.Context();
         await db.ProductBatches.Where(b => b.ProductBatchId == batch.ProductBatchId).ExecuteUpdateAsync(s => s
-            .SetProperty(b => b.BatchStatus, "APPROVED_FOR_STORAGE").SetProperty(b => b.QualityGrade, "B")
+            .SetProperty(b => b.BatchStatus, "APPROVED_FOR_STORAGE").SetProperty(b => b.QualityGrade, grade)
             .SetProperty(b => b.VerifiedQuantity, 100m).SetProperty(b => b.VerifiedWeightInKg, weight).SetProperty(b => b.Unit, "Bao"));
-        var qc = F.Inspection(batch.ProductBatchId, "COMPLETED"); qc.CompletedAt = DateTime.UtcNow; qc.QcResult = "PASS"; qc.QualityGrade = "B";
+        var qc = F.Inspection(batch.ProductBatchId, "COMPLETED"); qc.CompletedAt = DateTime.UtcNow; qc.QcResult = result; qc.QualityGrade = grade;
         var location = new WarehouseLocation { LocationCode = Guid.NewGuid().ToString("N"), ZoneName = "Receipt test", LocationStatus = "ACTIVE", MaxWeightKg = capacity };
         db.AddRange(qc, location); await db.SaveChangesAsync();
         return (batch, location);
@@ -105,6 +113,136 @@ public sealed class GoodsReceiptSqlTests(GoodsReceiptSqlFixture fixture) : IClas
         await using var db = F.Context();
         var r = await db.GoodsReceipts.AsNoTracking().SingleAsync(r => r.GoodsReceiptId == id);
         return new(r.WarehouseLocationId, r.ReceivedAt, r.Note);
+    }
+
+    private static ProductBatchQrCodeService QrService(AppDbContext db, IQrImageStorage storage) => new(
+        new QrCodeRepository(db), new PngQrCodeRenderer(), storage,
+        new QrCodeOptions { PublicFrontendBaseUrl = "https://saw.test.invalid" },
+        NullLogger<ProductBatchQrCodeService>.Instance);
+
+    [ReceivingSqlFact]
+    public async Task E_pass_lookup_draft_confirm_and_public_qr_use_the_same_eligibility()
+    {
+        var (batch, location) = await EligibleAsync(weight: 1234.567m, grade: "E");
+        await using var db = F.Context();
+        var lookup = await Service(db).EligibleAsync(F.SupplierId, batch.BatchCode, 1, 20, default);
+        Assert.Equal(batch.ProductBatchId, Assert.Single(lookup.Items).Id);
+        var qrRepository = new QrCodeRepository(db);
+        Assert.Contains(batch.ProductBatchId, await qrRepository.GetCandidatesAsync(batch.ProductBatchId - 1, 100, default));
+
+        // Real SQL repository/PNG renderer, fake image storage: never upload test assets to Cloudinary.
+        var storage = new Mock<IQrImageStorage>();
+        storage.SetupGet(s => s.IsConfigured).Returns(true);
+        storage.Setup(s => s.UploadAsync(It.IsAny<string>(), It.IsAny<byte[]>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync("https://image.test.invalid/e-pass.png");
+        await QrService(db, storage.Object).GenerateAsync(batch.ProductBatchId, default);
+        var code = await db.QrCodes.AsNoTracking().SingleAsync(q => q.ProductBatchId == batch.ProductBatchId && q.IsActive);
+        Assert.Equal("READY", (await QrService(db, storage.Object).GetAsync(batch.ProductBatchId, default)).Status);
+        var traceability = new TraceabilityService(new TraceabilityRepository(db));
+        var trace = await traceability.GetAsync(code.PublicToken, default);
+        Assert.Equal("E", trace.Quality.Grade); Assert.Equal("PASS", trace.Quality.Result);
+
+        var historyBefore = await db.BatchStatusHistories.CountAsync(h => h.ProductBatchId == batch.ProductBatchId);
+        var draft = await Service(db).CreateAsync(new(batch.ProductBatchId, location.WarehouseLocationId, Today, "E/PASS receipt"), F.ActorId, default);
+        Assert.Equal("DRAFT", draft.ReceiptStatus);
+        Assert.Equal(100, draft.ReceivedQuantity); Assert.Equal(1234.567m, draft.WeightInKg); Assert.Equal("Bao", draft.Unit);
+        Assert.Empty(await db.Inventories.Where(i => i.ProductBatchId == batch.ProductBatchId).ToListAsync());
+        Assert.Equal("APPROVED_FOR_STORAGE", (await db.ProductBatches.AsNoTracking().SingleAsync(b => b.ProductBatchId == batch.ProductBatchId)).BatchStatus);
+        Assert.Equal(historyBefore, await db.BatchStatusHistories.CountAsync(h => h.ProductBatchId == batch.ProductBatchId));
+
+        var confirm = new ConfirmGoodsReceiptRequest(draft.Snapshot);
+        var committed = await Service(db).ConfirmAsync(draft.Id, confirm, F.ActorId, default);
+        Assert.Equal("COMMITTED", committed.ReceiptStatus);
+        var inventory = await db.Inventories.AsNoTracking().SingleAsync(i => i.ProductBatchId == batch.ProductBatchId);
+        Assert.Equal(1234.567m, inventory.QuantityOnHand); Assert.Equal(0, inventory.ReservedQuantity); Assert.Equal("kg", inventory.Unit);
+        Assert.Equal("IN_STOCK", (await db.ProductBatches.AsNoTracking().SingleAsync(b => b.ProductBatchId == batch.ProductBatchId)).BatchStatus);
+        Assert.Single(await db.BatchStatusHistories.Where(h => h.ProductBatchId == batch.ProductBatchId && h.NewStatus == "IN_STOCK").ToListAsync());
+        var auditCount = await db.AuditLogs.CountAsync();
+        var historyCount = await db.BatchStatusHistories.CountAsync(h => h.ProductBatchId == batch.ProductBatchId);
+        await Service(db).ConfirmAsync(draft.Id, confirm, F.ActorId, default);
+        Assert.Equal(1234.567m, (await db.Inventories.AsNoTracking().SingleAsync(i => i.ProductBatchId == batch.ProductBatchId)).QuantityOnHand);
+        Assert.Equal(auditCount, await db.AuditLogs.CountAsync());
+        Assert.Equal(historyCount, await db.BatchStatusHistories.CountAsync(h => h.ProductBatchId == batch.ProductBatchId));
+        trace = await traceability.GetAsync(code.PublicToken, default);
+        Assert.Equal("E", trace.Quality.Grade); Assert.Equal("PASS", trace.Quality.Result);
+        Assert.Contains(trace.Milestones, m => m.Type == "RECEIVED");
+        Assert.Equal("READY", (await QrService(db, storage.Object).GetAsync(batch.ProductBatchId, default)).Status);
+        storage.Verify(s => s.UploadAsync(It.IsAny<string>(), It.IsAny<byte[]>(), It.IsAny<CancellationToken>()), Times.Once);
+    }
+
+    [ReceivingSqlFact]
+    public async Task B_and_E_fail_are_rejected_by_lookup_draft_qr_and_public_traceability()
+    {
+        foreach (var grade in new[] { "B", "E" })
+        {
+            var (batch, location) = await EligibleAsync(grade: grade, result: "FAIL");
+            await using var db = F.Context();
+            Assert.Empty((await Service(db).EligibleAsync(F.SupplierId, batch.BatchCode, 1, 20, default)).Items);
+            var audits = await db.AuditLogs.CountAsync();
+            await Assert.ThrowsAsync<ConflictException>(() => DraftAsync(batch, location));
+            Assert.Equal(audits, await db.AuditLogs.CountAsync());
+            Assert.Empty(await db.GoodsReceipts.Where(r => r.ProductBatchId == batch.ProductBatchId).ToListAsync());
+            Assert.Empty(await db.Inventories.Where(i => i.ProductBatchId == batch.ProductBatchId).ToListAsync());
+            Assert.DoesNotContain(batch.ProductBatchId, await new QrCodeRepository(db).GetCandidatesAsync(batch.ProductBatchId - 1, 100, default));
+            var storage = new Mock<IQrImageStorage>();
+            storage.SetupGet(s => s.IsConfigured).Returns(true);
+            await QrService(db, storage.Object).GenerateAsync(batch.ProductBatchId, default);
+            storage.Verify(s => s.UploadAsync(It.IsAny<string>(), It.IsAny<byte[]>(), It.IsAny<CancellationToken>()), Times.Never);
+            Assert.Null(await new QrCodeRepository(db).SaveGeneratedAsync(batch.ProductBatchId, new string('a', 64),
+                "https://saw.test.invalid/trace/fail", "https://image.test.invalid/fail.png", default));
+            Assert.Empty(await db.QrCodes.Where(q => q.ProductBatchId == batch.ProductBatchId).ToListAsync());
+            // Even a pre-existing ready QR must not expose a failed lot.
+            var token = Guid.NewGuid().ToString("N") + Guid.NewGuid().ToString("N");
+            var code = new QrCode { ProductBatchId = batch.ProductBatchId, PublicToken = token,
+                TraceabilityUrl = "https://saw.test.invalid/trace/" + token, QrImageUrl = "https://image.test.invalid/fail.png", IsActive = true };
+            db.QrCodes.Add(code); await db.SaveChangesAsync();
+            Assert.Equal("UNAVAILABLE", (await QrService(db, storage.Object).GetAsync(batch.ProductBatchId, default)).Status);
+            await Assert.ThrowsAsync<GoneException>(() => new TraceabilityService(new TraceabilityRepository(db)).GetAsync(code.PublicToken, default));
+        }
+    }
+
+    [ReceivingSqlFact]
+    public async Task Newest_unfinished_or_failed_qc_is_not_bypassed_by_an_older_E_pass()
+    {
+        foreach (var state in new[] { "DRAFT", "IN_PROGRESS", "FAIL", "MISSING_COMPLETED_AT" })
+        {
+            // Test both before draft creation and after a draft has already been saved.
+            foreach (var hasDraft in new[] { false, true })
+            {
+                var (batch, location) = await EligibleAsync(grade: "E");
+                var id = hasDraft ? await DraftAsync(batch, location) : (long?)null;
+                await using var db = F.Context();
+                var previous = await db.QcInspections.AsNoTracking().SingleAsync(q => q.ProductBatchId == batch.ProductBatchId);
+                var latest = F.Inspection(batch.ProductBatchId, state is "DRAFT" or "IN_PROGRESS" ? state : "COMPLETED");
+                latest.StartedAt = previous.StartedAt.AddSeconds(1);
+                latest.CompletedAt = state is "FAIL" ? latest.StartedAt.AddSeconds(1) : null;
+                latest.QualityGrade = "E"; latest.QcResult = state == "FAIL" ? "FAIL" : "PASS";
+                db.QcInspections.Add(latest); await db.SaveChangesAsync();
+                var audits = await db.AuditLogs.CountAsync();
+                var history = await db.BatchStatusHistories.CountAsync(h => h.ProductBatchId == batch.ProductBatchId);
+                if (id.HasValue) await Assert.ThrowsAsync<ConflictException>(() => ConfirmAsync(Repository(), id.Value));
+                else
+                {
+                    Assert.Empty((await Service(db).EligibleAsync(F.SupplierId, batch.BatchCode, 1, 20, default)).Items);
+                    await Assert.ThrowsAsync<ConflictException>(() => DraftAsync(batch, location));
+                }
+                Assert.Equal(audits, await db.AuditLogs.CountAsync());
+                Assert.Equal(history, await db.BatchStatusHistories.CountAsync(h => h.ProductBatchId == batch.ProductBatchId));
+                Assert.Empty(await db.Inventories.Where(i => i.ProductBatchId == batch.ProductBatchId).ToListAsync());
+                Assert.Equal("APPROVED_FOR_STORAGE", (await db.ProductBatches.AsNoTracking().SingleAsync(b => b.ProductBatchId == batch.ProductBatchId)).BatchStatus);
+                if (id.HasValue) Assert.Equal("DRAFT", (await db.GoodsReceipts.AsNoTracking().SingleAsync(r => r.GoodsReceiptId == id)).ReceiptStatus);
+                Assert.DoesNotContain(batch.ProductBatchId, await new QrCodeRepository(db).GetCandidatesAsync(batch.ProductBatchId - 1, 100, default));
+                var storage = new Mock<IQrImageStorage>();
+                storage.SetupGet(s => s.IsConfigured).Returns(true);
+                await QrService(db, storage.Object).GenerateAsync(batch.ProductBatchId, default);
+                storage.Verify(s => s.UploadAsync(It.IsAny<string>(), It.IsAny<byte[]>(), It.IsAny<CancellationToken>()), Times.Never);
+                var token = Guid.NewGuid().ToString("N") + Guid.NewGuid().ToString("N");
+                var code = new QrCode { ProductBatchId = batch.ProductBatchId, PublicToken = token,
+                    TraceabilityUrl = "https://saw.test.invalid/trace/" + token, QrImageUrl = "https://image.test.invalid/stale.png", IsActive = true };
+                db.QrCodes.Add(code); await db.SaveChangesAsync();
+                await Assert.ThrowsAsync<GoneException>(() => new TraceabilityService(new TraceabilityRepository(db)).GetAsync(code.PublicToken, default));
+            }
+        }
     }
 
     [ReceivingSqlFact]
