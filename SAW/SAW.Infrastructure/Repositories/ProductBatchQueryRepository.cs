@@ -46,6 +46,8 @@ public sealed class ProductBatchQueryRepository(AppDbContext dbContext) : IProdu
             query = query.Where(x => x.CropTypeId == filter.CropTypeId.Value);
         if (!string.IsNullOrWhiteSpace(filter.Status))
             query = query.Where(x => x.BatchStatus == filter.Status);
+        if (filter.WithoutActiveInspection)
+            query = query.Where(x => !x.QcInspections.Any(q => q.InspectionStatus != "COMPLETED"));
 
         var total = await query.CountAsync(cancellationToken);
         query = filter.SortBy switch
