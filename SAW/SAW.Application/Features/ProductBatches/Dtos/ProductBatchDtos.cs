@@ -29,7 +29,38 @@ public sealed record ProductBatchDetail(
     decimal? ExpectedMinTempC, decimal? ExpectedMaxTempC,
     decimal? ExpectedMinHumidityPct, decimal? ExpectedMaxHumidityPct,
     int? ShelfLifeDaysSnapshot,
-    bool CanUpdateReceivingInformation, string? ReceivingUpdateLockReason);
+    bool CanUpdateReceivingInformation, string? ReceivingUpdateLockReason)
+{
+    public ProductBatchQcSummary? LatestQcInspection { get; init; }
+    public IReadOnlyList<ProductBatchGoodsReceipt> GoodsReceipts { get; init; } = [];
+    public IReadOnlyList<ProductBatchStatusHistoryItem> StatusHistory { get; init; } = [];
+    public IReadOnlyList<ProductBatchWarehouseTransaction> WarehouseTransactions { get; init; } = [];
+}
+
+public sealed record ProductBatchQcSummary(long Id, string InspectionCode, string InspectionStatus,
+    string? QcResult, string? QualityGrade, DateTime StartedAt, DateTime? CompletedAt,
+    string? QcStaffName, string? Note);
+
+public sealed record ProductBatchGoodsReceipt(long Id, string ReceiptCode, string ReceiptStatus,
+    DateTime ReceivedAt, DateTime? CommittedAt, int WarehouseLocationId,
+    string? LocationName, string? OperationStaffName, string? Note,
+    decimal ReceivedQuantity, string Unit, decimal WeightInKg);
+
+public sealed record ProductBatchStatusHistoryItem(long Id, DateTime ChangedAt, string? OldStatus,
+    string NewStatus, string? ChangedByName, string? ChangeReason);
+
+// These are saved warehouse documents, including their actual status, not inferred stock movements.
+public sealed record ProductBatchWarehouseTransaction(long Id, string TransactionType, string Code,
+    string Status, DateTime RecordedAt, decimal Quantity, string Unit, decimal? WeightInKg,
+    string? FromLocationName, string? ToLocationName, string? PerformedByName, string? Note);
+
+public sealed record ProductBatchRelatedInformation(ProductBatchQcSummary? LatestQcInspection,
+    IReadOnlyList<ProductBatchGoodsReceipt> GoodsReceipts,
+    IReadOnlyList<ProductBatchStatusHistoryItem> StatusHistory,
+    IReadOnlyList<ProductBatchWarehouseTransaction> WarehouseTransactions)
+{
+    public static ProductBatchRelatedInformation Empty { get; } = new(null, [], [], []);
+}
 
 public sealed record ProductBatchFilterOption(int Id, string Name);
 

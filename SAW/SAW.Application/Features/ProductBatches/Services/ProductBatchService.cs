@@ -52,6 +52,7 @@ public sealed class ProductBatchService(
     {
         var batch = await repository.GetWarehouseByIdAsync(id, cancellationToken)
             ?? throw new NotFoundException("Product batch not found.");
+        var related = await repository.GetRelatedInformationAsync(id, cancellationToken);
         var hasInspection = await repository.HasQcInspectionAsync(id, cancellationToken);
         var lockReason = hasInspection ? QcReceivingLockMessage
             : batch.BatchStatus != PendingQc ? "Chỉ có thể cập nhật lô đang chờ kiểm định QC." : null;
@@ -68,7 +69,13 @@ public sealed class ProductBatchService(
             batch.VerifiedPackageUnitWeightKg, batch.ReceivingNote, batch.RejectionReason,
             batch.ExpectedMinTempC, batch.ExpectedMaxTempC,
             batch.ExpectedMinHumidityPct, batch.ExpectedMaxHumidityPct,
-            batch.ShelfLifeDaysSnapshot, lockReason is null, lockReason);
+            batch.ShelfLifeDaysSnapshot, lockReason is null, lockReason)
+        {
+            LatestQcInspection = related.LatestQcInspection,
+            GoodsReceipts = related.GoodsReceipts,
+            StatusHistory = related.StatusHistory,
+            WarehouseTransactions = related.WarehouseTransactions
+        };
     }
 
     public Task<IReadOnlyList<ProductBatchFilterOption>> GetSubmittedSuppliersAsync(CancellationToken cancellationToken) =>
