@@ -2,7 +2,8 @@ namespace SAW.Application.Features.ProductBatches.Dtos;
 
 public sealed record ProductBatchQuery(
     string? BatchCode, int? SupplierId, int? CropTypeId, string? Status,
-    string? SortBy, int Page = 1, int PageSize = 20);
+    string? SortBy, int Page = 1, int PageSize = 20,
+    bool WithoutActiveInspection = false);
 
 public sealed record ProductBatchListItem(
     long Id, string BatchCode, string ProductName,

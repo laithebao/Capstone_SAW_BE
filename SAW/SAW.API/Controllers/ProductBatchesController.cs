@@ -61,10 +61,11 @@ public sealed class ProductBatchesController(IProductBatchService service) : Con
     public async Task<ActionResult<ApiResponse<ProductBatchListResponse>>> Search(
         [FromQuery] string? batchCode, [FromQuery] int? supplierId,
         [FromQuery] int? cropTypeId, [FromQuery] string? status,
-        [FromQuery] string? sortBy, [FromQuery] int page = 1,
+        [FromQuery] string? sortBy, [FromQuery] bool withoutActiveInspection = false,
+        [FromQuery] int page = 1,
         [FromQuery] int pageSize = 20, CancellationToken cancellationToken = default) =>
         Ok(ApiResponse<ProductBatchListResponse>.Success(await service.SearchAsync(
-            new ProductBatchQuery(batchCode, supplierId, cropTypeId, status, sortBy, page, pageSize),
+            new ProductBatchQuery(batchCode, supplierId, cropTypeId, status, sortBy, page, pageSize, withoutActiveInspection),
             cancellationToken)));
 
     [HttpGet("filters")]
