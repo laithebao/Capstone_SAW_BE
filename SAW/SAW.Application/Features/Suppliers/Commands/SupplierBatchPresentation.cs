@@ -22,18 +22,12 @@ public static class SupplierBatchPresentation
     private static readonly Func<ProductBatch, SupplierBatchSnapshot> Present = Projection.Compile();
     public static SupplierBatchSnapshot Get(ProductBatch batch) => Present(batch);
 
-    public static List<BatchStatusHistory> VisibleHistory(List<BatchStatusHistory> history, DateTime? warehousedAt)
-    {
-        var chronological = history.OrderBy(item => item.ChangedAt).ThenBy(item => item.BatchStatusHistoryId).ToList();
-        var storedIndex = chronological.FindIndex(item => StoredStatuses.Contains(item.NewStatus)
-            || (item.OldStatus != null && StoredStatuses.Contains(item.OldStatus)));
-        return chronological.Where((item, index) =>
-                (storedIndex < 0 || index <= storedIndex)
-                && !StoredStatuses.Skip(1).Contains(item.NewStatus)
-                && (item.OldStatus == null || !StoredStatuses.Contains(item.OldStatus))
-                && (warehousedAt == null || item.ChangedAt <= warehousedAt))
-            .OrderByDescending(item => item.ChangedAt).ThenByDescending(item => item.BatchStatusHistoryId).ToList();
-    }
+    public static List<BatchStatusHistory> VisibleHistory(List<BatchStatusHistory> history, DateTime? warehousedAt) =>
+        // Supplier tracking is an audit trail. Warehouse approval, reservation, and issue
+        // must add to this timeline and must never make the supplier's earlier milestones disappear.
+        history.OrderByDescending(item => item.ChangedAt)
+            .ThenByDescending(item => item.BatchStatusHistoryId)
+            .ToList();
 }
 
 public class SupplierBatchSnapshot
