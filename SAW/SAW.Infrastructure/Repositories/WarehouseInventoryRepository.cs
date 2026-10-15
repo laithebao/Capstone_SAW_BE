@@ -41,6 +41,10 @@ public sealed class WarehouseInventoryRepository(AppDbContext db) : IWarehouseIn
         long batchId, WarehouseSaleOfferUpdateRequest request, CancellationToken ct)
     {
         var current = await GetSaleOfferItemAsync(batchId, ct);
+        if (current.IsPendingApproval)
+            throw new ConflictException("Lô hàng đang chờ duyệt đơn mua, không thể thay đổi giá hoặc trạng thái bán.");
+        if (current.IsSold)
+            throw new ConflictException("Lô hàng đã được nhà phân phối mua, không thể thay đổi giá hoặc trạng thái bán.");
         if (request.IsPublished && !current.CanPublish)
             throw new ConflictException(current.IneligibilityReason ?? "Lô hàng chưa đủ điều kiện công bố bán.");
 
@@ -72,26 +76,35 @@ public sealed class WarehouseInventoryRepository(AppDbContext db) : IWarehouseIn
             .ThenByDescending(x => x.QcInspectionId)
             .Select(x => new { x.InspectionStatus, x.QcResult, x.QualityGrade, x.StartedAt, x.CompletedAt })
             .FirstOrDefaultAsync(ct);
-        var hasOpenOrder = await db.OrderDetails.AsNoTracking().AnyAsync(line =>
+        var saleOrderStatus = await db.OrderDetails.AsNoTracking()
+            .Where(line =>
             line.RequestedProductBatchId == batchId
             && line.PurchaseOrder.OrderStatus != "REJECTED"
-            && line.PurchaseOrder.OrderStatus != "CANCELLED", ct);
+            && line.PurchaseOrder.OrderStatus != "CANCELLED")
+            .OrderByDescending(line => line.PurchaseOrder.CreatedAt)
+            .ThenByDescending(line => line.OrderDetailId)
+            .Select(line => line.PurchaseOrder.OrderStatus)
+            .FirstOrDefaultAsync(ct);
+        var isPendingApproval = saleOrderStatus == "PENDING";
+        var isSold = saleOrderStatus is not null && !isPendingApproval;
         var hasCommittedIssue = await db.GoodsIssueDetails.AsNoTracking().AnyAsync(line =>
             line.Inventory.ProductBatchId == batchId && line.GoodsIssue.IssueStatus == "COMMITTED", ct);
 
         var available = batch.Inventories.Sum(x => x.AvailableQuantity);
         var reason = SaleIneligibilityReason(batch, latestQc?.InspectionStatus, latestQc?.QcResult,
-            latestQc?.QualityGrade, latestQc?.StartedAt, latestQc?.CompletedAt, hasOpenOrder, hasCommittedIssue);
+            latestQc?.QualityGrade, latestQc?.StartedAt, latestQc?.CompletedAt,
+            isPendingApproval, isSold, hasCommittedIssue);
         return new WarehouseSaleOfferItem(
             batch.ProductBatchId, batch.BatchCode, batch.ProductName, batch.CropType.CropName,
             batch.QualityGrade, batch.BatchStatus, batch.VerifiedWeightInKg ?? batch.WeightInKg,
             available, offer?.WholeLotPrice, offer?.IsPublished ?? false, reason is null, reason,
-            offer?.UpdatedAt);
+            offer?.UpdatedAt, isSold, isPendingApproval);
     }
 
     private static string? SaleIneligibilityReason(
         ProductBatch batch, string? inspectionStatus, string? qcResult, string? qcGrade,
-        DateTime? startedAt, DateTime? completedAt, bool hasOpenOrder, bool hasCommittedIssue)
+        DateTime? startedAt, DateTime? completedAt, bool isPendingApproval, bool isSold,
+        bool hasCommittedIssue)
     {
         if (batch.BatchStatus != "IN_STOCK") return "Lô hàng chưa ở trạng thái đã nhập kho.";
         if (!batch.CropType.IsActive) return "Loại nông sản của lô đang ngừng hoạt động.";
@@ -104,11 +117,12 @@ public sealed class WarehouseInventoryRepository(AppDbContext db) : IWarehouseIn
         if (batch.Inventories.Any(x => x.WarehouseLocation.LocationStatus != "ACTIVE")) return "Vị trí chứa lô không hoạt động.";
         if (batch.Inventories.Sum(x => x.QuantityOnHand) != batch.VerifiedWeightInKg.Value)
             return "Chỉ được công bố khi toàn bộ khối lượng lô còn nguyên trong kho.";
-        if (hasOpenOrder) return "Lô hàng đang thuộc một đơn mua chưa kết thúc.";
+        if (isPendingApproval) return "Lô hàng đang chờ duyệt đơn mua.";
+        if (isSold) return "Lô hàng đã được nhà phân phối mua.";
         if (hasCommittedIssue) return "Lô hàng đã có phiếu xuất kho hoàn tất.";
         if (inspectionStatus != "COMPLETED" || completedAt < startedAt || qcResult != "PASS")
             return "Lô hàng chưa hoàn tất kiểm định đạt yêu cầu.";
-        if (qcGrade != batch.QualityGrade || qcGrade is not ("A" or "B" or "C" or "D"))
+        if (qcGrade != batch.QualityGrade || qcGrade is not ("A" or "B" or "C" or "D" or "E"))
             return "Hạng chất lượng của lô không đủ điều kiện bán.";
         return null;
     }
@@ -139,9 +153,6 @@ public sealed class WarehouseInventoryRepository(AppDbContext db) : IWarehouseIn
     }
 
     public async Task<WarehouseDistributorOrderDetail> ApproveDistributorOrderAsync(int actorAccountId, long id, CancellationToken ct)
-        => await ApproveDistributorOrderAsync(actorAccountId, id, new([]), ct);
-
-    public async Task<WarehouseDistributorOrderDetail> ApproveDistributorOrderAsync(int actorAccountId, long id, WarehouseOrderApprovalRequest request, CancellationToken ct)
     {
         var strategy = db.Database.CreateExecutionStrategy();
         return await strategy.ExecuteAsync(async () =>
@@ -154,20 +165,24 @@ public sealed class WarehouseInventoryRepository(AppDbContext db) : IWarehouseIn
         if (order.Distributor.HasOverdueBalance) throw new ConflictException("Không thể duyệt đơn của nhà phân phối đang có công nợ quá hạn.");
         var detail = await ToOrderDetail(order, ct);
         if (!detail.StockAvailable) throw new ConflictException("Tồn kho đủ điều kiện hiện tại không đủ để phê duyệt đơn.");
+
+        if (order.OrderDetails.Count == 0 || order.OrderDetails.Any(line =>
+                line.RequestedProductBatchId is null || line.RequestedQuantity != 1 || line.Unit != "Lô"))
+            throw new ConflictException("Chỉ có thể phê duyệt đơn mua nguyên lô hợp lệ.");
+
         foreach (var line in order.OrderDetails)
         {
-            var input = request.Lines.FirstOrDefault(x => x.OrderDetailId == line.OrderDetailId);
-            var approvedWeight = input?.ApprovedWeightKg ?? line.RequestedWeightKg;
-            if (approvedWeight <= 0 || approvedWeight > line.RequestedWeightKg) throw new ConflictException("Khối lượng duyệt phải lớn hơn 0 và không vượt quá yêu cầu.");
+            var approvedWeight = line.RequestedWeightKg;
+            if (approvedWeight <= 0) throw new ConflictException("Khối lượng lô phải lớn hơn 0.");
+            if (line.UnitPrice <= 0) throw new ConflictException("Giá nguyên lô trong đơn không hợp lệ.");
             var available = detail.Lines.First(x => x.OrderDetailId == line.OrderDetailId).AvailableWeightKg;
             if (approvedWeight > available) throw new ConflictException("Khối lượng duyệt vượt tồn khả dụng.");
-            line.ApprovedQuantity = line.RequestedQuantity * approvedWeight / line.RequestedWeightKg;
+            line.ApprovedQuantity = line.RequestedQuantity;
             line.ApprovedWeightKg = approvedWeight;
-            if (input is not null && input.UnitPrice < 0) throw new ConflictException("Đơn giá duyệt không hợp lệ.");
-            if (input is not null) line.UnitPrice = input.UnitPrice;
         }
-        // Keep the persisted amount check consistent when the manager changes weight or price.
-        order.SubtotalAmount = order.OrderDetails.Sum(line => line.ApprovedWeightKg * line.UnitPrice);
+        // UnitPrice is the whole-lot price captured when the order was submitted.
+        // Approval keeps that price unchanged; weight is used only for stock validation.
+        order.SubtotalAmount = order.OrderDetails.Sum(line => line.UnitPrice);
         order.TotalAmount = order.SubtotalAmount + order.TaxAmount;
         order.OrderStatus = "APPROVED"; order.ApprovedAt = DateTime.UtcNow; order.ApprovedByAccountId = actorAccountId; order.UpdatedAt = DateTime.UtcNow;
         await db.SaveChangesAsync(ct);

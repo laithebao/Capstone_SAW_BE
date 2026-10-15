@@ -57,7 +57,7 @@ public sealed class DistributorOrderRepository(DbContextOptions<AppDbContext> op
                 .OrderByDescending(q => q.StartedAt).ThenByDescending(q => q.QcInspectionId).Take(1)
                 .Any(q => q.InspectionStatus == "COMPLETED" && q.CompletedAt >= q.StartedAt && q.QcResult == "PASS"
                     && q.QualityGrade == o.ProductBatch.QualityGrade
-                    && (q.QualityGrade == "A" || q.QualityGrade == "B" || q.QualityGrade == "C" || q.QualityGrade == "D")));
+                    && (q.QualityGrade == "A" || q.QualityGrade == "B" || q.QualityGrade == "C" || q.QualityGrade == "D" || q.QualityGrade == "E")));
     }
 
     public async Task<DistributorPage<CatalogLot>> CatalogAsync(int accountId, DistributorQuery query, CancellationToken ct)

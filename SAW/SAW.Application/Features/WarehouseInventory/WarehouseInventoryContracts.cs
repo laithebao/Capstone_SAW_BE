@@ -73,7 +73,9 @@ public sealed record WarehouseSaleOfferItem(
     bool IsPublished,
     bool CanPublish,
     string? IneligibilityReason,
-    DateTime? UpdatedAt);
+    DateTime? UpdatedAt,
+    bool IsSold = false,
+    bool IsPendingApproval = false);
 
 public sealed record WarehouseSaleOfferPage(
     IReadOnlyList<WarehouseSaleOfferItem> Items, int TotalCount, int Page, int PageSize);
@@ -83,9 +85,6 @@ public sealed record WarehouseSaleOfferUpdateRequest(decimal WholeLotPrice, bool
 public sealed record WarehouseDistributorOrderLine(
     long OrderDetailId, string ProductName, string? BatchCode, decimal RequestedWeightKg,
     decimal AvailableWeightKg, decimal UnitPrice, decimal ApprovedWeightKg, bool StockAvailable);
-
-public sealed record WarehouseOrderApprovalLine(long OrderDetailId, decimal ApprovedWeightKg, decimal UnitPrice);
-public sealed record WarehouseOrderApprovalRequest(IReadOnlyList<WarehouseOrderApprovalLine> Lines);
 
 public sealed record WarehouseDistributorOrderSummary(
     long Id, string OrderCode, string Status, string DistributorName, int LineCount,
@@ -109,7 +108,6 @@ public interface IWarehouseInventoryRepository
     Task<WarehouseDistributorOrderPage> GetDistributorOrdersAsync(string? status, int page, int pageSize, CancellationToken ct);
     Task<WarehouseDistributorOrderDetail> GetDistributorOrderAsync(long id, CancellationToken ct);
     Task<WarehouseDistributorOrderDetail> ApproveDistributorOrderAsync(int actorAccountId, long id, CancellationToken ct);
-    Task<WarehouseDistributorOrderDetail> ApproveDistributorOrderAsync(int actorAccountId, long id, WarehouseOrderApprovalRequest request, CancellationToken ct);
     Task<WarehouseDistributorOrderDetail> RejectDistributorOrderAsync(int actorAccountId, long id, string reason, CancellationToken ct);
 }
 
@@ -123,6 +121,5 @@ public interface IWarehouseInventoryService
     Task<WarehouseDistributorOrderPage> GetDistributorOrdersAsync(string? status, int page, int pageSize, CancellationToken ct);
     Task<WarehouseDistributorOrderDetail> GetDistributorOrderAsync(long id, CancellationToken ct);
     Task<WarehouseDistributorOrderDetail> ApproveDistributorOrderAsync(int actorAccountId, long id, CancellationToken ct);
-    Task<WarehouseDistributorOrderDetail> ApproveDistributorOrderAsync(int actorAccountId, long id, WarehouseOrderApprovalRequest request, CancellationToken ct);
     Task<WarehouseDistributorOrderDetail> RejectDistributorOrderAsync(int actorAccountId, long id, string reason, CancellationToken ct);
 }
