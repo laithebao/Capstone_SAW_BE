@@ -5,7 +5,8 @@ namespace SAW.Application.Features.Picking;
 public static class PickingRules
 {
     public static readonly string[] ActiveReservations = ["RESERVED", "PARTIALLY_PICKED", "PICKED"];
-    public static readonly string[] WorkStatuses = ["APPROVED", "RESERVED", "PARTIALLY_PICKED"];
+    public static readonly string[] AllocatedReservations = ["RESERVED", "PARTIALLY_PICKED", "PICKED", "ISSUED"];
+    public static readonly string[] WorkStatuses = ["APPROVED", "RESERVED", "PARTIALLY_PICKED", "PARTIALLY_ISSUED"];
     public static bool Amount(decimal value, bool allowZero = false) => value >= (allowZero ? 0 : 0.001m)
         && value <= 999999999999999.999m && decimal.Truncate(value * 1000) == value * 1000;
     public static string? BatchLockReason(string status, DateOnly? expiry) =>

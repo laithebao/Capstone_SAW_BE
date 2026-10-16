@@ -8,7 +8,7 @@ public class GoodsIssueConfiguration : IEntityTypeConfiguration<GoodsIssue>
 {
     public void Configure(EntityTypeBuilder<GoodsIssue> builder)
     {
-        builder.ToTable("GOODS_ISSUE");
+        builder.ToTable("GOODS_ISSUE", table => table.UseSqlOutputClause(false));
         builder.HasKey(x => x.GoodsIssueId);
         builder.Property(x => x.GoodsIssueId).HasColumnName("GoodsIssueID").UseIdentityColumn();
         builder.Property(x => x.IssueCode).HasColumnName("IssueCode").HasMaxLength(50).IsRequired();

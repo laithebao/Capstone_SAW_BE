@@ -786,6 +786,8 @@ namespace SAW.Infrastructure.Migrations
                     b.HasIndex("PurchaseOrderId");
 
                     b.ToTable("GOODS_ISSUE", (string)null);
+
+                    b.HasAnnotation("SqlServer:UseSqlOutputClause", false);
                 });
 
             modelBuilder.Entity("SAW.Domain.Entities.GoodsIssueDetail", b =>
@@ -840,6 +842,8 @@ namespace SAW.Infrastructure.Migrations
                     b.HasIndex("OrderDetailId");
 
                     b.ToTable("GOODS_ISSUE_DETAIL", (string)null);
+
+                    b.HasAnnotation("SqlServer:UseSqlOutputClause", false);
                 });
 
             modelBuilder.Entity("SAW.Domain.Entities.GoodsReceipt", b =>
@@ -1319,6 +1323,8 @@ namespace SAW.Infrastructure.Migrations
                         .HasDatabaseName("UQ_INVENTORY_RESERVATION_OrderInventory");
 
                     b.ToTable("INVENTORY_RESERVATION", (string)null);
+
+                    b.HasAnnotation("SqlServer:UseSqlOutputClause", false);
                 });
 
             modelBuilder.Entity("SAW.Domain.Entities.LabResult", b =>
@@ -1729,6 +1735,8 @@ namespace SAW.Infrastructure.Migrations
                     b.HasIndex("PickedByAccountId");
 
                     b.ToTable("PICKING_HISTORY", (string)null);
+
+                    b.HasAnnotation("SqlServer:UseSqlOutputClause", false);
                 });
 
             modelBuilder.Entity("SAW.Domain.Entities.ProductBatch", b =>

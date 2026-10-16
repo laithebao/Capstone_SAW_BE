@@ -19,7 +19,7 @@ public sealed class PickingRepository(DbContextOptions<AppDbContext> options, IH
             && (!o.OrderDetails.Any(l => l.InventoryReservations.Any(r => PickingRules.ActiveReservations.Contains(r.ReservationStatus)))
                 || o.OrderDetails.Any(l => l.InventoryReservations.Any(r => PickingRules.ActiveReservations.Contains(r.ReservationStatus)
                     && r.PickedQuantity < r.ReservedQuantity))
-                || o.OrderDetails.Any(l => l.ApprovedWeightKg > (l.InventoryReservations.Where(r => PickingRules.ActiveReservations.Contains(r.ReservationStatus))
+                || o.OrderDetails.Any(l => l.ApprovedWeightKg > (l.InventoryReservations.Where(r => PickingRules.AllocatedReservations.Contains(r.ReservationStatus))
                     .Sum(r => (decimal?)r.ReservedQuantity) ?? 0))));
         if (query.Status is not null) rows = rows.Where(o => o.OrderStatus == query.Status);
         if (query.Search is { } term) rows = rows.Where(o => o.OrderCode.Contains(term) || o.Distributor.DistributorName.Contains(term)
@@ -43,10 +43,10 @@ public sealed class PickingRepository(DbContextOptions<AppDbContext> options, IH
         {
             Id = o.PurchaseOrderId, o.OrderCode, o.Distributor.DistributorName, o.ApprovedAt, o.ExpectedDeliveryDate, o.OrderStatus,
             Approved = o.OrderDetails.Sum(l => (decimal?)l.ApprovedWeightKg) ?? 0,
-            Reserved = o.OrderDetails.SelectMany(l => l.InventoryReservations).Where(r => PickingRules.ActiveReservations.Contains(r.ReservationStatus)).Sum(r => (decimal?)r.ReservedQuantity) ?? 0,
-            Picked = o.OrderDetails.SelectMany(l => l.InventoryReservations).Where(r => PickingRules.ActiveReservations.Contains(r.ReservationStatus)).Sum(r => (decimal?)r.PickedQuantity) ?? 0,
+            Reserved = o.OrderDetails.SelectMany(l => l.InventoryReservations).Where(r => PickingRules.AllocatedReservations.Contains(r.ReservationStatus)).Sum(r => (decimal?)r.ReservedQuantity) ?? 0,
+            Picked = o.OrderDetails.SelectMany(l => l.InventoryReservations).Where(r => PickingRules.AllocatedReservations.Contains(r.ReservationStatus)).Sum(r => (decimal?)r.PickedQuantity) ?? 0,
             FullyAllocated = o.OrderDetails.Any() && !o.OrderDetails.Any(l => l.ApprovedWeightKg <= 0 || l.ApprovedWeightKg !=
-                (l.InventoryReservations.Where(r => PickingRules.ActiveReservations.Contains(r.ReservationStatus)).Sum(r => (decimal?)r.ReservedQuantity) ?? 0)),
+                (l.InventoryReservations.Where(r => PickingRules.AllocatedReservations.Contains(r.ReservationStatus)).Sum(r => (decimal?)r.ReservedQuantity) ?? 0)),
             HasPickable = o.OrderDetails.Any(l => l.InventoryReservations.Any(r => (r.ReservationStatus == "RESERVED" || r.ReservationStatus == "PARTIALLY_PICKED")
                 && r.ReleasedAt == null && r.PickedQuantity < r.ReservedQuantity && r.Inventory.Unit == "kg"
                 && r.Inventory.WarehouseLocation.LocationStatus == "ACTIVE"
@@ -77,8 +77,8 @@ public sealed class PickingRepository(DbContextOptions<AppDbContext> options, IH
             throw new ConflictException("Đơn chưa được phê duyệt cho xử lý kho.");
         var lines = order.OrderDetails.OrderBy(l => l.OrderDetailId).Select(l => new PickingOrderLine(l.OrderDetailId, l.CropType.CropName,
             l.RequestedProductBatchId, l.RequestedProductBatch?.BatchCode, l.RequestedProductBatch?.ProductName, l.ApprovedWeightKg,
-            l.InventoryReservations.Where(r => PickingRules.ActiveReservations.Contains(r.ReservationStatus)).Sum(r => r.ReservedQuantity),
-            l.InventoryReservations.Where(r => PickingRules.ActiveReservations.Contains(r.ReservationStatus)).Sum(r => r.PickedQuantity),
+            l.InventoryReservations.Where(r => PickingRules.AllocatedReservations.Contains(r.ReservationStatus)).Sum(r => r.ReservedQuantity),
+            l.InventoryReservations.Where(r => PickingRules.AllocatedReservations.Contains(r.ReservationStatus)).Sum(r => r.PickedQuantity),
             l.InventoryReservations.OrderBy(r => r.InventoryReservationId).Select(r =>
             {
                 var reason = ReservationReason(r);
@@ -97,7 +97,7 @@ public sealed class PickingRepository(DbContextOptions<AppDbContext> options, IH
     }
     private static string? OrderReason(string status, bool fullyAllocated, bool hasPickable) =>
         status == "APPROVED" ? "Đơn đã được duyệt, đang chờ phân bổ đủ hàng; chưa thể xác nhận soạn hàng."
-        : status is not ("RESERVED" or "PARTIALLY_PICKED")
+        : status is not ("RESERVED" or "PARTIALLY_PICKED" or "PARTIALLY_ISSUED")
             ? "Đơn chưa được giữ hàng hoặc không còn cho phép soạn hàng."
         : !fullyAllocated
             ? "Đơn đang chờ phân bổ đủ hàng đã duyệt."
@@ -135,7 +135,7 @@ public sealed class PickingRepository(DbContextOptions<AppDbContext> options, IH
                 return true; // A lost response/retry never adds another history or audit.
             }
             var before = await ReadAsync(db, orderId, ct);
-            if (order.OrderStatus is not ("RESERVED" or "PARTIALLY_PICKED") || before.Lines.Count == 0
+            if (order.OrderStatus is not ("RESERVED" or "PARTIALLY_PICKED" or "PARTIALLY_ISSUED") || before.Lines.Count == 0
                 || before.Lines.Any(l => l.ApprovedWeightKg <= 0 || l.ReservedWeightKg != l.ApprovedWeightKg))
                 throw new ConflictException(before.Order.PickingLockReason ?? "Đơn chưa có đủ phần giữ hàng hợp lệ.");
             // Validate the selected reservation below even when no other reservation is pickable,
@@ -172,7 +172,10 @@ public sealed class PickingRepository(DbContextOptions<AppDbContext> options, IH
             if (updated is null || updated.PickedQuantity != oldPicked + request.QuantityKg
                 || updated.ReservationStatus != (updated.PickedQuantity == updated.ReservedQuantity ? "PICKED" : "PARTIALLY_PICKED"))
                 throw new ConflictException("Cơ chế đồng bộ soạn hàng của kho chưa sẵn sàng. Chưa lưu thao tác; vui lòng liên hệ quản trị.");
-            order.OrderStatus = active.Count > 0 && active.All(r => r.PickedQuantity == r.ReservedQuantity) ? "PICKED" : "PARTIALLY_PICKED";
+            // Issuing a partial pick must not prevent picking the remaining held stock or move
+            // an already partially issued order backwards to PICKED.
+            if (order.OrderStatus != "PARTIALLY_ISSUED")
+                order.OrderStatus = active.Count > 0 && active.All(r => r.PickedQuantity == r.ReservedQuantity) ? "PICKED" : "PARTIALLY_PICKED";
             order.UpdatedAt = DateTime.UtcNow;
             db.AuditLogs.Add(new AuditLog { AccountId = actorId, ActionType = "CONFIRM_PICKING", EntityName = "PURCHASE_ORDER",
                 EntityId = orderId.ToString(), OldDataJson = JsonSerializer.Serialize(new { PickedQuantityKg = oldPicked,
