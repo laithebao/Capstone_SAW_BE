@@ -4,10 +4,11 @@ using SAW.Application.Exceptions;
 using SAW.Infrastructure.Persistence;
 using SAW.Domain.Entities;
 using System.Data;
+using SAW.Application.Features.Picking;
 
 namespace SAW.Infrastructure.Repositories;
 
-public sealed class WarehouseInventoryRepository(AppDbContext db) : IWarehouseInventoryRepository
+public sealed class WarehouseInventoryRepository(AppDbContext db, IOrderReservationAllocator allocator) : IWarehouseInventoryRepository
 {
     public async Task<WarehouseSaleOfferPage> GetSaleOffersAsync(
         string? search, int page, int pageSize, CancellationToken ct)
@@ -155,10 +156,13 @@ public sealed class WarehouseInventoryRepository(AppDbContext db) : IWarehouseIn
     public async Task<WarehouseDistributorOrderDetail> ApproveDistributorOrderAsync(int actorAccountId, long id, CancellationToken ct)
     {
         var strategy = db.Database.CreateExecutionStrategy();
-        return await strategy.ExecuteAsync(async () =>
+        await strategy.ExecuteAsync(async () =>
         {
         // Serialize rejection with approval so a pending order can transition only once.
         await using var transaction = await db.Database.BeginTransactionAsync(IsolationLevel.Serializable, ct);
+        await db.Database.ExecuteSqlInterpolatedAsync($"EXEC sys.sp_set_session_context @key=N'AccountID', @value={actorAccountId}", ct);
+        try
+        {
         var order = await db.PurchaseOrders.Include(o => o.Distributor).Include(o => o.OrderDetails).ThenInclude(d => d.CropType).Include(o => o.OrderDetails).ThenInclude(d => d.RequestedProductBatch).SingleOrDefaultAsync(o => o.PurchaseOrderId == id, ct)
             ?? throw new NotFoundException("Không tìm thấy đơn nhà phân phối.");
         if (order.OrderStatus != "PENDING") throw new ConflictException("Đơn đã được xử lý hoặc đã bị hủy, không thể duyệt lại.");
@@ -188,7 +192,16 @@ public sealed class WarehouseInventoryRepository(AppDbContext db) : IWarehouseIn
         await db.SaveChangesAsync(ct);
         await transaction.CommitAsync(ct);
         return await ToOrderDetail(order, ct);
+        }
+        finally
+        {
+            await db.Database.ExecuteSqlRawAsync("EXEC sys.sp_set_session_context @key=N'AccountID', @value=NULL", CancellationToken.None);
+        }
         });
+        // UC56 follows a committed approval. An unavailable allocation rolls back independently,
+        // leaving APPROVED visible to staff as waiting for allocation, never a half-RESERVED order.
+        await allocator.TryReserveAsync(id, actorAccountId, ct);
+        return await GetDistributorOrderAsync(id, ct);
     }
 
     public async Task<WarehouseDistributorOrderDetail> RejectDistributorOrderAsync(int actorAccountId, long id, string reason, CancellationToken ct)

@@ -8,7 +8,7 @@ public class InventoryReservationConfiguration : IEntityTypeConfiguration<Invent
 {
     public void Configure(EntityTypeBuilder<InventoryReservation> builder)
     {
-        builder.ToTable("INVENTORY_RESERVATION");
+        builder.ToTable("INVENTORY_RESERVATION", table => table.UseSqlOutputClause(false));
         builder.HasKey(x => x.InventoryReservationId);
         builder.Property(x => x.InventoryReservationId).HasColumnName("InventoryReservationID").UseIdentityColumn();
         builder.Property(x => x.OrderDetailId).HasColumnName("OrderDetailID").IsRequired();

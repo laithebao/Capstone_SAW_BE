@@ -12,6 +12,7 @@ using SAW.Application.Features.DistributorOrders;
 using SAW.Application.Features.WarehouseInventory;
 using SAW.Domain.Entities;
 using SAW.Infrastructure.Repositories;
+using SAW.Infrastructure.Persistence;
 using SAW.Test.Infrastructure.ProductBatches;
 
 namespace SAW.Test.Infrastructure.DistributorOrders;
@@ -257,7 +258,9 @@ public sealed class DistributorOrderSqlTests : IClassFixture<DistributorSqlFixtu
 
         await using (var warehouseDb = fixture.Context())
         {
-            var warehouse = new WarehouseInventoryRepository(warehouseDb);
+            var warehouse = new WarehouseInventoryRepository(warehouseDb,
+                new OrderReservationAllocator(new DbContextOptionsBuilder<AppDbContext>().UseSqlServer(fixture.ConnectionString).Options,
+                    new HttpContextAccessor()));
             var candidate = Assert.Single((await warehouse.GetSaleOffersAsync(lot.BatchCode, 1, 20, default)).Items);
             Assert.True(candidate.CanPublish);
             var published = await warehouse.UpdateSaleOfferAsync(lot.BatchId,
