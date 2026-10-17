@@ -39,6 +39,7 @@ public sealed class DistributorOrderRepository(DbContextOptions<AppDbContext> op
     {
         var today = DateOnly.FromDateTime(DateTime.UtcNow.AddHours(7));
         return db.BatchSaleOffers.AsNoTracking().Where(o => o.IsPublished && o.WholeLotPrice > 0
+            && !BatchHandlingEligibility.PendingDisposalBatches(db).Contains(o.ProductBatchId)
             && o.ProductBatch.BatchStatus == "IN_STOCK"
             && o.ProductBatch.CropType.IsActive
             && (o.ProductBatch.ExpiryDate == null || o.ProductBatch.ExpiryDate >= today)

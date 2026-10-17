@@ -7,6 +7,15 @@ public class StockAdjustment
 
     public long InventoryId { get; set; }
 
+    // InventoryId remains the anchor for legacy single-location slips. Lines define the
+    // complete scope of a new request, including every location for a whole-lot disposal.
+    public string RequestKind { get; set; } = "COUNT";
+    public Guid? RequestId { get; set; }
+    public string? RequestPayloadHash { get; set; }
+    public string? InventorySnapshotJson { get; set; }
+    public ICollection<StockAdjustmentLine> Lines { get; set; } = [];
+    public ICollection<StockAdjustmentImage> Images { get; set; } = [];
+
     public int CreatedByAccountId { get; set; }
     public int? ReviewedByAccountId { get; set; }
 

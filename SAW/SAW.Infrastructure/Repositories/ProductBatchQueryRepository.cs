@@ -136,10 +136,11 @@ public sealed class ProductBatchQueryRepository(AppDbContext dbContext) : IProdu
                 t.OperationAccount.FullName, t.Note)).ToListAsync(ct));
         transactions.AddRange(await dbContext.StockAdjustments.AsNoTracking()
             .Where(a => a.Inventory.ProductBatchId == id)
-            .Select(a => new ProductBatchWarehouseTransaction(a.StockAdjustmentId, "STOCK_ADJUSTMENT",
-                a.AdjustmentCode, a.AdjustmentStatus, a.CreatedAt, a.DifferenceQuantity, a.Inventory.Unit,
-                null, a.Inventory.WarehouseLocation.LocationCode, null, a.CreatedByAccount.FullName,
-                a.Reason)).ToListAsync(ct));
+            .Select(a => new ProductBatchWarehouseTransaction(a.StockAdjustmentId, a.RequestKind == "DISPOSAL" ? "STOCK_DISPOSAL" : "STOCK_ADJUSTMENT",
+                a.AdjustmentCode, a.AdjustmentStatus, a.ReviewedAt ?? a.CreatedAt, a.DifferenceQuantity, a.Inventory.Unit,
+                null, a.RequestKind == "DISPOSAL" ? "Toàn bộ vị trí của lô" : a.Inventory.WarehouseLocation.LocationCode,
+                null, a.ReviewedByAccount == null ? a.CreatedByAccount.FullName : a.ReviewedByAccount.FullName,
+                a.ReviewNote == null ? a.Reason : a.Reason + " · Xử lý: " + a.ReviewNote)).ToListAsync(ct));
         return new(qc, receipts, history, transactions.OrderByDescending(t => t.RecordedAt)
             .ThenBy(t => t.TransactionType, StringComparer.Ordinal).ThenByDescending(t => t.Id).ToList());
     }

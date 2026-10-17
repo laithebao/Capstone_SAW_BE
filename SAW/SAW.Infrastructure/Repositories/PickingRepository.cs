@@ -50,6 +50,7 @@ public sealed class PickingRepository(DbContextOptions<AppDbContext> options, IH
             HasPickable = o.OrderDetails.Any(l => l.InventoryReservations.Any(r => (r.ReservationStatus == "RESERVED" || r.ReservationStatus == "PARTIALLY_PICKED")
                 && r.ReleasedAt == null && r.PickedQuantity < r.ReservedQuantity && r.Inventory.Unit == "kg"
                 && r.Inventory.WarehouseLocation.LocationStatus == "ACTIVE"
+                && !BatchHandlingEligibility.PendingDisposalBatches(db).Contains(r.Inventory.ProductBatchId)
                 && (r.Inventory.ProductBatch.BatchStatus == "IN_STOCK" || r.Inventory.ProductBatch.BatchStatus == "RESERVED" || r.Inventory.ProductBatch.BatchStatus == "PARTIALLY_ISSUED")
                 && (r.Inventory.ProductBatch.ExpiryDate == null || r.Inventory.ProductBatch.ExpiryDate >= today)))
         }).ToListAsync(ct);
@@ -75,6 +76,7 @@ public sealed class PickingRepository(DbContextOptions<AppDbContext> options, IH
             .AsSplitQuery().SingleOrDefaultAsync(o => o.PurchaseOrderId == id, ct) ?? throw new NotFoundException("Không tìm thấy đơn hàng.");
         if (order.ApprovedAt is null || order.ApprovedByAccountId is null)
             throw new ConflictException("Đơn chưa được phê duyệt cho xử lý kho.");
+        var blockedBatches = await BatchHandlingEligibility.PendingDisposalBatches(db).ToListAsync(ct);
         var lines = order.OrderDetails.OrderBy(l => l.OrderDetailId).Select(l => new PickingOrderLine(l.OrderDetailId, l.CropType.CropName,
             l.RequestedProductBatchId, l.RequestedProductBatch?.BatchCode, l.RequestedProductBatch?.ProductName, l.ApprovedWeightKg,
             l.InventoryReservations.Where(r => PickingRules.AllocatedReservations.Contains(r.ReservationStatus)).Sum(r => r.ReservedQuantity),
@@ -82,6 +84,7 @@ public sealed class PickingRepository(DbContextOptions<AppDbContext> options, IH
             l.InventoryReservations.OrderBy(r => r.InventoryReservationId).Select(r =>
             {
                 var reason = ReservationReason(r);
+                if (blockedBatches.Contains(r.Inventory.ProductBatchId)) reason = SAW.Application.Features.StockAdjustments.StockAdjustmentRules.DisposalLockReason;
                 return new PickingReservation(r.InventoryReservationId, r.InventoryId, r.Inventory.ProductBatchId,
                     r.Inventory.ProductBatch.BatchCode, r.Inventory.ProductBatch.ProductName, r.Inventory.WarehouseLocationId,
                     r.Inventory.WarehouseLocation.LocationCode, r.Inventory.ProductBatch.ExpiryDate, r.ReservationStatus,
@@ -142,6 +145,8 @@ public sealed class PickingRepository(DbContextOptions<AppDbContext> options, IH
             // so a stale open form receives the actual expiry/location reason rather than a generic lock.
             var batch = await WarehouseOperationTransaction.LockBatchAsync(db, request.ProductBatchId, ct);
             var stocks = await WarehouseOperationTransaction.LockInventoryAsync(db, batch.ProductBatchId, ct);
+            if (await BatchHandlingEligibility.DisposalReasonAsync(db, batch.ProductBatchId, ct) is { } disposalReason)
+                throw new ConflictException(disposalReason);
             var reservation = await db.InventoryReservations.FromSqlInterpolated($"SELECT * FROM INVENTORY_RESERVATION WITH (UPDLOCK,HOLDLOCK) WHERE InventoryReservationID={request.ReservationId}")
                 .Include(r => r.OrderDetail).SingleOrDefaultAsync(ct) ?? throw new NotFoundException("Không tìm thấy phần giữ hàng.");
             var inventory = stocks.SingleOrDefault(i => i.InventoryId == request.InventoryId);

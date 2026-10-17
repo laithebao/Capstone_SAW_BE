@@ -34,6 +34,7 @@ public sealed class OrderReservationAllocator(DbContextOptions<AppDbContext> opt
                 foreach (var batchId in lines.Select(l => l.RequestedProductBatchId!.Value).Distinct().Order())
                 {
                     var batch = await WarehouseOperationTransaction.LockBatchAsync(db, batchId, ct);
+                    if (await BatchHandlingEligibility.DisposalReasonAsync(db, batchId, ct) is not null) return false;
                     if (batch.BatchStatus != "IN_STOCK" || PickingRules.BatchLockReason(batch.BatchStatus, batch.ExpiryDate) is not null
                         || lines.Any(l => l.RequestedProductBatchId == batchId && l.CropTypeId != batch.CropTypeId)) return false;
                     var inventory = await WarehouseOperationTransaction.LockInventoryAsync(db, batchId, ct);

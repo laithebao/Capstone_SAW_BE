@@ -292,6 +292,8 @@ public sealed class PickingSqlTests(PickingSqlFixture fixture) : IClassFixture<P
         foreach(var s in new[]{main,expired,stale})Assert.True(await Allocator().TryReserveAsync(s.OrderId,F.ActorId,default));
         await using(var setup=F.Context()){var b=await setup.ProductBatches.FindAsync(expired.BatchId);b!.ExpiryDate=DateOnly.FromDateTime(DateTime.UtcNow.AddHours(7)).AddDays(-1);await setup.SaveChangesAsync();}
         using var api=await F.ApiAsync();var root=new DirectoryInfo(AppContext.BaseDirectory);
+        api.DefaultRequestHeaders.Authorization=new AuthenticationHeaderValue("Bearer",Token("OPERATION_STAFF"));
+        var apiList=await api.GetAsync("/api/operation/picking-orders");Assert.Equal(HttpStatusCode.OK,apiList.StatusCode);
         while(root is not null&&!Directory.Exists(Path.Combine(root.FullName,"Capstone_SAW_FE")))root=root.Parent;
         Assert.NotNull(root);
         var start=new ProcessStartInfo("node"){WorkingDirectory=Path.Combine(root.FullName,"Capstone_SAW_FE"),UseShellExecute=false,CreateNoWindow=true,RedirectStandardOutput=true,RedirectStandardError=true};
@@ -301,10 +303,11 @@ public sealed class PickingSqlTests(PickingSqlFixture fixture) : IClassFixture<P
         start.Environment["SAW_TEST_EXPIRED_ORDER_ID"]=expired.OrderId.ToString();start.Environment["SAW_TEST_STALE_ORDER_ID"]=stale.OrderId.ToString();
         start.Environment["SAW_TEST_ORDER_CODE"]=main.Code;start.Environment["SAW_TEST_TOKEN"]=Token("OPERATION_STAFF");start.Environment["SAW_TEST_MANAGER_TOKEN"]=Token("WAREHOUSE_MANAGER");
         start.Environment["SAW_TEST_BUYER_TOKEN"]=Token("DISTRIBUTOR",main.BuyerAccountId);
-        start.Environment["SAW_TEST_EVIDENCE_DIRECTORY"]=Path.Combine(Path.GetTempPath(),"SAW_Picking_Verification_2026-10-16");
+        var evidence=Environment.GetEnvironmentVariable("SAW_TEST_EVIDENCE_DIRECTORY")??Path.Combine(root.FullName,"Capstone_SAW_BE","test-results","picking");Directory.CreateDirectory(evidence);
+        start.Environment["SAW_TEST_EVIDENCE_DIRECTORY"]=evidence;
         using var process=Process.Start(start)!;var output=process.StandardOutput.ReadToEndAsync();var error=process.StandardError.ReadToEndAsync();
         try{await process.WaitForExitAsync(new CancellationTokenSource(TimeSpan.FromMinutes(4)).Token);}catch{process.Kill(entireProcessTree:true);throw;}
-        Assert.True(process.ExitCode==0,await output+await error);
+        var log=await output+await error;await File.WriteAllTextAsync(Path.Combine(evidence,"picking-browser.log"),log);Assert.True(process.ExitCode==0,log);
         Assert.Equal((100m,100m,100m,2,2,"PICKED"),await StateAsync(main));
         Assert.Equal((99m,0m,0m,0,0,"APPROVED"),await StateAsync(waiting));
         Assert.Equal((100m,100m,0m,0,0,"RESERVED"),await StateAsync(expired));

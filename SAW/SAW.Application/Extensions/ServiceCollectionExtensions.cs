@@ -49,6 +49,8 @@ public static class ServiceCollectionExtensions
         services.AddScoped<IWarehouseInventoryService, WarehouseInventoryService>();
         services.AddScoped<SAW.Application.Features.Picking.IPickingService, SAW.Application.Features.Picking.PickingService>();
         services.AddScoped<SAW.Application.Features.GoodsIssues.GoodsIssueService>();
+        services.AddScoped<SAW.Application.Features.StockAdjustments.StockAdjustmentService>();
+        services.AddScoped<SAW.Application.Features.StockAdjustments.StockAdjustmentReviewService>();
 
         return services;
     }

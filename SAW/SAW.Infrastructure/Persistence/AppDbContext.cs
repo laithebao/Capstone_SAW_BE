@@ -88,6 +88,8 @@ public class AppDbContext : DbContext
     public DbSet<GoodsIssue> GoodsIssues => Set<GoodsIssue>();
     public DbSet<GoodsIssueDetail> GoodsIssueDetails => Set<GoodsIssueDetail>();
     public DbSet<StockAdjustment> StockAdjustments => Set<StockAdjustment>();
+    public DbSet<StockAdjustmentLine> StockAdjustmentLines => Set<StockAdjustmentLine>();
+    public DbSet<StockAdjustmentImage> StockAdjustmentImages => Set<StockAdjustmentImage>();
     public DbSet<StockTransfer> StockTransfers => Set<StockTransfer>();
 
     // 11. Traceability, Notification, Audit, AI

@@ -8,11 +8,17 @@ public class StockAdjustmentConfiguration : IEntityTypeConfiguration<StockAdjust
 {
     public void Configure(EntityTypeBuilder<StockAdjustment> builder)
     {
-        builder.ToTable("STOCK_ADJUSTMENT");
+        builder.ToTable("STOCK_ADJUSTMENT", t => {
+            t.UseSqlOutputClause(false);
+            t.HasCheckConstraint("CK_STOCK_ADJUSTMENT_RequestKind", "[RequestKind] IN ('COUNT','DISPOSAL')");
+        });
         builder.HasKey(x => x.StockAdjustmentId);
         builder.Property(x => x.StockAdjustmentId).HasColumnName("StockAdjustmentID").UseIdentityColumn();
         builder.Property(x => x.AdjustmentCode).HasColumnName("AdjustmentCode").HasMaxLength(50).IsRequired();
         builder.Property(x => x.InventoryId).HasColumnName("InventoryID").IsRequired();
+        builder.Property(x => x.RequestKind).HasMaxLength(20).HasDefaultValue("COUNT").IsRequired();
+        builder.Property(x => x.RequestPayloadHash).HasMaxLength(64);
+        builder.HasIndex(x => x.RequestId).IsUnique().HasFilter("[RequestId] IS NOT NULL");
         builder.Property(x => x.CreatedByAccountId).HasColumnName("CreatedByAccountID").IsRequired();
         builder.Property(x => x.ReviewedByAccountId).HasColumnName("ReviewedByAccountID");
         builder.Property(x => x.SystemQuantity).HasColumnName("SystemQuantity").HasPrecision(18, 3).IsRequired();

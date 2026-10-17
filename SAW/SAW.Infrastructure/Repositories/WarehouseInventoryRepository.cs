@@ -95,6 +95,7 @@ public sealed class WarehouseInventoryRepository(AppDbContext db, IOrderReservat
         var reason = SaleIneligibilityReason(batch, latestQc?.InspectionStatus, latestQc?.QcResult,
             latestQc?.QualityGrade, latestQc?.StartedAt, latestQc?.CompletedAt,
             isPendingApproval, isSold, hasCommittedIssue);
+        reason = await BatchHandlingEligibility.DisposalReasonAsync(db, batchId, ct) ?? reason;
         return new WarehouseSaleOfferItem(
             batch.ProductBatchId, batch.BatchCode, batch.ProductName, batch.CropType.CropName,
             batch.QualityGrade, batch.BatchStatus, batch.VerifiedWeightInKg ?? batch.WeightInKg,
@@ -226,7 +227,7 @@ public sealed class WarehouseInventoryRepository(AppDbContext db, IOrderReservat
         var cropIds = order.OrderDetails.Where(d => d.RequestedProductBatchId == null).Select(d => d.CropTypeId).ToList();
         var batchIds = order.OrderDetails.Where(d => d.RequestedProductBatchId != null).Select(d => d.RequestedProductBatchId!.Value).ToList();
         var today = DateOnly.FromDateTime(DateTime.UtcNow);
-        var stock = await db.Inventories.AsNoTracking().Where(i => (batchIds.Contains(i.ProductBatchId) || cropIds.Contains(i.ProductBatch.CropTypeId)) && i.ProductBatch.BatchStatus == "IN_STOCK" && (i.ProductBatch.ExpiryDate == null || i.ProductBatch.ExpiryDate >= today)).GroupBy(i => new { i.ProductBatchId, i.ProductBatch.CropTypeId }).Select(g => new { g.Key.ProductBatchId, g.Key.CropTypeId, Available = g.Sum(i => i.AvailableQuantity) }).ToListAsync(ct);
+        var stock = await db.Inventories.AsNoTracking().Where(i => !BatchHandlingEligibility.PendingDisposalBatches(db).Contains(i.ProductBatchId) && (batchIds.Contains(i.ProductBatchId) || cropIds.Contains(i.ProductBatch.CropTypeId)) && i.ProductBatch.BatchStatus == "IN_STOCK" && (i.ProductBatch.ExpiryDate == null || i.ProductBatch.ExpiryDate >= today)).GroupBy(i => new { i.ProductBatchId, i.ProductBatch.CropTypeId }).Select(g => new { g.Key.ProductBatchId, g.Key.CropTypeId, Available = g.Sum(i => i.AvailableQuantity) }).ToListAsync(ct);
         var lines = order.OrderDetails.Select(d => { var available = stock.Where(s => d.RequestedProductBatchId.HasValue ? s.ProductBatchId == d.RequestedProductBatchId : s.CropTypeId == d.CropTypeId).Sum(s => s.Available); return new WarehouseDistributorOrderLine(d.OrderDetailId, d.CropType.CropName, d.RequestedProductBatch?.BatchCode, d.RequestedWeightKg, available, d.UnitPrice, d.ApprovedWeightKg, available >= d.RequestedWeightKg); }).ToList();
         return new(order.PurchaseOrderId, order.OrderCode, order.OrderStatus, order.Distributor.DistributorName, order.TotalAmount, order.CreatedAt, order.ExpectedDeliveryDate, order.DeliveryAddress, order.ContactPhone, order.OrderNote, lines.All(l => l.StockAvailable), lines);
     }

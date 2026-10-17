@@ -170,6 +170,7 @@ public sealed partial class GoodsIssueRepository(DbContextOptions<AppDbContext> 
             if (r.ReservationStatus is not ("PARTIALLY_PICKED" or "PICKED") || r.ReleasedAt != null)
                 throw new ConflictException("Phần giữ hàng chưa soạn hoặc không còn hiệu lực.");
             var reason = PickingRules.BatchLockReason(r.Inventory.ProductBatch.BatchStatus, r.Inventory.ProductBatch.ExpiryDate);
+            reason ??= await BatchHandlingEligibility.DisposalReasonAsync(db, r.Inventory.ProductBatchId, ct);
             if (reason is not null) throw new ConflictException(reason);
             if (r.Inventory.Unit != "kg" || db.WarehouseLocations.Local.Single(l => l.WarehouseLocationId == r.Inventory.WarehouseLocationId).LocationStatus != "ACTIVE")
                 throw new ConflictException("Vị trí kho không hoạt động hoặc đơn vị tồn không phải kg.");

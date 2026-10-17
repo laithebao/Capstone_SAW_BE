@@ -77,6 +77,7 @@ public sealed partial class GoodsIssueRepository
             .Include(o => o.OrderDetails).ThenInclude(l => l.InventoryReservations).ThenInclude(r => r.Inventory).ThenInclude(i => i.WarehouseLocation)
             .Include(o => o.OrderDetails).ThenInclude(l => l.InventoryReservations).ThenInclude(r => r.GoodsIssueDetails).ThenInclude(d => d.GoodsIssue)
             .AsSplitQuery().SingleOrDefaultAsync(o => o.PurchaseOrderId == id, ct) ?? throw new NotFoundException("Không tìm thấy đơn hàng.");
+        var blockedBatches = await BatchHandlingEligibility.PendingDisposalBatches(db).ToListAsync(ct);
         var allocations = order.OrderDetails.OrderBy(l => l.OrderDetailId).SelectMany(l => l.InventoryReservations.OrderBy(r => r.InventoryReservationId).Select(r =>
         {
             var issued = r.GoodsIssueDetails.Where(d => d.GoodsIssue.IssueStatus == "COMMITTED").Sum(d => d.WeightInKg);
@@ -89,6 +90,7 @@ public sealed partial class GoodsIssueRepository
                     ? "Vị trí không hoạt động hoặc đơn vị tồn không phải kg."
                 : PickingRules.BatchLockReason(r.Inventory.ProductBatch.BatchStatus, r.Inventory.ProductBatch.ExpiryDate);
             if (reason is null && (r.Inventory.QuantityOnHand <= 0 || l.ApprovedWeightKg <= 0)) reason = "Tồn thực tế hoặc lượng duyệt không đủ.";
+            if (blockedBatches.Contains(r.Inventory.ProductBatchId)) reason = SAW.Application.Features.StockAdjustments.StockAdjustmentRules.DisposalLockReason;
             return new GoodsIssueAllocation(r.InventoryReservationId, l.OrderDetailId, r.InventoryId, r.Inventory.ProductBatchId,
                 r.Inventory.ProductBatch.BatchCode, r.Inventory.ProductBatch.ProductName, r.Inventory.WarehouseLocationId,
                 r.Inventory.WarehouseLocation.LocationCode, r.Inventory.ProductBatch.ExpiryDate, l.ApprovedWeightKg,
