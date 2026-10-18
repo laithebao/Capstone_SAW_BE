@@ -2,6 +2,7 @@ using Microsoft.EntityFrameworkCore;
 using SAW.Application.Exceptions;
 using SAW.Application.Features.DistributorOrders;
 using SAW.Application.Features.StockAdjustments;
+using SAW.Application.Features.Picking;
 using SAW.Domain.Entities;
 using SAW.Infrastructure.Repositories;
 using SAW.Test.Infrastructure.ProductBatches;
@@ -102,14 +103,17 @@ public sealed partial class StockAdjustmentSqlTests
         await Resolution().RespondAsync(sale.Order, new(Guid.NewGuid(), sent.Version, p.Id, p.Revision, "DECLINE", "Không mua"), sale.Customer, default);
         var view = await Reviews(manager).GetAsync(a.Summary.Id, default); await Reviews(manager).ReviewAsync(a.Summary.Id, Decision(view), manager, default);
         var offer = (await inventory.GetSaleOffersAsync(null, 1, 100, default)).Items.Single(o => o.BatchId == s.Batch);
-        Assert.False(offer.RequiresRepricing); Assert.False(offer.IsPublished); Assert.Equal(80, offer.VerifiedWeightKg); Assert.Equal(8500000, offer.WholeLotPrice);
+        Assert.False(offer.RequiresRepricing); Assert.True(offer.IsPublished); Assert.Equal(80, offer.VerifiedWeightKg); Assert.Equal(8500000, offer.WholeLotPrice);
         await Assert.ThrowsAsync<ConflictException>(() => inventory.UpdateSaleOfferAsync(s.Batch, new(10000000, true, old.PublicationSnapshot), default));
-        var saved = await inventory.UpdateSaleOfferAsync(s.Batch, new(offer.WholeLotPrice!.Value, true, offer.PublicationSnapshot), default); Assert.True(saved.IsPublished);
-        var repository = new DistributorOrderRepository(Options(), Accessor); var catalog = await repository.CatalogAsync(sale.Customer, new(Search: saved.BatchCode, PageSize: 100), default);
+        var repository = new DistributorOrderRepository(Options(), Accessor); var catalog = await repository.CatalogAsync(sale.Customer, new(Search: offer.BatchCode, PageSize: 100), default);
         Assert.Equal(80, Assert.Single(catalog.Items).WeightKg); Assert.Equal(8500000, catalog.Items.Single().WholeLotPrice);
         var newOrder = await repository.CreateAsync(sale.Customer, new(Guid.NewGuid(), [new(s.Batch, 8500000, 80)], "Fixture address", "0901234567", null, null), default);
         var approved = await inventory.ApproveDistributorOrderAsync(manager, newOrder.Id, default); Assert.Equal("RESERVED", approved.Status);
         Assert.Equal(80, await db.InventoryReservations.Where(r => r.OrderDetail.PurchaseOrderId == newOrder.Id && r.ReservationStatus == "RESERVED").SumAsync(r => r.ReservedQuantity));
         Assert.Equal(80, newOrder.Lines.Single().WeightKg); Assert.Equal(100, await db.ProductBatches.Where(b => b.ProductBatchId == s.Batch).Select(b => b.VerifiedWeightInKg).SingleAsync());
+        var picking = new PickingService(new PickingRepository(Options(), Accessor));
+        var oldOrder = Assert.Single((await picking.SearchAsync(new(Search: (await db.PurchaseOrders.FindAsync(sale.Order))!.OrderCode, Status: "CANCELLED"), default)).Items);
+        Assert.Equal(sale.Order, oldOrder.Id); Assert.False(oldOrder.CanPick); Assert.Equal("CANCELLED", oldOrder.Status);
+        Assert.NotEqual(oldOrder.Id, newOrder.Id); Assert.True((await picking.GetAsync(newOrder.Id, default)).Order.CanPick);
     }
 }

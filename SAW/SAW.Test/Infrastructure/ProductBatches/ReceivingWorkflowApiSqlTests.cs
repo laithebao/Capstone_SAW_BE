@@ -14,6 +14,7 @@ using SAW.Application.Features.GoodsReceipts.Dtos;
 using SAW.Application.Features.GoodsReceipts.Services;
 using SAW.Application.Features.ProductBatches.Dtos;
 using SAW.Application.Features.ProductBatches.Services;
+using SAW.Application.Features.QcInspections;
 using SAW.Domain.Entities;
 using SAW.Infrastructure.Persistence;
 using SAW.Infrastructure.Repositories;
@@ -94,6 +95,108 @@ public sealed class ReceivingWorkflowApiSqlTests(GoodsReceiptSqlFixture fixture)
         await using var check=F.Context();var saved=await check.ProductBatches.AsNoTracking().SingleAsync(b=>b.ProductBatchId==rejected.ProductBatchId);
         Assert.Equal(1000,saved.RejectionReason!.Length);Assert.Equal("REJECTED",saved.BatchStatus);Assert.Null(saved.VerifiedQuantity);
     }
+    [ReceivingSqlFact]
+    public async Task QcSampling_UsesReceivedQuantityAndWeight_ForBagsAndBoxes()
+    {
+        using var client = await F.ApiAsync();
+        client.DefaultRequestHeaders.Authorization = Bearer("QC_STAFF");
+        foreach (var unit in new[] { "Bao", "Thùng" })
+        {
+            var batch = await F.BatchAsync();
+            await using var db = F.Context();
+            await db.ProductBatches.Where(b => b.ProductBatchId == batch.ProductBatchId).ExecuteUpdateAsync(s => s
+                .SetProperty(b => b.Unit, unit).SetProperty(b => b.DeclaredQuantity, 5m)
+                .SetProperty(b => b.WeightInKg, 125m).SetProperty(b => b.VerifiedQuantity, (decimal?)4m)
+                .SetProperty(b => b.VerifiedWeightInKg, (decimal?)100m)
+                .SetProperty(b => b.VerifiedPackageCount, (int?)4));
+            using (var lookup = await client.GetAsync("/api/operation/product-batches?status=PENDING_QC&withoutActiveInspection=true&batchCode=" + batch.BatchCode))
+            {
+                Assert.Equal(HttpStatusCode.OK, lookup.StatusCode);
+                using var json = System.Text.Json.JsonDocument.Parse(await lookup.Content.ReadAsStringAsync());
+                var item = Assert.Single(json.RootElement.GetProperty("data").GetProperty("items").EnumerateArray());
+                Assert.Equal(5m, item.GetProperty("quantity").GetDecimal());
+                Assert.Equal(4m, item.GetProperty("verifiedQuantity").GetDecimal());
+                Assert.Equal(unit, item.GetProperty("unit").GetString());
+            }
+            var inspection = F.Inspection(batch.ProductBatchId);
+            inspection.SamplingRatio = 0.1m;
+            inspection.SampleSize = 12.5m;
+            db.QcInspections.Add(inspection);
+            await db.SaveChangesAsync();
+
+            using (var sample = await client.PatchAsJsonAsync($"/api/qc-inspections/{inspection.QcInspectionId}/sampling-ratio",
+                new UpdateSamplingRatioRequest(0.1m)))
+                Assert.Equal(HttpStatusCode.OK, sample.StatusCode);
+            using (var detail = await client.GetAsync($"/api/qc-inspections/{inspection.QcInspectionId}"))
+            {
+                Assert.Equal(HttpStatusCode.OK, detail.StatusCode);
+                using var json = System.Text.Json.JsonDocument.Parse(await detail.Content.ReadAsStringAsync());
+                Assert.Equal(10m, json.RootElement.GetProperty("data").GetProperty("sampleSize").GetDecimal());
+            }
+            var saved = await db.QcInspections.AsNoTracking().SingleAsync(i => i.QcInspectionId == inspection.QcInspectionId);
+            Assert.Equal(10m, saved.SampleSize);
+            var declaration = await db.ProductBatches.AsNoTracking().SingleAsync(b => b.ProductBatchId == batch.ProductBatchId);
+            Assert.Equal(125m, declaration.WeightInKg);
+            Assert.Equal(5m, declaration.DeclaredQuantity);
+            Assert.Equal(100m, declaration.VerifiedWeightInKg);
+            Assert.Equal(4m, declaration.VerifiedQuantity);
+        }
+    }
+
+    [ReceivingSqlFact]
+    public async Task NonuniformPackageWeights_ConfirmAndUpdate_PersistMeasuredTotalWithoutChangingDeclaration()
+    {
+        var batch = await SubmittedAsync();
+        await using (var setup = F.Context())
+        {
+            await setup.ProductBatches.Where(b => b.ProductBatchId == batch.ProductBatchId).ExecuteUpdateAsync(s => s
+                .SetProperty(b => b.Unit, "Bao").SetProperty(b => b.DeclaredQuantity, 5m)
+                .SetProperty(b => b.WeightInKg, 125m).SetProperty(b => b.PackagingType, "Bao")
+                .SetProperty(b => b.PackageCount, (int?)5).SetProperty(b => b.PackageUnitWeightKg, (decimal?)25m));
+        }
+        using var client = await F.ApiAsync();
+        client.DefaultRequestHeaders.Authorization = Bearer("OPERATION_STAFF");
+        var path = $"/api/operation/product-batches/{batch.ProductBatchId}";
+        const string note = "3 x 25 + 24 + 20 = 119 kg";
+        using (var options = await client.GetAsync($"/api/operation/product-batches/submitted?supplierId={F.SupplierId}"))
+        {
+            Assert.Equal(HttpStatusCode.OK, options.StatusCode);
+            using var json = System.Text.Json.JsonDocument.Parse(await options.Content.ReadAsStringAsync());
+            var option = Assert.Single(json.RootElement.GetProperty("data").EnumerateArray(),
+                item => item.GetProperty("id").GetInt64() == batch.ProductBatchId);
+            Assert.Equal("Test crop", option.GetProperty("cropTypeName").GetString());
+            Assert.Equal("Test batch", option.GetProperty("productName").GetString());
+        }
+        using (var confirm = await client.PutAsJsonAsync(path + $"/verify?supplierId={F.SupplierId}",
+            new VerifyProductBatchRequest(5m, 119m, "Bao", 5, null, note)))
+            Assert.Equal(HttpStatusCode.OK, confirm.StatusCode);
+
+        await using var db = F.Context();
+        var saved = await db.ProductBatches.AsNoTracking().SingleAsync(b => b.ProductBatchId == batch.ProductBatchId);
+        Assert.Equal(119m, saved.VerifiedWeightInKg);
+        Assert.Equal(5, saved.VerifiedPackageCount);
+        Assert.Null(saved.VerifiedPackageUnitWeightKg);
+        Assert.Equal(note, saved.ReceivingNote);
+        Assert.Equal("PENDING_QC", saved.BatchStatus);
+        using (var read = await client.GetAsync(path))
+        {
+            Assert.Equal(HttpStatusCode.OK, read.StatusCode);
+            using var json = System.Text.Json.JsonDocument.Parse(await read.Content.ReadAsStringAsync());
+            Assert.Equal(119m, json.RootElement.GetProperty("data").GetProperty("verifiedWeightInKg").GetDecimal());
+            Assert.Equal(System.Text.Json.JsonValueKind.Null,
+                json.RootElement.GetProperty("data").GetProperty("verifiedPackageUnitWeightKg").ValueKind);
+        }
+        using (var update = await client.PutAsJsonAsync(path + "/receiving-details",
+            new UpdateProductBatchReceivingRequest(5m, 118.5m, saved.UpdatedAt, saved.CreatedAt, "Bao", 5, null, "Reweighed: 118.5 kg")))
+            Assert.Equal(HttpStatusCode.OK, update.StatusCode);
+        saved = await db.ProductBatches.AsNoTracking().SingleAsync(b => b.ProductBatchId == batch.ProductBatchId);
+        Assert.Equal(118.5m, saved.VerifiedWeightInKg);
+        Assert.Null(saved.VerifiedPackageUnitWeightKg);
+        Assert.Equal(5m, saved.DeclaredQuantity);
+        Assert.Equal(125m, saved.WeightInKg);
+        Assert.Equal(25m, saved.PackageUnitWeightKg);
+    }
+
     [ReceivingSqlFact]
     public async Task UC28_clear_all_optional_fields_stores_null_and_audit_without_state_change()
     {

@@ -72,11 +72,11 @@ public sealed partial class StockAdjustmentRepository
     private static void Notify(AppDbContext db, int accountId, long adjustmentId, long? orderId, string title, string message, bool customer = false, string notificationType = "STOCK_ADJUSTMENT") =>
         db.Notifications.Add(new Notification { AccountId = accountId, NotificationType = notificationType, Priority = "HIGH", Title = title,
             Message = message, RelatedEntityType = customer ? "DISTRIBUTOR_ORDER" : "STOCK_ADJUSTMENT", RelatedEntityId = (customer ? orderId : adjustmentId)?.ToString(), CreatedAt = DateTime.UtcNow });
-    private static async Task NotifyWarehouseAsync(AppDbContext db, long id, string title, string message, CancellationToken ct, bool managersOnly = false)
+    private static async Task NotifyWarehouseAsync(AppDbContext db, long id, string title, string message, CancellationToken ct, bool managersOnly = false, string notificationType = "STOCK_ADJUSTMENT")
     {
         foreach (var account in await db.Accounts.Where(a => a.AccountStatus == "ACTIVE" && a.Role.IsActive
             && (a.Role.RoleCode == "WAREHOUSE_MANAGER" || !managersOnly && a.Role.RoleCode == "OPERATION_STAFF")).Select(a => a.AccountId).ToListAsync(ct))
-            Notify(db, account, id, null, title, message, notificationType: managersOnly ? "STOCK_ADJUSTMENT_CUSTOMER_RESPONSE" : "STOCK_ADJUSTMENT");
+            Notify(db, account, id, null, title, message, notificationType: notificationType);
     }
     private static void RecordResolution(AppDbContext db, long id, int actor, string action, Guid key, string payload, string before, object values) =>
         db.AuditLogs.Add(new AuditLog { AccountId = actor, EntityName = "STOCK_ADJUSTMENT", EntityId = id.ToString(), ActionType = "RESOLUTION_" + action,

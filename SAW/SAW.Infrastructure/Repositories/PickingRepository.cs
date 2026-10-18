@@ -14,13 +14,13 @@ public sealed class PickingRepository(DbContextOptions<AppDbContext> options, IH
     public async Task<PickingPage<PickingOrderSummary>> SearchAsync(PickingQuery query, CancellationToken ct)
     {
         await using var db = Context();
-        var rows = db.PurchaseOrders.AsNoTracking().Where(o => PickingRules.WorkStatuses.Contains(o.OrderStatus)
-            && o.ApprovedAt != null && o.ApprovedByAccountId != null
+        var rows = db.PurchaseOrders.AsNoTracking().Where(o => o.ApprovedAt != null && o.ApprovedByAccountId != null
+            && (o.OrderStatus == "CANCELLED" || PickingRules.WorkStatuses.Contains(o.OrderStatus)
             && (!o.OrderDetails.Any(l => l.InventoryReservations.Any(r => PickingRules.ActiveReservations.Contains(r.ReservationStatus)))
                 || o.OrderDetails.Any(l => l.InventoryReservations.Any(r => PickingRules.ActiveReservations.Contains(r.ReservationStatus)
                     && r.PickedQuantity < r.ReservedQuantity))
                 || o.OrderDetails.Any(l => l.ApprovedWeightKg > (l.InventoryReservations.Where(r => PickingRules.AllocatedReservations.Contains(r.ReservationStatus))
-                    .Sum(r => (decimal?)r.ReservedQuantity) ?? 0))));
+                    .Sum(r => (decimal?)r.ReservedQuantity) ?? 0)))));
         if (query.Status is not null) rows = rows.Where(o => o.OrderStatus == query.Status);
         if (query.Search is { } term) rows = rows.Where(o => o.OrderCode.Contains(term) || o.Distributor.DistributorName.Contains(term)
             || o.OrderDetails.Any(l => l.CropType.CropName.Contains(term)
@@ -112,7 +112,8 @@ public sealed class PickingRepository(DbContextOptions<AppDbContext> options, IH
         var lockReason = order.OrderStatus == "CANCELLED" ? "Đơn đã hủy — không tiếp tục soạn." : orderHold ? "Đơn đang tạm dừng xử lý điều chỉnh tồn; chưa được soạn." : OrderReason(order.OrderStatus, lines.Count > 0 && lines.All(l => l.ApprovedWeightKg > 0 && l.ReservedWeightKg == l.ApprovedWeightKg),
             lines.Any(l => l.Reservations.Any(r => r.CanPick)));
         var adjustments = await db.StockAdjustmentResolutions.AsNoTracking().Where(r => r.PurchaseOrderId == id)
-            .OrderByDescending(r => r.StockAdjustmentId).Select(r => new PickingAdjustmentWork(r.StockAdjustmentId, r.StockAdjustment.AdjustmentCode, r.State)).ToListAsync(ct);
+            .OrderByDescending(r => r.StockAdjustmentId).Select(r => new PickingAdjustmentWork(r.StockAdjustmentId, r.StockAdjustment.AdjustmentCode,
+                r.State == "PENDING_CUSTOMER" || r.State == "CUSTOMER_ACCEPTED" || r.State == "CUSTOMER_DECLINED" || r.State == "ORDER_CANCELLED" ? "PENDING_MANAGER" : r.State)).ToListAsync(ct);
         return new(new(order.PurchaseOrderId, order.OrderCode, order.Distributor.DistributorName, order.ApprovedAt,
             order.ExpectedDeliveryDate, order.OrderStatus, lines.Sum(l => l.ApprovedWeightKg), lines.Sum(l => l.ReservedWeightKg),
             lines.Sum(l => l.PickedWeightKg), lockReason is null, lockReason), lines, adjustments);

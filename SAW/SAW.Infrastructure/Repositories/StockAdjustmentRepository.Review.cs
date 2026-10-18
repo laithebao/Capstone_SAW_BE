@@ -90,6 +90,7 @@ public sealed partial class StockAdjustmentRepository
                         NewStatus = "DISPOSED", ChangedByAccountId = actorId, ChangedAt = now, ChangeReason = "Duyệt loại bỏ " + a.AdjustmentCode });
                 }
             }
+            var publishRemainder = false;
             if (resolution != null) {
                 MoveCountScope(reviewScope, resolution, request.Decision == "APPROVE" ? "RESOLVED" : "REJECTED_HELD", true);
                 foreach (var member in reviewScope.Where(x => x.StockAdjustmentId != id)) {
@@ -119,7 +120,7 @@ public sealed partial class StockAdjustmentRepository
                 if (offer != null) { offer.IsPublished = false; offer.UpdatedAt = now;
                     if (request.Decision == "APPROVE" && a.RequestKind == "COUNT") {
                         offer.SourceStockAdjustmentId = id; offer.ApprovedRemainderWeightKg = stock.Sum(i => i.QuantityOnHand); offer.RepricedForAdjustmentId = null;
-                        if (proposalPrice is > 0) { offer.WholeLotPrice = proposalPrice.Value; offer.RepricedForAdjustmentId = id; }
+                        if (proposalPrice is > 0) { offer.WholeLotPrice = proposalPrice.Value; offer.RepricedForAdjustmentId = id; publishRemainder = true; }
                     }
                 }
                 if (resolution.PurchaseOrderId is { } relatedOrder) {
@@ -131,10 +132,29 @@ public sealed partial class StockAdjustmentRepository
                 await NotifyWarehouseAsync(db, id, request.Decision == "APPROVE" ? "Đã duyệt điều chỉnh tồn" : "Phiếu bị từ chối, lô vẫn tạm dừng",
                     request.Decision == "REJECT" ? "Yêu cầu chưa được chấp thuận. Lô vẫn tạm dừng cho đến khi được kiểm tra và xử lý lại."
                         : proposalPrice is > 0 ? "Tồn kho và giá lô đã được cập nhật theo đề xuất. Vui lòng mở chi tiết để xem kết quả xử lý."
-                        : "Quản lý kho đã duyệt yêu cầu và cập nhật tồn kho. Vui lòng mở chi tiết để xem kết quả.", ct);
+                        : "Quản lý kho đã duyệt yêu cầu và cập nhật tồn kho. Vui lòng mở chi tiết để xem kết quả.", ct, managersOnly: true);
+                // Staff receive the outcome of their own request, without customer negotiations or pricing.
+                foreach (var member in reviewScope.DistinctBy(x => x.StockAdjustment.CreatedByAccountId)) {
+                    var recipient = member.StockAdjustment.CreatedByAccountId;
+                    if (await db.Accounts.AnyAsync(x => x.AccountId == recipient && x.AccountStatus == "ACTIVE" && x.Role.IsActive && x.Role.RoleCode == "OPERATION_STAFF", ct))
+                        Notify(db, recipient, id, null, request.Decision == "APPROVE" ? "Đã duyệt điều chỉnh tồn" : "Phiếu bị từ chối, lô vẫn tạm dừng",
+                            request.Decision == "REJECT" ? "Yêu cầu của bạn bị từ chối. Vui lòng kiểm tra ghi chú và xác minh lại lô hàng."
+                                : a.RequestKind == "DISPOSAL" ? "Yêu cầu loại bỏ lô của bạn đã được duyệt. Lô đã được loại bỏ khỏi tồn kho."
+                                : "Yêu cầu kiểm đếm của bạn đã được duyệt. Tồn kho đã cập nhật; hãy kiểm tra trạng thái đơn trước khi tiếp tục soạn hàng.", notificationType: "STOCK_ADJUSTMENT_STAFF_RESULT");
+                }
             }
             a.AdjustmentStatus = request.Decision == "APPROVE" ? "APPROVED" : "REJECTED";
             a.ReviewedByAccountId = actorId; a.ReviewedAt = now; a.ReviewNote = request.ReviewNote;
+            // Evaluate the same publication policy as manual publishing, after resolving every hold.
+            // Only the approved, repriced remainder with no active sale can be published again.
+            await db.SaveChangesAsync(ct);
+            if (publishRemainder) {
+                var sale = await WarehouseInventoryRepository.GetSaleOfferItemAsync(db, batch.ProductBatchId, ct);
+                if (sale.CanPublish && !sale.RequiresRepricing) {
+                    var offer = await db.BatchSaleOffers.SingleAsync(o => o.ProductBatchId == batch.ProductBatchId, ct);
+                    offer.IsPublished = true; offer.UpdatedAt = now;
+                }
+            }
             var effectiveOrder = resolution?.PurchaseOrderId is { } oid ? await OrderSnapshotAsync(db, oid, ct) : null;
             var amendments = resolution?.PurchaseOrderId is { } amendedOrder ? await db.OrderAmendments.AsNoTracking().Where(m => m.OrderDetail.PurchaseOrderId == amendedOrder).Select(m => new { m.OrderAmendmentId, m.StockAdjustmentProposalId, m.PreviousWeightKg, m.EffectiveWeightKg, m.PreviousWholeLotPrice, m.EffectiveWholeLotPrice }).ToListAsync(ct) : null;
             var invalidatedDrafts = await db.GoodsIssueInvalidations.AsNoTracking().Where(i => i.StockAdjustmentId == id).Select(i => i.GoodsIssueId).ToListAsync(ct);

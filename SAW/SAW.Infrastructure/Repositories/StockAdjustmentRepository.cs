@@ -100,7 +100,7 @@ public sealed partial class StockAdjustmentRepository(DbContextOptions<AppDbCont
             db.StockAdjustments.Add(adjustment);
             await db.SaveChangesAsync(ct);
             await NotifyWarehouseAsync(db, adjustment.StockAdjustmentId, "Có phiếu điều chỉnh tồn cần xử lý",
-                request.RequestKind == "DISPOSAL" ? "Nhân viên kho đề nghị loại bỏ lô. Vui lòng kiểm tra bằng chứng và duyệt yêu cầu." : "Nhân viên kho vừa gửi kết quả kiểm đếm. Vui lòng xem xét số lượng thực tế và xử lý yêu cầu.", ct);
+                request.RequestKind == "DISPOSAL" ? "Nhân viên kho đề nghị loại bỏ lô. Vui lòng kiểm tra bằng chứng và duyệt yêu cầu." : "Nhân viên kho vừa gửi kết quả kiểm đếm. Vui lòng xem xét số lượng thực tế và xử lý yêu cầu.", ct, managersOnly: true);
             db.AuditLogs.Add(new AuditLog { AccountId = actorId, EntityName = "STOCK_ADJUSTMENT", EntityId = adjustment.StockAdjustmentId.ToString(),
                 ActionType = "CREATE_STOCK_ADJUSTMENT", CreatedAt = DateTime.UtcNow,
                 NewDataJson = JsonSerializer.Serialize(new { request.RequestId, adjustment.AdjustmentCode, request.RequestKind,

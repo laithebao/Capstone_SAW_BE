@@ -130,7 +130,7 @@ public sealed partial class StockAdjustmentRepository
                 "ACCEPT" => "Khách hàng đã đồng ý giá và khối lượng đề xuất. Vui lòng duyệt kết quả kiểm đếm để tiếp tục đơn.",
                 "DECLINE" => "Khách hàng không tiếp tục mua. Đơn đã hủy; yêu cầu kiểm đếm vẫn chờ quản lý kho xử lý.",
                 _ => "Khách hàng đã rút đồng ý. Đơn tiếp tục tạm dừng để kho xem xét lại đề xuất."
-            }, ct, managersOnly: true);
+            }, ct, managersOnly: true, notificationType: "STOCK_ADJUSTMENT_CUSTOMER_RESPONSE");
             await db.SaveChangesAsync(ct); return true;
         }, ct);
     }

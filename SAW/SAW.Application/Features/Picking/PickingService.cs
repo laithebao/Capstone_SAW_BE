@@ -18,7 +18,7 @@ public static class PickingRules
     {
         var search = Text(query.Search); var status = Text(query.Status)?.ToUpperInvariant();
         if (search?.Length > 100 || query.Page is < 1 or > 100000 || query.PageSize is < 1 or > 100
-            || (status is not null && !WorkStatuses.Contains(status))
+            || (status is not null && status != "CANCELLED" && !WorkStatuses.Contains(status))
             || query.Sort is not ("approved_desc" or "approved_asc" or "delivery_asc" or "delivery_desc")
             || query.FromDate > query.ToDate || query.FromDate == DateOnly.MinValue || query.ToDate == DateOnly.MaxValue)
             throw new BadRequestException("Bộ lọc, phân trang hoặc sắp xếp đơn soạn hàng không hợp lệ.");

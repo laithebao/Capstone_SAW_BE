@@ -75,7 +75,7 @@ public sealed partial class StockAdjustmentSqlTests
         await Reviews(manager).ReviewAsync(a.Summary.Id, decision, manager, default);
         await Reviews(manager).ReviewAsync(a.Summary.Id, decision, manager, default);
         var offer = await db.BatchSaleOffers.SingleAsync(o => o.ProductBatchId == s.Batch);
-        Assert.Equal(8500000, offer.WholeLotPrice); Assert.Equal(a.Summary.Id, offer.RepricedForAdjustmentId); Assert.False(offer.IsPublished);
+        Assert.Equal(8500000, offer.WholeLotPrice); Assert.Equal(a.Summary.Id, offer.RepricedForAdjustmentId); Assert.True(offer.IsPublished);
         Assert.Equal(80, await db.Inventories.Where(i => i.ProductBatchId == s.Batch).SumAsync(i => i.QuantityOnHand));
         Assert.Equal("CANCELLED", await db.PurchaseOrders.Where(o => o.PurchaseOrderId == sale.Order).Select(o => o.OrderStatus).SingleAsync());
         Assert.Equal(10000000, await db.PurchaseOrders.Where(o => o.PurchaseOrderId == sale.Order).Select(o => o.TotalAmount).SingleAsync());

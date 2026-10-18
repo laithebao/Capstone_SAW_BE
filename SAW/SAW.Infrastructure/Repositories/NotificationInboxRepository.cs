@@ -18,24 +18,35 @@ public sealed class NotificationInboxRepository(DbContextOptions<AppDbContext> o
         var items = await rows.OrderByDescending(n => n.CreatedAt).ThenByDescending(n => n.NotificationId).Skip((page - 1) * pageSize).Take(pageSize)
             .Select(n => new InboxItem(n.NotificationId, n.Title, n.Message, n.RelatedEntityType, n.RelatedEntityId, n.IsRead, n.CreatedAt)).ToListAsync(ct);
         // Render older workflow notices as readable content without rewriting their stored evidence.
-        return new(items.Select(Readable).ToList(), unread, total, page, pageSize);
+        var role = await db.Accounts.Where(a => a.AccountId == actorId).Select(a => a.Role.RoleCode).SingleOrDefaultAsync(ct);
+        return new(items.Select(item => Readable(item, role)).ToList(), unread, total, page, pageSize);
     }
     private static async Task<IQueryable<Notification>> VisibleAsync(AppDbContext db, int actorId, CancellationToken ct)
     {
         var role = await db.Accounts.Where(a => a.AccountId == actorId && a.AccountStatus == "ACTIVE" && a.Role.IsActive)
             .Select(a => a.Role.RoleCode).SingleOrDefaultAsync(ct);
         var rows = db.Notifications.AsNoTracking().Where(n => n.AccountId == actorId);
+        if (role == null) return rows.Where(n => false);
         if (role != "WAREHOUSE_MANAGER") rows = rows.Where(n => n.NotificationType != "STOCK_ADJUSTMENT_CUSTOMER_RESPONSE"
-            && !(n.NotificationType == "STOCK_ADJUSTMENT" && n.RelatedEntityType == "STOCK_ADJUSTMENT" && n.Title == "Khách đã phản hồi đề xuất"));
+            && n.Title != "Có phiếu điều chỉnh tồn cần xử lý"
+            && !(n.RelatedEntityType == "STOCK_ADJUSTMENT" && n.Title == "Khách đã phản hồi đề xuất"));
+        if (role == "OPERATION_STAFF") rows = rows.Where(n => n.RelatedEntityType != "DISTRIBUTOR_ORDER" && n.NotificationType != "STOCK_ADJUSTMENT_REVIEW");
+        if (role == "DISTRIBUTOR") rows = rows.Where(n => n.RelatedEntityType != "STOCK_ADJUSTMENT" && n.NotificationType != "STOCK_ADJUSTMENT_STAFF_RESULT");
         if (role == "DISTRIBUTOR") rows = rows.Where(n => !((n.NotificationType == "STOCK_ADJUSTMENT_REVIEW"
                 || n.NotificationType == "STOCK_ADJUSTMENT" && (n.Title == "Kết quả kiểm tra lô của đơn" || n.Title == "Đơn đã được điều chỉnh"))
             && n.RelatedEntityType == "DISTRIBUTOR_ORDER" && db.PurchaseOrders.Any(o => o.PurchaseOrderId.ToString() == n.RelatedEntityId
                 && o.Distributor.AccountId == actorId && o.OrderStatus == "CANCELLED")));
         return rows;
     }
-    private static InboxItem Readable(InboxItem item)
+    private static InboxItem Readable(InboxItem item, string? role)
     {
         if (item.EntityType is not ("STOCK_ADJUSTMENT" or "DISTRIBUTOR_ORDER")) return item;
+        if (role == "OPERATION_STAFF" && item.Title == "Đã duyệt điều chỉnh tồn" && item.Message.Contains("giá"))
+            return item with { Message = "Yêu cầu của bạn đã được duyệt và tồn kho đã được cập nhật. Kiểm tra trạng thái đơn trước khi tiếp tục công việc." };
+        if (role == "OPERATION_STAFF" && item.Title == "Phiếu bị từ chối, lô vẫn tạm dừng")
+            return item with { Message = "Yêu cầu của bạn bị từ chối. Vui lòng kiểm tra ghi chú và xác minh lại lô hàng." };
+        if (role == "DISTRIBUTOR" && item.Title == "Đơn hàng đã hủy" && item.Message.StartsWith("Khách từ chối đề xuất:"))
+            return item with { Message = "Bạn đã từ chối đề xuất thay đổi. Đơn hàng của bạn đã được hủy. Thanh toán/hoàn tiền được xử lý ngoài hệ thống." };
         var message = item.Message.Trim();
         var response = System.Text.RegularExpressions.Regex.Match(message, @"^(ACCEPT|DECLINE|WITHDRAW)\s*[·-]\s*\d+$");
         if (response.Success) return item with { Message = response.Groups[1].Value switch {

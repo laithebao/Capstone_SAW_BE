@@ -24,7 +24,10 @@ public sealed partial class StockAdjustmentRepository
         order.OrderStatus = "CANCELLED"; order.CancellationReason = reason.Length > 1000 ? reason[..1000] : reason; order.UpdatedAt = DateTime.UtcNow;
         await db.SaveChangesAsync(ct); // SQL reservation sync owns all kg counters.
         var customer = await db.PurchaseOrders.Where(o => o.PurchaseOrderId == orderId).Select(o => o.Distributor.AccountId).SingleAsync(ct);
-        Notify(db, customer, r.StockAdjustmentId, orderId, "Đơn hàng đã hủy", reason + " Việc đối soát tiền thực hiện ngoài hệ thống.", true);
+        Notify(db, customer, r.StockAdjustmentId, orderId, "Đơn hàng đã hủy",
+            r.StockAdjustment.RequestKind == "DISPOSAL"
+                ? "Đơn hàng của bạn đã được hủy vì lô hàng không đủ điều kiện giao. Thanh toán/hoàn tiền được xử lý ngoài hệ thống."
+                : "Bạn đã từ chối đề xuất thay đổi. Đơn hàng của bạn đã được hủy. Thanh toán/hoàn tiền được xử lý ngoài hệ thống.", true);
     }
     private static async Task InvalidateDraftsAsync(AppDbContext db, StockAdjustmentResolution r, long orderId, int actor, string reason, CancellationToken ct)
     {

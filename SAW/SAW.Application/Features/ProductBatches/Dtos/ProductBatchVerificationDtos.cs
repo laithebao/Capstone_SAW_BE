@@ -1,7 +1,8 @@
 namespace SAW.Application.Features.ProductBatches.Dtos;
 
 public sealed record SubmittedDeclarationOption(
-    long Id, string BatchCode, string ProductName, decimal DeclaredQuantity, string Unit);
+    long Id, string BatchCode, string ProductName, decimal DeclaredQuantity, string Unit,
+    string? CropTypeName = null);
 
 public sealed record SubmittedDeclarationDetail(
     long Id, string BatchCode, int SupplierId, string SupplierName,
@@ -12,7 +13,7 @@ public sealed record SubmittedDeclarationDetail(
     decimal? ExpectedMinTempC, decimal? ExpectedMaxTempC,
     decimal? ExpectedMinHumidityPct, decimal? ExpectedMaxHumidityPct,
     int? ShelfLifeDaysSnapshot, DateOnly? ExpectedDeliveryDate,
-    DateOnly? ExpiryDate, string? Note);
+    DateOnly? ExpiryDate, string? Note, string? CategoryName = null);
 
 public sealed record VerifiedReceivingDetails(
     decimal VerifiedQuantity, decimal VerifiedWeightInKg,

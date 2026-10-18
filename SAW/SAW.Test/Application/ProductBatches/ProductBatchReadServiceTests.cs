@@ -27,8 +27,31 @@ public sealed class ProductBatchReadServiceTests
         var result = await Service().SearchAsync(new("  B-1  ", 2, 3, " pending_qc ", " createdAtAsc ", 2, 10), default);
         Assert.Equal(23, result.TotalCount); Assert.Equal(2, result.Page); Assert.Equal(10, result.PageSize);
         Assert.Equal(10, Assert.Single(result.Items).Quantity); // Declared, not VerifiedQuantity.
+        Assert.Equal(12, Assert.Single(result.Items).VerifiedQuantity);
         _query.Verify(q => q.SearchAsync(It.Is<ProductBatchQuery>(p => p.BatchCode == "B-1" && p.Status == "PENDING_QC"
             && p.SortBy == "createdAtAsc" && p.SupplierId == 2 && p.CropTypeId == 3), It.IsAny<CancellationToken>()), Times.Once);
+        _write.VerifyNoOtherCalls();
+    }
+
+    [Theory]
+    [InlineData("Bao", 4)]
+    [InlineData("Thùng", 4)]
+    [InlineData("Bao", null)]
+    [InlineData("Thùng", null)]
+    public async Task Search_ReturnsVerifiedQuantitySeparatelyWithoutChangingDeclaration(string unit, int? verified)
+    {
+        var batch = Batch();
+        batch.Unit = unit;
+        batch.DeclaredQuantity = 5m;
+        batch.VerifiedQuantity = verified;
+        _query.Setup(q => q.SearchAsync(It.IsAny<ProductBatchQuery>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(((IReadOnlyList<ProductBatch>)new[] { batch }, 1));
+
+        var result = Assert.Single((await Service().SearchAsync(Query(), default)).Items);
+
+        Assert.Equal(5m, result.Quantity);
+        Assert.Equal(verified.HasValue ? (decimal?)verified.Value : null, result.VerifiedQuantity);
+        Assert.Equal(unit, result.Unit);
         _write.VerifyNoOtherCalls();
     }
 

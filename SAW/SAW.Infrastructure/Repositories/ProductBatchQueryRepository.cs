@@ -31,7 +31,7 @@ public sealed class ProductBatchQueryRepository(AppDbContext dbContext) : IProdu
                 b.VerifiedQuantity == null && b.VerifiedWeightInKg == null)
             .OrderByDescending(b => b.CreatedAt).ThenByDescending(b => b.ProductBatchId)
             .Select(b => new SubmittedDeclarationOption(
-                b.ProductBatchId, b.BatchCode, b.ProductName, b.DeclaredQuantity, b.Unit))
+                b.ProductBatchId, b.BatchCode, b.ProductName, b.DeclaredQuantity, b.Unit, b.CropType.CropName))
             .ToListAsync(cancellationToken);
 
     public async Task<(IReadOnlyList<ProductBatch> Items, int TotalCount)> SearchAsync(

@@ -14,9 +14,9 @@ public sealed class StockAdjustmentsController(StockAdjustmentService service) :
 {
     [HttpGet]
     public async Task<IActionResult> Search([FromQuery] StockAdjustmentQuery query, CancellationToken ct) =>
-        Ok(ApiResponse<AdjustmentPage<AdjustmentSummary>>.Success(await service.SearchAsync(query, ct)));
+        Ok(ApiResponse<AdjustmentPage<AdjustmentSummary>>.Success(StockAdjustmentStaffView.Page(await service.SearchAsync(query, ct))));
     [HttpGet("{id:long}")]
-    public async Task<IActionResult> Get(long id, CancellationToken ct) => Ok(ApiResponse<AdjustmentDetail>.Success(await service.GetAsync(id, ct)));
+    public async Task<IActionResult> Get(long id, CancellationToken ct) => Ok(ApiResponse<AdjustmentDetail>.Success(StockAdjustmentStaffView.Detail(await service.GetAsync(id, ct))));
     [HttpGet("batches")]
     public async Task<IActionResult> Batches(string? search, CancellationToken ct, int page = 1, int pageSize = 20) =>
         Ok(ApiResponse<AdjustmentPage<AdjustmentBatch>>.Success(await service.BatchesAsync(search, page, pageSize, ct)));
@@ -27,7 +27,7 @@ public sealed class StockAdjustmentsController(StockAdjustmentService service) :
         Ok(ApiResponse<AdjustmentScope>.Success(await service.ScopeAsync(id, kind, inventoryId, ct)));
     [HttpPost]
     public async Task<IActionResult> Create(CreateStockAdjustmentRequest request, CancellationToken ct) =>
-        Ok(ApiResponse<AdjustmentDetail>.Success(await service.CreateAsync(request, Actor(), ct), "Đã gửi yêu cầu chờ Warehouse Manager duyệt; tồn kho chưa thay đổi."));
+        Ok(ApiResponse<AdjustmentDetail>.Success(StockAdjustmentStaffView.Detail(await service.CreateAsync(request, Actor(), ct)), "Đã gửi yêu cầu chờ Warehouse Manager duyệt; tồn kho chưa thay đổi."));
     [HttpPost("images")]
     [RequestSizeLimit(11 * 1024 * 1024)]
     [RequestFormLimits(MultipartBodyLengthLimit = 11 * 1024 * 1024)]

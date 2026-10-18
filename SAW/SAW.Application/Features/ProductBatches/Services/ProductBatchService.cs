@@ -101,7 +101,7 @@ public sealed class ProductBatchService(
             batch.ExpectedMinTempC, batch.ExpectedMaxTempC,
             batch.ExpectedMinHumidityPct, batch.ExpectedMaxHumidityPct,
             batch.ShelfLifeDaysSnapshot, batch.ExpectedDeliveryDate,
-            batch.ExpiryDate, batch.Note);
+            batch.ExpiryDate, batch.Note, batch.CropType.CategoryName);
     }
 
     public async Task<VerifyProductBatchResponse> VerifyAsync(
@@ -230,5 +230,5 @@ public sealed class ProductBatchService(
         batch.SupplierId, batch.Supplier.SupplierName,
         batch.CropTypeId, batch.CropType.CropName, batch.CropType.CategoryName,
         batch.DeclaredQuantity, batch.Unit, batch.CreatedAt, batch.UpdatedAt,
-        batch.BatchStatus);
+        batch.BatchStatus, batch.VerifiedQuantity);
 }

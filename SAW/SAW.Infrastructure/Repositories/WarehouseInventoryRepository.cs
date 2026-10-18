@@ -34,7 +34,7 @@ public sealed class WarehouseInventoryRepository(AppDbContext db, IOrderReservat
             .ToListAsync(ct);
         var items = new List<WarehouseSaleOfferItem>(batchIds.Count);
         foreach (var batchId in batchIds)
-            items.Add(await GetSaleOfferItemAsync(batchId, ct));
+            items.Add(await GetSaleOfferItemAsync(db, batchId, ct));
         return new(items, total, page, pageSize);
     }
 
@@ -47,7 +47,9 @@ public sealed class WarehouseInventoryRepository(AppDbContext db, IOrderReservat
         if (!firstAttempt) db.ChangeTracker.Clear(); firstAttempt = false;
         await using var tx = await db.Database.BeginTransactionAsync(IsolationLevel.Serializable, ct);
         await db.Database.ExecuteSqlRawAsync("SELECT COUNT_BIG(*) FROM INVENTORY WITH (TABLOCKX,HOLDLOCK)", ct);
-        var current = await GetSaleOfferItemAsync(batchId, ct);
+        var current = await GetSaleOfferItemAsync(db, batchId, ct);
+        if (current.BatchStatus == "DISPOSED")
+            throw new ConflictException("Lô hàng đã loại bỏ, không thể thay đổi giá hoặc công bố bán.");
         if ((current.RequiresRepricing || request.ExpectedSnapshot != null) && request.ExpectedSnapshot != current.PublicationSnapshot)
             throw new ConflictException("Lô hoặc giá đã thay đổi. Tải lại và xác nhận giá cho phần tồn đã được kiểm đếm.");
         if (current.IsPendingApproval)
@@ -72,11 +74,11 @@ public sealed class WarehouseInventoryRepository(AppDbContext db, IOrderReservat
         offer.UpdatedAt = DateTime.UtcNow;
         await db.SaveChangesAsync(ct);
         await tx.CommitAsync(ct);
-        return await GetSaleOfferItemAsync(batchId, ct);
+        return await GetSaleOfferItemAsync(db, batchId, ct);
         });
     }
 
-    private async Task<WarehouseSaleOfferItem> GetSaleOfferItemAsync(long batchId, CancellationToken ct)
+    internal static async Task<WarehouseSaleOfferItem> GetSaleOfferItemAsync(AppDbContext db, long batchId, CancellationToken ct)
     {
         var batch = await db.ProductBatches.AsNoTracking()
             .Include(x => x.CropType)
@@ -132,6 +134,7 @@ public sealed class WarehouseInventoryRepository(AppDbContext db, IOrderReservat
         DateTime? startedAt, DateTime? completedAt, bool isPendingApproval, bool isSold,
         bool hasCommittedIssue, decimal? approvedRemainder = null)
     {
+        if (batch.BatchStatus == "DISPOSED") return "Lô hàng đã loại bỏ.";
         if (batch.BatchStatus != "IN_STOCK") return "Lô hàng chưa ở trạng thái đã nhập kho.";
         if (!batch.CropType.IsActive) return "Loại nông sản của lô đang ngừng hoạt động.";
         var today = DateOnly.FromDateTime(DateTime.UtcNow.AddHours(7));
