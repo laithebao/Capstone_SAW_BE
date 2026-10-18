@@ -15,7 +15,8 @@ public sealed record PickingReservation(long Id, long InventoryId, long ProductB
     IReadOnlyList<PickingHistoryItem> History);
 public sealed record PickingOrderLine(long Id, string CropName, long? RequestedProductBatchId, string? RequestedBatchCode, string? ProductName,
     decimal ApprovedWeightKg, decimal ReservedWeightKg, decimal PickedWeightKg, IReadOnlyList<PickingReservation> Reservations);
-public sealed record PickingOrderDetail(PickingOrderSummary Order, IReadOnlyList<PickingOrderLine> Lines);
+public sealed record PickingOrderDetail(PickingOrderSummary Order, IReadOnlyList<PickingOrderLine> Lines, IReadOnlyList<PickingAdjustmentWork>? Adjustments = null);
+public sealed record PickingAdjustmentWork(long Id, string Code, string State);
 [JsonUnmappedMemberHandling(JsonUnmappedMemberHandling.Disallow)]
 public sealed record ConfirmPickingRequest(Guid RequestId, long ReservationId, long OrderDetailId,
     long InventoryId, long ProductBatchId, decimal QuantityKg, decimal ExpectedPickedQuantityKg, string? Note);

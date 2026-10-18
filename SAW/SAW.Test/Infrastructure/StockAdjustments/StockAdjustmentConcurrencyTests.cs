@@ -15,6 +15,11 @@ public sealed partial class StockAdjustmentSqlTests
     private sealed class ObserveBatchLock:DbCommandInterceptor
     {
         public TaskCompletionSource<int> Session {get;}=new(TaskCreationOptions.RunContinuationsAsynchronously);
+        public override ValueTask<InterceptionResult<int>> NonQueryExecutingAsync(DbCommand command,CommandEventData data,InterceptionResult<int> result,CancellationToken ct=default)
+        {
+            if(command.CommandText.Contains("INVENTORY WITH (TABLOCKX,HOLDLOCK)")) Session.TrySetResult(((SqlConnection)command.Connection!).ServerProcessId);
+            return base.NonQueryExecutingAsync(command,data,result,ct);
+        }
         public override ValueTask<InterceptionResult<DbDataReader>> ReaderExecutingAsync(DbCommand command,CommandEventData data,InterceptionResult<DbDataReader> result,CancellationToken ct=default)
         {
             if(command.CommandText.Contains("FROM PRODUCT_BATCH WITH (UPDLOCK,HOLDLOCK)")) Session.TrySetResult(((SqlConnection)command.Connection!).ServerProcessId);
@@ -26,7 +31,8 @@ public sealed partial class StockAdjustmentSqlTests
     {
         var s=await Scenario();var request=await Request(s.Batch,"DISPOSAL");
         await using var writer=F.Context(retry:false);await using var tx=await writer.Database.BeginTransactionAsync();
-        var session=((SqlConnection)writer.Database.GetDbConnection()).ServerProcessId;await WarehouseBatchLock(writer,s.Batch);
+        var session=((SqlConnection)writer.Database.GetDbConnection()).ServerProcessId;
+        await writer.Database.ExecuteSqlRawAsync("SELECT COUNT_BIG(*) FROM INVENTORY WITH (TABLOCKX,HOLDLOCK)"); await WarehouseBatchLock(writer,s.Batch);
         var observe=new ObserveBatchLock();var waiting=Service(observe).CreateAsync(request,F.ActorId,default);
         try
         {

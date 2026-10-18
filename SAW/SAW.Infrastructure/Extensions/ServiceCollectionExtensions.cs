@@ -65,7 +65,9 @@ public static class ServiceCollectionExtensions
         services.AddScoped<IWarehouseInventoryRepository, WarehouseInventoryRepository>();
         services.AddScoped<SAW.Application.Features.Picking.IPickingRepository, PickingRepository>();
         services.AddScoped<SAW.Application.Features.GoodsIssues.IGoodsIssueRepository, GoodsIssueRepository>();
+        services.AddScoped<SAW.Application.Features.Notifications.INotificationInboxRepository, NotificationInboxRepository>();
         services.AddScoped<SAW.Application.Features.StockAdjustments.IStockAdjustmentRepository, StockAdjustmentRepository>();
+        services.AddScoped<SAW.Application.Features.StockAdjustments.IStockAdjustmentResolutionRepository>(sp => (StockAdjustmentRepository)sp.GetRequiredService<SAW.Application.Features.StockAdjustments.IStockAdjustmentRepository>());
         services.AddScoped<SAW.Application.Features.Picking.IOrderReservationAllocator, OrderReservationAllocator>();
         services.AddScoped<IProductBatchVerificationRepository, ProductBatchVerificationRepository>();
         services.AddScoped<IQcInspectionRepository, QcInspectionRepository>();

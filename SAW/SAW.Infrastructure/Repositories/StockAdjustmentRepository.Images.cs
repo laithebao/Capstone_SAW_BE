@@ -34,11 +34,12 @@ public sealed partial class StockAdjustmentRepository
     {
         var png = ValidateImage(content);
         await using var db = Context();
+        await EnsureAuthorityAsync(db, actorId, "OPERATION_STAFF", ct);
         // Recover abandoned uploads (closed browser/lost upload response). Recheck each ticket
         // under its SQL lock; never delete an asset that has since been linked to a request.
         var cutoff = DateTime.UtcNow.AddDays(-1);
         var abandoned = await db.StockAdjustmentImages.AsNoTracking()
-            .Where(i => i.UploadedByAccountId == actorId && i.StockAdjustmentId == null && i.UploadedAt < cutoff)
+            .Where(i => i.UploadedByAccountId == actorId && i.StockAdjustmentId == null && (i.DeletePending || i.UploadedAt < cutoff))
             .OrderBy(i => i.UploadedAt).Take(20).Select(i => i.StockAdjustmentImageId).ToListAsync(ct);
         foreach (var abandonedId in abandoned)
         {
@@ -62,14 +63,21 @@ public sealed partial class StockAdjustmentRepository
     }
     public async Task RemoveUploadAsync(Guid imageId, int actorId, CancellationToken ct)
     {
-        await WarehouseOperationTransaction.ExecuteAsync(options, accessor, actorId, async db => {
+        var asset = await WarehouseOperationTransaction.ExecuteAsync(options, accessor, actorId, async db => {
+            await EnsureAuthorityAsync(db, actorId, "OPERATION_STAFF", ct);
             var image = await db.StockAdjustmentImages.FromSqlInterpolated($"SELECT * FROM STOCK_ADJUSTMENT_IMAGE WITH (UPDLOCK,HOLDLOCK) WHERE StockAdjustmentImageId={imageId}").SingleOrDefaultAsync(ct)
                 ?? throw new NotFoundException("Không tìm thấy ảnh.");
-            if (image.UploadedByAccountId != actorId) throw new ForbiddenException("Không thể xóa ảnh của tài khoản khác.");
-            if (image.StockAdjustmentId != null) throw new ConflictException("Ảnh đã gắn hồ sơ; không thể xóa.");
-            // Retain the locked ticket until storage deletion succeeds. Linking cannot race deletion.
-            await storage.DeleteAsync(image.AssetId, ct);
-            db.StockAdjustmentImages.Remove(image); await db.SaveChangesAsync(ct); return true;
+            if (image.UploadedByAccountId != actorId) throw new ForbiddenException("Ảnh không thuộc tài khoản hiện tại.");
+            if (image.StockAdjustmentId != null) throw new ConflictException("Không được xóa ảnh đang được hồ sơ tham chiếu.");
+            image.DeletePending = true; await db.SaveChangesAsync(ct); return image.AssetId;
+        }, ct);
+        // Durable deletion ticket prevents linking while HTTP storage cleanup runs outside SQL.
+        // Failed HTTP cleanup leaves the ticket available for retry / abandoned-upload cleanup.
+        await storage.DeleteAsync(asset, ct);
+        await WarehouseOperationTransaction.ExecuteAsync(options, accessor, actorId, async db => {
+            var image = await db.StockAdjustmentImages.SingleOrDefaultAsync(i => i.StockAdjustmentImageId == imageId, ct);
+            if (image != null && image.DeletePending && image.StockAdjustmentId == null) { db.StockAdjustmentImages.Remove(image); await db.SaveChangesAsync(ct); }
+            return true;
         }, ct);
     }
 }

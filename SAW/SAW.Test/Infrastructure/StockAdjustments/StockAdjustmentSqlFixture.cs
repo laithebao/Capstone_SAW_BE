@@ -34,6 +34,9 @@ public sealed class StockAdjustmentSqlFixture : IAsyncLifetime
                 while (await reader.ReadAsync()) commands.Add($"IF NOT EXISTS(SELECT 1 FROM sys.check_constraints WHERE name='{reader.GetString(1)}') ALTER TABLE [{reader.GetString(0)}] ADD CONSTRAINT [{reader.GetString(1)}] CHECK {reader.GetString(2)}");
             }
             await using var db = Database.Context();
+            var staffRole = await db.Roles.SingleOrDefaultAsync(r => r.RoleCode == "OPERATION_STAFF");
+            if (staffRole == null) { staffRole = new SAW.Domain.Entities.Role { RoleCode = "OPERATION_STAFF", RoleName = "Fixture operation staff", IsActive = true }; db.Roles.Add(staffRole); await db.SaveChangesAsync(); }
+            var staff = await db.Accounts.SingleAsync(a => a.AccountId == Database.ActorId); staff.RoleId = staffRole.RoleId; await db.SaveChangesAsync();
             foreach (var sql in commands) await db.Database.ExecuteSqlRawAsync(sql);
             Assert.Contains("20261016163023_AddStockAdjustmentRequestScope", await db.Database.GetAppliedMigrationsAsync());
         }

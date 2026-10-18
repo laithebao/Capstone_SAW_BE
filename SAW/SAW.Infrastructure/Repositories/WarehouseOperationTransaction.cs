@@ -22,6 +22,9 @@ internal static class WarehouseOperationTransaction
             {
                 await db.Database.ExecuteSqlInterpolatedAsync($"EXEC sys.sp_set_session_context @key=N'AccountID', @value={actorId}", ct);
                 await using var transaction = await db.Database.BeginTransactionAsync(IsolationLevel.Serializable, ct);
+                // Shared short SQL write gate, also used by capacity and order approval writers.
+                // Durable workflow holds are separate; no transaction stays open awaiting a person.
+                await db.Database.ExecuteSqlRawAsync("SELECT COUNT_BIG(*) FROM INVENTORY WITH (TABLOCKX,HOLDLOCK)", ct);
                 var result = await action(db);
                 await transaction.CommitAsync(ct);
                 return result;

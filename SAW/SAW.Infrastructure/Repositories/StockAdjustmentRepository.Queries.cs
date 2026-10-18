@@ -11,11 +11,11 @@ public sealed partial class StockAdjustmentRepository
     private static IQueryable<StockAdjustment> Details(AppDbContext db) => db.StockAdjustments.AsNoTracking()
         .Include(a => a.Inventory).ThenInclude(i => i.ProductBatch).Include(a => a.Inventory).ThenInclude(i => i.WarehouseLocation)
         .Include(a => a.CreatedByAccount).Include(a => a.ReviewedByAccount).Include(a => a.Lines).ThenInclude(l => l.Inventory)
-        .Include(a => a.Images).AsSplitQuery();
+        .Include(a => a.Images).Include(a => a.Resolution).ThenInclude(r => r!.PurchaseOrder).AsSplitQuery();
     private static AdjustmentSummary Summary(StockAdjustment a) => new(a.StockAdjustmentId, a.AdjustmentCode, a.RequestKind,
         a.AdjustmentType, a.Inventory.ProductBatchId, a.Inventory.ProductBatch.BatchCode, a.Inventory.ProductBatch.ProductName,
         a.Lines.Count == 0 ? a.Inventory.WarehouseLocation.LocationCode : string.Join(", ", a.Lines.OrderBy(l => l.InventoryId).Select(l => l.LocationCode)),
-        a.SystemQuantity, a.ActualQuantity, a.DifferenceQuantity, a.AdjustmentStatus, a.CreatedByAccount.FullName, a.CreatedAt);
+        a.SystemQuantity, a.ActualQuantity, a.DifferenceQuantity, a.AdjustmentStatus, a.CreatedByAccount.FullName, a.CreatedAt, a.Resolution?.State, a.Resolution?.PurchaseOrder?.OrderCode);
     public async Task<AdjustmentDetail> GetAsync(long id, CancellationToken ct)
     {
         await using var db = Context();
@@ -31,7 +31,7 @@ public sealed partial class StockAdjustmentRepository
             : a.Lines.OrderBy(l => l.InventoryId).Select(l => new AdjustmentLine(l.InventoryId, l.Inventory.WarehouseLocationId,
                 l.LocationCode, l.SystemQuantity, l.ActualQuantity, l.ActualQuantity - l.SystemQuantity, l.ReservedQuantity, l.InventoryUpdatedAt)).ToList();
         return new(Summary(a), a.Reason, a.ReviewedByAccount?.FullName, a.ReviewedAt, a.ReviewNote, lines,
-            a.Images.OrderBy(i => i.UploadedAt).ThenBy(i => i.StockAdjustmentImageId).Select(i => new AdjustmentImage(i.StockAdjustmentImageId, i.ImageUrl)).ToList());
+            a.Images.OrderBy(i => i.UploadedAt).ThenBy(i => i.StockAdjustmentImageId).Select(i => new AdjustmentImage(i.StockAdjustmentImageId, i.ImageUrl)).ToList(), await ResolutionDetailAsync(db, id, ct));
     }
     public async Task<AdjustmentPage<AdjustmentSummary>> SearchAsync(StockAdjustmentQuery q, CancellationToken ct)
     {

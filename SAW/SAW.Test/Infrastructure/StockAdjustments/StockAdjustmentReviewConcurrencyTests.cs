@@ -41,46 +41,60 @@ public sealed partial class StockAdjustmentSqlTests
     private sealed class ObserveWriterSession:DbCommandInterceptor
     {
         public TaskCompletionSource<int> Session {get;}=new(TaskCreationOptions.RunContinuationsAsynchronously);
+        public override ValueTask<InterceptionResult<int>> NonQueryExecutingAsync(DbCommand command,CommandEventData data,InterceptionResult<int> result,CancellationToken ct=default)
+        {if(command.CommandText.Contains("TABLOCKX"))Session.TrySetResult(((SqlConnection)command.Connection!).ServerProcessId);return base.NonQueryExecutingAsync(command,data,result,ct);}
         public override ValueTask<InterceptionResult<DbDataReader>> ReaderExecutingAsync(DbCommand command,CommandEventData data,InterceptionResult<DbDataReader> result,CancellationToken ct=default)
-        {if(command.CommandText.Contains("PURCHASE_ORDER WITH"))Session.TrySetResult(((SqlConnection)command.Connection!).ServerProcessId);return base.ReaderExecutingAsync(command,data,result,ct);}
+        {if(command.CommandText.Contains("PRODUCT_BATCH WITH") || command.CommandText.Contains("PURCHASE_ORDER WITH"))Session.TrySetResult(((SqlConnection)command.Connection!).ServerProcessId);return base.ReaderExecutingAsync(command,data,result,ct);}
     }
     [ReceivingSqlFact]
-    public async Task Picking_and_count_review_serialize_in_both_commit_orders_on_SQL_Server()
+    public async Task Picking_and_loss_report_creation_serialize_in_both_commit_orders_on_SQL_Server()
     {
-        foreach(var reviewFirst in new[]{true,false})
+        foreach(var reportFirst in new[]{true,false})
         {
             var s=await Scenario();var order=await Order(s.Batch);Assert.True(await new OrderReservationAllocator(Options(),Accessor).TryReserveAsync(order,F.ActorId,default));
             var picking=new PickingService(new PickingRepository(Options(),Accessor));var d=await picking.GetAsync(order,default);var l=d.Lines.Single();var r=l.Reservations.Single();
-            var a=await Service().CreateAsync(await Request(s.Batch,actual:105),F.ActorId,default);var actor=await Manager();var view=await Reviews(actor).GetAsync(a.Summary.Id,default);
-            var pause=new PauseReviewWriter(reviewFirst?"REVIEW_STOCK_ADJUSTMENT":"CONFIRM_PICKING");var pick=new ConfirmPickingRequest(Guid.NewGuid(),r.Id,l.Id,r.InventoryId,s.Batch,100,0,null);
-            Task first=reviewFirst?Reviews(actor,pause).ReviewAsync(a.Summary.Id,Decision(view),actor,default):new PickingService(new PickingRepository(Options(pause),Accessor)).ConfirmAsync(order,pick,F.ActorId,default);
-            var blocker=await WaitForPaused(first,pause);var observe=reviewFirst?null:new ObserveWarehouseLock();var batchObserve=reviewFirst?new ObserveWriterSession():null;
-            Task second=reviewFirst?new PickingService(new PickingRepository(Options(batchObserve),Accessor)).ConfirmAsync(order,pick,F.ActorId,default):Reviews(actor,observe).ReviewAsync(a.Summary.Id,Decision(view),actor,default);
-            try{var waiting=reviewFirst?await batchObserve!.Session.Task.WaitAsync(TimeSpan.FromSeconds(10)):await observe!.Session.Task.WaitAsync(TimeSpan.FromSeconds(10));await F.AssertBlockedAsync(waiting,blocker);}
+
+            var request=await Request(s.Batch,actual:95);
+            var pause=new PauseReviewWriter(reportFirst?"CREATE_STOCK_ADJUSTMENT":"CONFIRM_PICKING");
+            Task Fulfill(DbCommandInterceptor? interceptor)=>new PickingService(new PickingRepository(Options(interceptor),Accessor)).ConfirmAsync(order,new(Guid.NewGuid(),r.Id,l.Id,r.InventoryId,s.Batch,100,0,null),F.ActorId,default);
+            Task first=reportFirst?Service(pause).CreateAsync(request,F.ActorId,default):Fulfill(pause);
+            var blocker=await WaitForPaused(first,pause);var observer=new ObserveWriterSession();
+            Task second=reportFirst?Fulfill(observer):Service(observer).CreateAsync(request,F.ActorId,default);
+            try{await F.AssertBlockedAsync(await observer.Session.Task.WaitAsync(TimeSpan.FromSeconds(10)),blocker);}
             finally{pause.Resume.TrySetResult(true);}
-            await first;if(reviewFirst)await second;else await Assert.ThrowsAsync<ConflictException>(()=>second);
-            await using var db=F.Context();Assert.Equal(reviewFirst?105:100,await db.Inventories.Where(i=>i.ProductBatchId==s.Batch).Select(i=>i.QuantityOnHand).SingleAsync());
-            Assert.Equal(100,await db.InventoryReservations.Where(x=>x.InventoryId==r.InventoryId).Select(x=>x.PickedQuantity).SingleAsync());Assert.Equal(reviewFirst?"APPROVED":"PENDING",(await ReadEntity(a.Summary.Id)).AdjustmentStatus);
+            await first;await Assert.ThrowsAsync<ConflictException>(()=>second);
+            await using var db=F.Context();
+            Assert.Equal(100,await db.Inventories.Where(i=>i.ProductBatchId==s.Batch).SumAsync(i=>i.QuantityOnHand));
+            Assert.Equal(reportFirst?1:0,await db.StockAdjustments.CountAsync(a=>a.Inventory.ProductBatchId==s.Batch));
+            Assert.Equal(reportFirst?0:100,await db.InventoryReservations.Where(x=>x.InventoryId==r.InventoryId).Select(x=>x.PickedQuantity).SingleAsync());
+
         }
     }
+
     [ReceivingSqlFact]
-    public async Task Goods_issue_and_count_review_serialize_in_both_commit_orders_on_SQL_Server()
+    public async Task Post_picking_loss_report_is_rejected_before_or_during_issue_confirmation_without_resetting_history()
     {
-        foreach(var reviewFirst in new[]{true,false})
+        foreach(var reportFirst in new[]{true,false})
         {
-            var s=await Scenario();var order=await Order(s.Batch);Assert.True(await new OrderReservationAllocator(Options(),Accessor).TryReserveAsync(order,F.ActorId,default));
+            var scenario=await Scenario();var order=await Order(scenario.Batch);Assert.True(await new OrderReservationAllocator(Options(),Accessor).TryReserveAsync(order,F.ActorId,default));
             var picking=new PickingService(new PickingRepository(Options(),Accessor));var d=await picking.GetAsync(order,default);var l=d.Lines.Single();var r=l.Reservations.Single();
-            await picking.ConfirmAsync(order,new(Guid.NewGuid(),r.Id,l.Id,r.InventoryId,s.Batch,100,0,null),F.ActorId,default);
-            var issues=new GoodsIssueService(new GoodsIssueRepository(Options(),Accessor));var draft=await issues.CreateAsync(new(Guid.NewGuid(),order,DateOnly.FromDateTime(DateTime.UtcNow.AddHours(7)),null,null,[new(r.Id,100)]),F.ActorId,default);
-            var a=await Service().CreateAsync(await Request(s.Batch,actual:105),F.ActorId,default);var actor=await Manager();var view=await Reviews(actor).GetAsync(a.Summary.Id,default);
-            var pause=new PauseReviewWriter(reviewFirst?"REVIEW_STOCK_ADJUSTMENT":"CONFIRM_GOODS_ISSUE");var confirm=new ConfirmGoodsIssueRequest(Guid.NewGuid(),draft.Snapshot);
-            Task first=reviewFirst?Reviews(actor,pause).ReviewAsync(a.Summary.Id,Decision(view),actor,default):new GoodsIssueService(new GoodsIssueRepository(Options(pause),Accessor)).ConfirmAsync(draft.Summary.Id,confirm,F.ActorId,default);
-            var blocker=await WaitForPaused(first,pause);var observe=reviewFirst?null:new ObserveWarehouseLock();var batchObserve=reviewFirst?new ObserveWriterSession():null;
-            Task second=reviewFirst?new GoodsIssueService(new GoodsIssueRepository(Options(batchObserve),Accessor)).ConfirmAsync(draft.Summary.Id,confirm,F.ActorId,default):Reviews(actor,observe).ReviewAsync(a.Summary.Id,Decision(view),actor,default);
-            try{var waiting=reviewFirst?await batchObserve!.Session.Task.WaitAsync(TimeSpan.FromSeconds(10)):await observe!.Session.Task.WaitAsync(TimeSpan.FromSeconds(10));await F.AssertBlockedAsync(waiting,blocker);}
-            finally{pause.Resume.TrySetResult(true);}
-            await first;if(reviewFirst)await second;else await Assert.ThrowsAsync<ConflictException>(()=>second);
-            await using var db=F.Context();Assert.Equal(reviewFirst?5:0,await db.Inventories.Where(i=>i.ProductBatchId==s.Batch).Select(i=>i.QuantityOnHand).SingleAsync());Assert.Equal("COMMITTED",await db.GoodsIssues.Where(x=>x.GoodsIssueId==draft.Summary.Id).Select(x=>x.IssueStatus).SingleAsync());
+            await picking.ConfirmAsync(order,new(Guid.NewGuid(),r.Id,l.Id,r.InventoryId,scenario.Batch,100,0,null),F.ActorId,default);
+            var issues=new GoodsIssueService(new GoodsIssueRepository(Options(),Accessor));
+            var draft=await issues.CreateAsync(new(Guid.NewGuid(),order,DateOnly.FromDateTime(DateTime.UtcNow.AddHours(7)),null,null,[new(r.Id,100)]),F.ActorId,default);
+            var request=await Request(scenario.Batch,actual:95);
+            if(reportFirst) {
+                await Assert.ThrowsAsync<ConflictException>(()=>Service().CreateAsync(request,F.ActorId,default));
+                await issues.ConfirmAsync(draft.Summary.Id,new(Guid.NewGuid(),draft.Snapshot),F.ActorId,default);
+            } else {
+                var pause=new PauseReviewWriter("CONFIRM_GOODS_ISSUE");
+                var first=new GoodsIssueService(new GoodsIssueRepository(Options(pause),Accessor)).ConfirmAsync(draft.Summary.Id,new(Guid.NewGuid(),draft.Snapshot),F.ActorId,default);
+                var blocker=await WaitForPaused(first,pause);var observer=new ObserveWriterSession();var second=Service(observer).CreateAsync(request,F.ActorId,default);
+                try{await F.AssertBlockedAsync(await observer.Session.Task.WaitAsync(TimeSpan.FromSeconds(10)),blocker);}finally{pause.Resume.TrySetResult(true);}
+                await first;await Assert.ThrowsAsync<ConflictException>(()=>second);
+            }
+            await using var check=F.Context();Assert.False(await check.StockAdjustments.AnyAsync(a=>a.Inventory.ProductBatchId==scenario.Batch));
+            Assert.Equal(100,await check.PickingHistories.Where(h=>h.InventoryReservation.OrderDetail.PurchaseOrderId==order).SumAsync(h=>h.PickedQuantity));
+            Assert.Equal(0,await check.Inventories.Where(i=>i.ProductBatchId==scenario.Batch).SumAsync(i=>i.QuantityOnHand));
         }
     }
     [ReceivingSqlFact]

@@ -287,8 +287,18 @@ namespace SAW.Infrastructure.Migrations
                         .HasColumnType("bigint")
                         .HasColumnName("ProductBatchID");
 
+                    b.Property<decimal?>("ApprovedRemainderWeightKg")
+                        .HasPrecision(18, 3)
+                        .HasColumnType("decimal(18,3)");
+
                     b.Property<bool>("IsPublished")
                         .HasColumnType("bit");
+
+                    b.Property<long?>("RepricedForAdjustmentId")
+                        .HasColumnType("bigint");
+
+                    b.Property<long?>("SourceStockAdjustmentId")
+                        .HasColumnType("bigint");
 
                     b.Property<DateTime>("UpdatedAt")
                         .ValueGeneratedOnAdd()
@@ -300,6 +310,10 @@ namespace SAW.Infrastructure.Migrations
                         .HasColumnType("decimal(18,2)");
 
                     b.HasKey("ProductBatchId");
+
+                    b.HasIndex("RepricedForAdjustmentId");
+
+                    b.HasIndex("SourceStockAdjustmentId");
 
                     b.ToTable("BATCH_SALE_OFFER", null, t =>
                         {
@@ -842,6 +856,36 @@ namespace SAW.Infrastructure.Migrations
                     b.HasIndex("OrderDetailId");
 
                     b.ToTable("GOODS_ISSUE_DETAIL", (string)null);
+
+                    b.HasAnnotation("SqlServer:UseSqlOutputClause", false);
+                });
+
+            modelBuilder.Entity("SAW.Domain.Entities.GoodsIssueInvalidation", b =>
+                {
+                    b.Property<long>("GoodsIssueId")
+                        .HasColumnType("bigint");
+
+                    b.Property<int>("AccountId")
+                        .HasColumnType("int");
+
+                    b.Property<DateTime>("InvalidatedAt")
+                        .HasColumnType("datetime2");
+
+                    b.Property<string>("Reason")
+                        .IsRequired()
+                        .HasMaxLength(1000)
+                        .HasColumnType("nvarchar(1000)");
+
+                    b.Property<long>("StockAdjustmentId")
+                        .HasColumnType("bigint");
+
+                    b.HasKey("GoodsIssueId");
+
+                    b.HasIndex("AccountId");
+
+                    b.HasIndex("StockAdjustmentId");
+
+                    b.ToTable("GOODS_ISSUE_INVALIDATION", (string)null);
 
                     b.HasAnnotation("SqlServer:UseSqlOutputClause", false);
                 });
@@ -1458,6 +1502,64 @@ namespace SAW.Infrastructure.Migrations
                     b.HasIndex("AccountId");
 
                     b.ToTable("NOTIFICATION", (string)null);
+                });
+
+            modelBuilder.Entity("SAW.Domain.Entities.OrderAmendment", b =>
+                {
+                    b.Property<long>("OrderAmendmentId")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("bigint");
+
+                    SqlServerPropertyBuilderExtensions.UseIdentityColumn(b.Property<long>("OrderAmendmentId"));
+
+                    b.Property<DateTime>("ApprovedAt")
+                        .HasColumnType("datetime2");
+
+                    b.Property<int>("ApprovedByAccountId")
+                        .HasColumnType("int");
+
+                    b.Property<decimal>("EffectiveOrderTotal")
+                        .HasPrecision(18, 2)
+                        .HasColumnType("decimal(18,2)");
+
+                    b.Property<decimal>("EffectiveWeightKg")
+                        .HasPrecision(18, 3)
+                        .HasColumnType("decimal(18,3)");
+
+                    b.Property<decimal>("EffectiveWholeLotPrice")
+                        .HasPrecision(18, 2)
+                        .HasColumnType("decimal(18,2)");
+
+                    b.Property<long>("OrderDetailId")
+                        .HasColumnType("bigint");
+
+                    b.Property<decimal>("PreviousOrderTotal")
+                        .HasPrecision(18, 2)
+                        .HasColumnType("decimal(18,2)");
+
+                    b.Property<decimal>("PreviousWeightKg")
+                        .HasPrecision(18, 3)
+                        .HasColumnType("decimal(18,3)");
+
+                    b.Property<decimal>("PreviousWholeLotPrice")
+                        .HasPrecision(18, 2)
+                        .HasColumnType("decimal(18,2)");
+
+                    b.Property<long>("StockAdjustmentProposalId")
+                        .HasColumnType("bigint");
+
+                    b.HasKey("OrderAmendmentId");
+
+                    b.HasIndex("ApprovedByAccountId");
+
+                    b.HasIndex("OrderDetailId");
+
+                    b.HasIndex("StockAdjustmentProposalId")
+                        .IsUnique();
+
+                    b.ToTable("ORDER_AMENDMENT", (string)null);
+
+                    b.HasAnnotation("SqlServer:UseSqlOutputClause", false);
                 });
 
             modelBuilder.Entity("SAW.Domain.Entities.OrderDetail", b =>
@@ -2637,6 +2739,9 @@ namespace SAW.Infrastructure.Migrations
 
             modelBuilder.Entity("SAW.Domain.Entities.StockAdjustmentImage", b =>
                 {
+                    b.Property<bool>("DeletePending")
+                        .HasColumnType("bit");
+
                     b.Property<Guid>("StockAdjustmentImageId")
                         .HasColumnType("uniqueidentifier");
 
@@ -2724,6 +2829,149 @@ namespace SAW.Infrastructure.Migrations
                         {
                             t.HasCheckConstraint("CK_STOCK_ADJUSTMENT_LINE_Quantities", "[SystemQuantity]>=0 AND [ActualQuantity]>=0 AND [ReservedQuantity]>=0");
                         });
+                });
+
+            modelBuilder.Entity("SAW.Domain.Entities.StockAdjustmentProposal", b =>
+                {
+                    b.Property<string>("ScopeSnapshotJson").IsRequired().HasColumnType("nvarchar(max)");
+                    b.Property<long>("StockAdjustmentProposalId")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("bigint");
+
+                    SqlServerPropertyBuilderExtensions.UseIdentityColumn(b.Property<long>("StockAdjustmentProposalId"));
+
+                    b.Property<DateTime>("CreatedAt")
+                        .HasColumnType("datetime2");
+
+                    b.Property<int>("CreatedByAccountId")
+                        .HasColumnType("int");
+
+                    b.Property<string>("CustomerMessage")
+                        .IsRequired()
+                        .HasMaxLength(1000)
+                        .HasColumnType("nvarchar(1000)");
+
+                    b.Property<decimal>("OriginalOrderTotal")
+                        .HasPrecision(18, 2)
+                        .HasColumnType("decimal(18,2)");
+
+                    b.Property<decimal>("OriginalWeightKg")
+                        .HasPrecision(18, 3)
+                        .HasColumnType("decimal(18,3)");
+
+                    b.Property<decimal>("OriginalWholeLotPrice")
+                        .HasPrecision(18, 2)
+                        .HasColumnType("decimal(18,2)");
+
+                    b.Property<string>("ProposalStatus")
+                        .IsRequired()
+                        .HasMaxLength(20)
+                        .HasColumnType("nvarchar(20)");
+
+                    b.Property<decimal>("ProposedOrderTotal")
+                        .HasPrecision(18, 2)
+                        .HasColumnType("decimal(18,2)");
+
+                    b.Property<decimal>("ProposedWeightKg")
+                        .HasPrecision(18, 3)
+                        .HasColumnType("decimal(18,3)");
+
+                    b.Property<decimal>("ProposedWholeLotPrice")
+                        .HasPrecision(18, 2)
+                        .HasColumnType("decimal(18,2)");
+
+                    b.Property<DateTime?>("RespondedAt")
+                        .HasColumnType("datetime2");
+
+                    b.Property<int?>("RespondedByAccountId")
+                        .HasColumnType("int");
+
+                    b.Property<string>("ResponseReason")
+                        .HasMaxLength(1000)
+                        .HasColumnType("nvarchar(1000)");
+
+                    b.Property<int>("Revision")
+                        .HasColumnType("int");
+
+                    b.Property<DateTime?>("SentAt")
+                        .HasColumnType("datetime2");
+
+                    b.Property<long>("StockAdjustmentId")
+                        .HasColumnType("bigint");
+
+                    b.Property<string>("WithdrawalReason")
+                        .HasMaxLength(1000)
+                        .HasColumnType("nvarchar(1000)");
+
+                    b.HasKey("StockAdjustmentProposalId");
+
+                    b.HasIndex("CreatedByAccountId");
+
+                    b.HasIndex("RespondedByAccountId");
+
+                    b.HasIndex("StockAdjustmentId", "Revision")
+                        .IsUnique();
+
+                    b.ToTable("STOCK_ADJUSTMENT_PROPOSAL", null, t =>
+                        {
+                            t.HasCheckConstraint("CK_ADJUSTMENT_PROPOSAL_Amounts", "[ProposedWeightKg] > 0 AND [ProposedWholeLotPrice] > 0");
+                        });
+
+                    b.HasAnnotation("SqlServer:UseSqlOutputClause", false);
+                });
+
+            modelBuilder.Entity("SAW.Domain.Entities.StockAdjustmentResolution", b =>
+                {
+                    b.Property<long?>("CoordinatingStockAdjustmentId").HasColumnType("bigint");
+                    b.HasIndex("CoordinatingStockAdjustmentId");
+                    b.Property<decimal?>("ResolvedBatchWeightKg")
+                        .HasPrecision(18, 3)
+                        .HasColumnType("decimal(18,3)");
+
+                    b.Property<long>("StockAdjustmentId")
+                        .HasColumnType("bigint");
+
+                    b.Property<string>("ExpectedInventorySnapshotJson")
+                        .IsRequired()
+                        .HasColumnType("nvarchar(max)");
+
+                    b.Property<string>("ExpectedOrderSnapshotJson")
+                        .HasColumnType("nvarchar(max)");
+
+                    b.Property<long?>("OrderDetailId")
+                        .HasColumnType("bigint");
+
+                    b.Property<long?>("PurchaseOrderId")
+                        .HasColumnType("bigint");
+
+                    b.Property<long?>("ReplacesStockAdjustmentId")
+                        .HasColumnType("bigint");
+
+                    b.Property<string>("ResolutionReason")
+                        .HasMaxLength(1000)
+                        .HasColumnType("nvarchar(1000)");
+
+                    b.Property<string>("State")
+                        .IsRequired()
+                        .HasMaxLength(30)
+                        .HasColumnType("nvarchar(30)");
+
+                    b.Property<DateTime>("UpdatedAt")
+                        .HasColumnType("datetime2");
+
+                    b.Property<int>("Version")
+                        .IsConcurrencyToken()
+                        .HasColumnType("int");
+
+                    b.HasKey("StockAdjustmentId");
+
+                    b.HasIndex("OrderDetailId");
+
+                    b.HasIndex("ReplacesStockAdjustmentId");
+
+                    b.HasIndex("PurchaseOrderId", "State");
+
+                    b.ToTable("STOCK_ADJUSTMENT_RESOLUTION", (string)null);
                 });
 
             modelBuilder.Entity("SAW.Domain.Entities.StockTransfer", b =>
@@ -2822,6 +3070,8 @@ namespace SAW.Infrastructure.Migrations
                         .HasDatabaseName("UQ_STOCK_TRANSFER_Code");
 
                     b.ToTable("STOCK_TRANSFER", (string)null);
+
+                    b.HasAnnotation("SqlServer:UseSqlOutputClause", false);
                 });
 
             modelBuilder.Entity("SAW.Domain.Entities.Supplier", b =>
@@ -3262,6 +3512,16 @@ namespace SAW.Infrastructure.Migrations
                         .OnDelete(DeleteBehavior.Restrict)
                         .IsRequired();
 
+                    b.HasOne("SAW.Domain.Entities.StockAdjustment", null)
+                        .WithMany()
+                        .HasForeignKey("RepricedForAdjustmentId")
+                        .OnDelete(DeleteBehavior.Restrict);
+
+                    b.HasOne("SAW.Domain.Entities.StockAdjustment", null)
+                        .WithMany()
+                        .HasForeignKey("SourceStockAdjustmentId")
+                        .OnDelete(DeleteBehavior.Restrict);
+
                     b.Navigation("ProductBatch");
                 });
 
@@ -3411,6 +3671,33 @@ namespace SAW.Infrastructure.Migrations
                     b.Navigation("InventoryReservation");
 
                     b.Navigation("OrderDetail");
+                });
+
+            modelBuilder.Entity("SAW.Domain.Entities.GoodsIssueInvalidation", b =>
+                {
+                    b.HasOne("SAW.Domain.Entities.Account", "Account")
+                        .WithMany()
+                        .HasForeignKey("AccountId")
+                        .OnDelete(DeleteBehavior.Restrict)
+                        .IsRequired();
+
+                    b.HasOne("SAW.Domain.Entities.GoodsIssue", "GoodsIssue")
+                        .WithOne()
+                        .HasForeignKey("SAW.Domain.Entities.GoodsIssueInvalidation", "GoodsIssueId")
+                        .OnDelete(DeleteBehavior.Restrict)
+                        .IsRequired();
+
+                    b.HasOne("SAW.Domain.Entities.StockAdjustment", "StockAdjustment")
+                        .WithMany()
+                        .HasForeignKey("StockAdjustmentId")
+                        .OnDelete(DeleteBehavior.Restrict)
+                        .IsRequired();
+
+                    b.Navigation("Account");
+
+                    b.Navigation("GoodsIssue");
+
+                    b.Navigation("StockAdjustment");
                 });
 
             modelBuilder.Entity("SAW.Domain.Entities.GoodsReceipt", b =>
@@ -3564,6 +3851,33 @@ namespace SAW.Infrastructure.Migrations
                         .HasConstraintName("FK_NOTIFICATION_ACCOUNT");
 
                     b.Navigation("Account");
+                });
+
+            modelBuilder.Entity("SAW.Domain.Entities.OrderAmendment", b =>
+                {
+                    b.HasOne("SAW.Domain.Entities.Account", "ApprovedByAccount")
+                        .WithMany()
+                        .HasForeignKey("ApprovedByAccountId")
+                        .OnDelete(DeleteBehavior.Restrict)
+                        .IsRequired();
+
+                    b.HasOne("SAW.Domain.Entities.OrderDetail", "OrderDetail")
+                        .WithMany()
+                        .HasForeignKey("OrderDetailId")
+                        .OnDelete(DeleteBehavior.Restrict)
+                        .IsRequired();
+
+                    b.HasOne("SAW.Domain.Entities.StockAdjustmentProposal", "Proposal")
+                        .WithMany()
+                        .HasForeignKey("StockAdjustmentProposalId")
+                        .OnDelete(DeleteBehavior.Restrict)
+                        .IsRequired();
+
+                    b.Navigation("ApprovedByAccount");
+
+                    b.Navigation("OrderDetail");
+
+                    b.Navigation("Proposal");
                 });
 
             modelBuilder.Entity("SAW.Domain.Entities.OrderDetail", b =>
@@ -3873,6 +4187,65 @@ namespace SAW.Infrastructure.Migrations
                     b.Navigation("StockAdjustment");
                 });
 
+            modelBuilder.Entity("SAW.Domain.Entities.StockAdjustmentProposal", b =>
+                {
+                    b.HasOne("SAW.Domain.Entities.Account", "CreatedByAccount")
+                        .WithMany()
+                        .HasForeignKey("CreatedByAccountId")
+                        .OnDelete(DeleteBehavior.Restrict)
+                        .IsRequired();
+
+                    b.HasOne("SAW.Domain.Entities.Account", "RespondedByAccount")
+                        .WithMany()
+                        .HasForeignKey("RespondedByAccountId")
+                        .OnDelete(DeleteBehavior.Restrict);
+
+                    b.HasOne("SAW.Domain.Entities.StockAdjustmentResolution", "Resolution")
+                        .WithMany("Proposals")
+                        .HasForeignKey("StockAdjustmentId")
+                        .OnDelete(DeleteBehavior.Restrict)
+                        .IsRequired();
+
+                    b.Navigation("CreatedByAccount");
+
+                    b.Navigation("Resolution");
+
+                    b.Navigation("RespondedByAccount");
+                });
+
+            modelBuilder.Entity("SAW.Domain.Entities.StockAdjustmentResolution", b =>
+                {
+                    b.HasOne("SAW.Domain.Entities.StockAdjustment", null).WithMany().HasForeignKey("CoordinatingStockAdjustmentId").OnDelete(DeleteBehavior.Restrict);
+                    b.HasOne("SAW.Domain.Entities.OrderDetail", "OrderDetail")
+                        .WithMany()
+                        .HasForeignKey("OrderDetailId")
+                        .OnDelete(DeleteBehavior.Restrict);
+
+                    b.HasOne("SAW.Domain.Entities.PurchaseOrder", "PurchaseOrder")
+                        .WithMany()
+                        .HasForeignKey("PurchaseOrderId")
+                        .OnDelete(DeleteBehavior.Restrict);
+
+                    b.HasOne("SAW.Domain.Entities.StockAdjustment", "ReplacesStockAdjustment")
+                        .WithMany()
+                        .HasForeignKey("ReplacesStockAdjustmentId")
+                        .OnDelete(DeleteBehavior.Restrict);
+
+                    b.HasOne("SAW.Domain.Entities.StockAdjustment", "StockAdjustment")
+                        .WithOne("Resolution")
+                        .HasForeignKey("SAW.Domain.Entities.StockAdjustmentResolution", "StockAdjustmentId")
+                        .OnDelete(DeleteBehavior.Restrict)
+                        .IsRequired();
+
+                    b.Navigation("OrderDetail");
+
+                    b.Navigation("PurchaseOrder");
+
+                    b.Navigation("ReplacesStockAdjustment");
+
+                    b.Navigation("StockAdjustment");
+                });
+
             modelBuilder.Entity("SAW.Domain.Entities.StockTransfer", b =>
                 {
                     b.HasOne("SAW.Domain.Entities.WarehouseLocation", "FromWarehouseLocation")
@@ -4146,6 +4519,13 @@ namespace SAW.Infrastructure.Migrations
                     b.Navigation("Images");
 
                     b.Navigation("Lines");
+
+                    b.Navigation("Resolution");
+                });
+
+            modelBuilder.Entity("SAW.Domain.Entities.StockAdjustmentResolution", b =>
+                {
+                    b.Navigation("Proposals");
                 });
 
             modelBuilder.Entity("SAW.Domain.Entities.Supplier", b =>

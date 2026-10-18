@@ -126,7 +126,7 @@ public sealed class ProductBatchQueryRepository(AppDbContext dbContext) : IProdu
         transactions.AddRange(await dbContext.GoodsIssueDetails.AsNoTracking()
             .Where(d => d.Inventory.ProductBatchId == id)
             .Select(d => new ProductBatchWarehouseTransaction(d.GoodsIssueDetailId, "GOODS_ISSUE",
-                d.GoodsIssue.IssueCode, d.GoodsIssue.IssueStatus, d.GoodsIssue.CommittedAt ?? d.GoodsIssue.IssuedAt,
+                d.GoodsIssue.IssueCode, dbContext.GoodsIssueInvalidations.Any(v => v.GoodsIssueId == d.GoodsIssueId) ? "CANCELLED" : d.GoodsIssue.IssueStatus, d.GoodsIssue.CommittedAt ?? d.GoodsIssue.IssuedAt,
                 d.IssuedQuantity, d.Unit, d.WeightInKg, d.Inventory.WarehouseLocation.LocationCode,
                 null, d.GoodsIssue.OperationAccount.FullName, d.GoodsIssue.Note)).ToListAsync(ct));
         transactions.AddRange(await dbContext.StockTransfers.AsNoTracking().Where(t => t.ProductBatchId == id)

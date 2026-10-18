@@ -17,7 +17,7 @@ public static class GoodsIssueRules
     public static GoodsIssueQuery Query(GoodsIssueQuery query)
     {
         Page(query.Page, query.PageSize);
-        if (query.Status is not (null or "" or "DRAFT" or "COMMITTED") || query.WarehouseLocationId is <= 0
+        if (query.Status is not (null or "" or "DRAFT" or "COMMITTED" or "CANCELLED") || query.WarehouseLocationId is <= 0
             || query.FromDate > query.ToDate || query.ToDate == DateOnly.MaxValue
             || query.SortBy is not ("issuedAtDesc" or "issuedAtAsc" or "idDesc" or "idAsc"))
             throw new BadRequestException("Bộ lọc hoặc sắp xếp phiếu xuất không hợp lệ.");

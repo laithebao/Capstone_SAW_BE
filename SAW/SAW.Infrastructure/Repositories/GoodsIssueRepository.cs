@@ -140,11 +140,13 @@ public sealed partial class GoodsIssueRepository(DbContextOptions<AppDbContext> 
             .Include(g => g.GoodsIssueDetails).SingleOrDefaultAsync(ct) ?? throw new NotFoundException("Không tìm thấy phiếu xuất kho.");
     private static void EnsureDraft(GoodsIssue issue, GoodsIssueDetail before, string snapshot)
     {
+        if (!before.CanEdit) throw new ConflictException(before.LockReason ?? "Phiếu không còn được sửa hoặc xác nhận.");
         if (issue.IssueStatus != "DRAFT") throw new ConflictException("Phiếu đã xác nhận xuất kho; không thể sửa hoặc xác nhận phiên bản khác.");
         if (before.Snapshot != snapshot) throw new ConflictException("Phiếu đã được người khác thay đổi. Vui lòng tải lại và kiểm tra trước khi lưu hoặc xác nhận.");
     }
     private static async Task<Dictionary<long, InventoryReservation>> LockAllocationsAsync(AppDbContext db, PurchaseOrder order, CancellationToken ct)
     {
+        if (await BatchHandlingEligibility.OrderHeldAsync(db, order.PurchaseOrderId, ct)) throw new ConflictException("Đơn đang tạm dừng xử lý điều chỉnh tồn.");
         if (!GoodsIssueRules.OrderStatuses.Contains(order.OrderStatus) || order.ApprovedAt is null || order.ApprovedByAccountId is null)
             throw new ConflictException("Đơn chưa có hàng đã soạn hoặc không còn cho phép xuất kho.");
         var batches = await db.InventoryReservations.AsNoTracking().Where(r => r.OrderDetail.PurchaseOrderId == order.PurchaseOrderId)
@@ -167,22 +169,31 @@ public sealed partial class GoodsIssueRepository(DbContextOptions<AppDbContext> 
             if (r.OrderDetail.CropTypeId != r.Inventory.ProductBatch.CropTypeId
                 || (r.OrderDetail.RequestedProductBatchId is { } selected && selected != r.Inventory.ProductBatchId))
                 throw new ConflictException("Phần giữ hàng không khớp lô và dòng đơn.");
-            if (r.ReservationStatus is not ("PARTIALLY_PICKED" or "PICKED") || r.ReleasedAt != null)
-                throw new ConflictException("Phần giữ hàng chưa soạn hoặc không còn hiệu lực.");
+            if (r.ReservationStatus != "PICKED" || r.PickedQuantity != r.ReservedQuantity || r.ReleasedAt != null)
+                throw new ConflictException("Cần xác nhận đã soạn đủ nguyên lô trước khi xuất kho.");
             var reason = PickingRules.BatchLockReason(r.Inventory.ProductBatch.BatchStatus, r.Inventory.ProductBatch.ExpiryDate);
-            reason ??= await BatchHandlingEligibility.DisposalReasonAsync(db, r.Inventory.ProductBatchId, ct);
+            reason ??= await BatchHandlingEligibility.HandlingReasonAsync(db, r.Inventory.ProductBatchId, ct);
             if (reason is not null) throw new ConflictException(reason);
             if (r.Inventory.Unit != "kg" || db.WarehouseLocations.Local.Single(l => l.WarehouseLocationId == r.Inventory.WarehouseLocationId).LocationStatus != "ACTIVE")
                 throw new ConflictException("Vị trí kho không hoạt động hoặc đơn vị tồn không phải kg.");
-            if (line.WeightInKg > r.PickedQuantity - await IssuedAsync(db, r.InventoryReservationId, ct))
-                throw new ConflictException("Khối lượng xuất vượt lượng đã soạn chưa xuất của phần giữ hàng.");
+            if (line.WeightInKg != r.ReservedQuantity || await IssuedAsync(db, r.InventoryReservationId, ct) != 0)
+                throw new ConflictException("Chỉ được xuất đủ nguyên lô đã soạn. Khối lượng lấy từ phần giữ hàng; lô đã xuất một phần cần được rà soát riêng.");
         }
         foreach (var group in lines.GroupBy(l => allocations[l.ReservationId].OrderDetailId))
         {
             var approved = allocations[group.First().ReservationId].OrderDetail.ApprovedWeightKg;
+            var line = allocations[group.First().ReservationId].OrderDetail;
+            var held = allocations.Values.Where(r => r.OrderDetailId == group.Key).ToList();
+            var stocks = db.Inventories.Local.Where(i => i.ProductBatchId == line.RequestedProductBatchId).ToList();
+            if (WholeLotFulfillment.Reason(line, held, stocks, requirePicked: true) is { } reason)
+                throw new ConflictException(reason);
+            var ids = held.Where(r => r.ReleasedAt == null && PickingRules.ActiveReservations.Contains(r.ReservationStatus))
+                .Select(r => r.InventoryReservationId).Order().ToArray();
+            if (!group.Select(l => l.ReservationId).Order().SequenceEqual(ids))
+                throw new ConflictException("Phiếu xuất phải bao gồm đủ tất cả vị trí giữ hàng của lô đã chọn.");
             var issued = await db.GoodsIssueDetails.Where(d => d.OrderDetailId == group.Key && d.GoodsIssue.IssueStatus == "COMMITTED")
                 .SumAsync(d => (decimal?)d.WeightInKg, ct) ?? 0;
-            if (group.Sum(l => l.WeightInKg) > approved - issued) throw new ConflictException("Tổng xuất vượt khối lượng được duyệt của dòng đơn.");
+            if (issued != 0 || group.Sum(l => l.WeightInKg) != approved) throw new ConflictException("Khối lượng xuất phải đúng toàn bộ lô được duyệt; không xuất từng phần của lô.");
         }
         foreach (var group in lines.GroupBy(l => allocations[l.ReservationId].InventoryId))
             if (group.Sum(l => l.WeightInKg) > allocations[group.First().ReservationId].Inventory.QuantityOnHand)
@@ -190,7 +201,8 @@ public sealed partial class GoodsIssueRepository(DbContextOptions<AppDbContext> 
     }
     private static SAW.Domain.Entities.GoodsIssueDetail Line(GoodsIssueLineRequest line, Dictionary<long, InventoryReservation> allocations) =>
         new() { InventoryReservationId = line.ReservationId, OrderDetailId = allocations[line.ReservationId].OrderDetailId,
-            InventoryId = allocations[line.ReservationId].InventoryId, IssuedQuantity = line.WeightInKg, Unit = "kg", WeightInKg = line.WeightInKg };
+            InventoryId = allocations[line.ReservationId].InventoryId, IssuedQuantity = allocations[line.ReservationId].ReservedQuantity,
+            Unit = "kg", WeightInKg = allocations[line.ReservationId].ReservedQuantity };
     private static async Task<decimal> IssuedAsync(AppDbContext db, long reservationId, CancellationToken ct) =>
         await db.GoodsIssueDetails.Where(d => d.InventoryReservationId == reservationId && d.GoodsIssue.IssueStatus == "COMMITTED").SumAsync(d => (decimal?)d.WeightInKg, ct) ?? 0;
     private sealed record OperationReceipt(Guid RequestId, string Payload, long IssueId, object? Values);
@@ -215,6 +227,6 @@ public sealed partial class GoodsIssueRepository(DbContextOptions<AppDbContext> 
     private static async Task EnsureDatabaseReadyAsync(AppDbContext db, CancellationToken ct)
     {
         var ready = await db.Database.SqlQueryRaw<int>("SELECT COUNT(*) AS Value FROM sys.triggers WHERE is_disabled=0 AND name IN ('TR_INVENTORY_RESERVATION_SYNC','TR_GOODS_ISSUE_DETAIL_INTEGRITY_CHECK') AND OBJECT_DEFINITION(object_id) LIKE '%SAW_GOODS_ISSUE_V1%'").SingleAsync(ct);
-        if (ready != 2) throw new ConflictException("Chức năng xuất kho chưa sẵn sàng. Vui lòng liên hệ quản trị để cập nhật cơ chế xuất từng phần.");
+        if (ready != 2) throw new ConflictException("Chức năng xuất kho chưa sẵn sàng. Vui lòng liên hệ quản trị để cập nhật cơ chế đồng bộ xuất kho.");
     }
 }

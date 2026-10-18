@@ -41,7 +41,15 @@ public sealed class WarehouseInventoryRepository(AppDbContext db, IOrderReservat
     public async Task<WarehouseSaleOfferItem> UpdateSaleOfferAsync(
         long batchId, WarehouseSaleOfferUpdateRequest request, CancellationToken ct)
     {
+        var strategy = db.Database.CreateExecutionStrategy();
+        var firstAttempt = true;
+        return await strategy.ExecuteAsync(async () => {
+        if (!firstAttempt) db.ChangeTracker.Clear(); firstAttempt = false;
+        await using var tx = await db.Database.BeginTransactionAsync(IsolationLevel.Serializable, ct);
+        await db.Database.ExecuteSqlRawAsync("SELECT COUNT_BIG(*) FROM INVENTORY WITH (TABLOCKX,HOLDLOCK)", ct);
         var current = await GetSaleOfferItemAsync(batchId, ct);
+        if ((current.RequiresRepricing || request.ExpectedSnapshot != null) && request.ExpectedSnapshot != current.PublicationSnapshot)
+            throw new ConflictException("Lô hoặc giá đã thay đổi. Tải lại và xác nhận giá cho phần tồn đã được kiểm đếm.");
         if (current.IsPendingApproval)
             throw new ConflictException("Lô hàng đang chờ duyệt đơn mua, không thể thay đổi giá hoặc trạng thái bán.");
         if (current.IsSold)
@@ -55,11 +63,17 @@ public sealed class WarehouseInventoryRepository(AppDbContext db, IOrderReservat
             offer = new BatchSaleOffer { ProductBatchId = batchId };
             db.BatchSaleOffers.Add(offer);
         }
+        var source = await db.StockAdjustmentResolutions.AsNoTracking().Where(r => r.State == "RESOLVED" && r.ResolvedBatchWeightKg > 0 && r.StockAdjustment.Inventory.ProductBatchId == batchId)
+            .OrderByDescending(r => r.StockAdjustmentId).FirstOrDefaultAsync(ct);
+        if (source != null) { offer.SourceStockAdjustmentId = source.StockAdjustmentId; offer.ApprovedRemainderWeightKg = source.ResolvedBatchWeightKg; }
+        if (offer.SourceStockAdjustmentId != null) offer.RepricedForAdjustmentId = offer.SourceStockAdjustmentId;
         offer.WholeLotPrice = request.WholeLotPrice;
         offer.IsPublished = request.IsPublished;
         offer.UpdatedAt = DateTime.UtcNow;
         await db.SaveChangesAsync(ct);
+        await tx.CommitAsync(ct);
         return await GetSaleOfferItemAsync(batchId, ct);
+        });
     }
 
     private async Task<WarehouseSaleOfferItem> GetSaleOfferItemAsync(long batchId, CancellationToken ct)
@@ -77,36 +91,46 @@ public sealed class WarehouseInventoryRepository(AppDbContext db, IOrderReservat
             .ThenByDescending(x => x.QcInspectionId)
             .Select(x => new { x.InspectionStatus, x.QcResult, x.QualityGrade, x.StartedAt, x.CompletedAt })
             .FirstOrDefaultAsync(ct);
-        var saleOrderStatus = await db.OrderDetails.AsNoTracking()
+        var saleOrder = await db.OrderDetails.AsNoTracking()
             .Where(line =>
             line.RequestedProductBatchId == batchId
             && line.PurchaseOrder.OrderStatus != "REJECTED"
             && line.PurchaseOrder.OrderStatus != "CANCELLED")
             .OrderByDescending(line => line.PurchaseOrder.CreatedAt)
             .ThenByDescending(line => line.OrderDetailId)
-            .Select(line => line.PurchaseOrder.OrderStatus)
+            .Select(line => new { line.PurchaseOrder.OrderStatus, line.UnitPrice })
             .FirstOrDefaultAsync(ct);
+        var saleOrderStatus = saleOrder?.OrderStatus;
         var isPendingApproval = saleOrderStatus == "PENDING";
         var isSold = saleOrderStatus is not null && !isPendingApproval;
         var hasCommittedIssue = await db.GoodsIssueDetails.AsNoTracking().AnyAsync(line =>
             line.Inventory.ProductBatchId == batchId && line.GoodsIssue.IssueStatus == "COMMITTED", ct);
 
+        var approvedRemainder = offer?.SourceStockAdjustmentId is { } source && await db.StockAdjustments.AnyAsync(a => a.StockAdjustmentId == source
+            && a.RequestKind == "COUNT" && a.AdjustmentStatus == "APPROVED" && a.Inventory.ProductBatchId == batchId, ct) ? offer.ApprovedRemainderWeightKg : null;
+        if (approvedRemainder == null) approvedRemainder = await db.StockAdjustmentResolutions.AsNoTracking().Where(r => r.State == "RESOLVED"
+            && r.ResolvedBatchWeightKg > 0 && r.StockAdjustment.Inventory.ProductBatchId == batchId).OrderByDescending(r => r.StockAdjustmentId).Select(r => r.ResolvedBatchWeightKg).FirstOrDefaultAsync(ct);
         var available = batch.Inventories.Sum(x => x.AvailableQuantity);
         var reason = SaleIneligibilityReason(batch, latestQc?.InspectionStatus, latestQc?.QcResult,
             latestQc?.QualityGrade, latestQc?.StartedAt, latestQc?.CompletedAt,
-            isPendingApproval, isSold, hasCommittedIssue);
-        reason = await BatchHandlingEligibility.DisposalReasonAsync(db, batchId, ct) ?? reason;
+            isPendingApproval, isSold, hasCommittedIssue, approvedRemainder);
+        reason = await BatchHandlingEligibility.HandlingReasonAsync(db, batchId, ct) ?? reason;
+        var publicationSnapshot = Convert.ToHexString(System.Security.Cryptography.SHA256.HashData(System.Text.Encoding.UTF8.GetBytes(System.Text.Json.JsonSerializer.Serialize(new {
+            batch.ProductBatchId, batch.BatchStatus, batch.ExpiryDate, approvedRemainder,
+            offer?.WholeLotPrice, offer?.IsPublished, offer?.UpdatedAt, offer?.SourceStockAdjustmentId, offer?.RepricedForAdjustmentId,
+            Stocks = batch.Inventories.OrderBy(i => i.InventoryId).Select(i => new { i.InventoryId, i.QuantityOnHand, i.ReservedQuantity, i.LastUpdatedAt, i.WarehouseLocation.LocationStatus }),
+            Latest = latestQc, Reason = reason }))));
         return new WarehouseSaleOfferItem(
             batch.ProductBatchId, batch.BatchCode, batch.ProductName, batch.CropType.CropName,
-            batch.QualityGrade, batch.BatchStatus, batch.VerifiedWeightInKg ?? batch.WeightInKg,
-            available, offer?.WholeLotPrice, offer?.IsPublished ?? false, reason is null, reason,
-            offer?.UpdatedAt, isSold, isPendingApproval);
+            batch.QualityGrade, batch.BatchStatus, approvedRemainder ?? batch.VerifiedWeightInKg ?? batch.WeightInKg,
+            available, isSold ? saleOrder!.UnitPrice : offer?.WholeLotPrice, offer?.IsPublished ?? false, reason is null, reason,
+            offer?.UpdatedAt, isSold, isPendingApproval, approvedRemainder != null && (offer == null || offer.SourceStockAdjustmentId != offer.RepricedForAdjustmentId), publicationSnapshot);
     }
 
     private static string? SaleIneligibilityReason(
         ProductBatch batch, string? inspectionStatus, string? qcResult, string? qcGrade,
         DateTime? startedAt, DateTime? completedAt, bool isPendingApproval, bool isSold,
-        bool hasCommittedIssue)
+        bool hasCommittedIssue, decimal? approvedRemainder = null)
     {
         if (batch.BatchStatus != "IN_STOCK") return "Lô hàng chưa ở trạng thái đã nhập kho.";
         if (!batch.CropType.IsActive) return "Loại nông sản của lô đang ngừng hoạt động.";
@@ -117,7 +141,7 @@ public sealed class WarehouseInventoryRepository(AppDbContext db, IOrderReservat
         if (batch.Inventories.Any(x => x.ReservedQuantity != 0)) return "Lô hàng đang được giữ chỗ.";
         if (batch.Inventories.Any(x => x.Unit != "kg")) return "Đơn vị tồn kho của lô phải là kg.";
         if (batch.Inventories.Any(x => x.WarehouseLocation.LocationStatus != "ACTIVE")) return "Vị trí chứa lô không hoạt động.";
-        if (batch.Inventories.Sum(x => x.QuantityOnHand) != batch.VerifiedWeightInKg.Value)
+        if (batch.Inventories.Sum(x => x.QuantityOnHand) != (approvedRemainder ?? batch.VerifiedWeightInKg.Value))
             return "Chỉ được công bố khi toàn bộ khối lượng lô còn nguyên trong kho.";
         if (isPendingApproval) return "Lô hàng đang chờ duyệt đơn mua.";
         if (isSold) return "Lô hàng đã được nhà phân phối mua.";
@@ -157,15 +181,19 @@ public sealed class WarehouseInventoryRepository(AppDbContext db, IOrderReservat
     public async Task<WarehouseDistributorOrderDetail> ApproveDistributorOrderAsync(int actorAccountId, long id, CancellationToken ct)
     {
         var strategy = db.Database.CreateExecutionStrategy();
+        var firstAttempt = true;
         await strategy.ExecuteAsync(async () =>
         {
+        if (!firstAttempt) db.ChangeTracker.Clear(); firstAttempt = false;
         // Serialize rejection with approval so a pending order can transition only once.
         await using var transaction = await db.Database.BeginTransactionAsync(IsolationLevel.Serializable, ct);
         await db.Database.ExecuteSqlInterpolatedAsync($"EXEC sys.sp_set_session_context @key=N'AccountID', @value={actorAccountId}", ct);
         try
         {
+        await db.Database.ExecuteSqlRawAsync("SELECT COUNT_BIG(*) FROM INVENTORY WITH (TABLOCKX,HOLDLOCK)", ct);
         var order = await db.PurchaseOrders.Include(o => o.Distributor).Include(o => o.OrderDetails).ThenInclude(d => d.CropType).Include(o => o.OrderDetails).ThenInclude(d => d.RequestedProductBatch).SingleOrDefaultAsync(o => o.PurchaseOrderId == id, ct)
             ?? throw new NotFoundException("Không tìm thấy đơn nhà phân phối.");
+        if (await BatchHandlingEligibility.OrderHeldAsync(db, id, ct)) throw new ConflictException("Đơn đang tạm dừng xử lý điều chỉnh tồn.");
         if (order.OrderStatus != "PENDING") throw new ConflictException("Đơn đã được xử lý hoặc đã bị hủy, không thể duyệt lại.");
         if (order.Distributor.HasOverdueBalance) throw new ConflictException("Không thể duyệt đơn của nhà phân phối đang có công nợ quá hạn.");
         var detail = await ToOrderDetail(order, ct);
@@ -177,6 +205,7 @@ public sealed class WarehouseInventoryRepository(AppDbContext db, IOrderReservat
 
         foreach (var line in order.OrderDetails)
         {
+            await BatchHandlingEligibility.ValidateAdjustedSaleAsync(db, line.RequestedProductBatchId!.Value, line.RequestedWeightKg, ct);
             var approvedWeight = line.RequestedWeightKg;
             if (approvedWeight <= 0) throw new ConflictException("Khối lượng lô phải lớn hơn 0.");
             if (line.UnitPrice <= 0) throw new ConflictException("Giá nguyên lô trong đơn không hợp lệ.");
@@ -209,8 +238,10 @@ public sealed class WarehouseInventoryRepository(AppDbContext db, IOrderReservat
     {
         if (string.IsNullOrWhiteSpace(reason)) throw new ConflictException("Vui lòng nhập lý do từ chối đơn.");
         var strategy = db.Database.CreateExecutionStrategy();
+        var firstAttempt = true;
         return await strategy.ExecuteAsync(async () =>
         {
+        if (!firstAttempt) db.ChangeTracker.Clear(); firstAttempt = false;
             await using var transaction = await db.Database.BeginTransactionAsync(IsolationLevel.Serializable, ct);
             var order = await db.PurchaseOrders.Include(o => o.Distributor).Include(o => o.OrderDetails).ThenInclude(d => d.CropType).Include(o => o.OrderDetails).ThenInclude(d => d.RequestedProductBatch).SingleOrDefaultAsync(o => o.PurchaseOrderId == id, ct)
                 ?? throw new NotFoundException("Không tìm thấy đơn nhà phân phối.");
@@ -227,9 +258,10 @@ public sealed class WarehouseInventoryRepository(AppDbContext db, IOrderReservat
         var cropIds = order.OrderDetails.Where(d => d.RequestedProductBatchId == null).Select(d => d.CropTypeId).ToList();
         var batchIds = order.OrderDetails.Where(d => d.RequestedProductBatchId != null).Select(d => d.RequestedProductBatchId!.Value).ToList();
         var today = DateOnly.FromDateTime(DateTime.UtcNow);
-        var stock = await db.Inventories.AsNoTracking().Where(i => !BatchHandlingEligibility.PendingDisposalBatches(db).Contains(i.ProductBatchId) && (batchIds.Contains(i.ProductBatchId) || cropIds.Contains(i.ProductBatch.CropTypeId)) && i.ProductBatch.BatchStatus == "IN_STOCK" && (i.ProductBatch.ExpiryDate == null || i.ProductBatch.ExpiryDate >= today)).GroupBy(i => new { i.ProductBatchId, i.ProductBatch.CropTypeId }).Select(g => new { g.Key.ProductBatchId, g.Key.CropTypeId, Available = g.Sum(i => i.AvailableQuantity) }).ToListAsync(ct);
+        var stock = await db.Inventories.AsNoTracking().Where(i => !BatchHandlingEligibility.PendingHandlingBatches(db).Contains(i.ProductBatchId) && (batchIds.Contains(i.ProductBatchId) || cropIds.Contains(i.ProductBatch.CropTypeId)) && i.ProductBatch.BatchStatus == "IN_STOCK" && (i.ProductBatch.ExpiryDate == null || i.ProductBatch.ExpiryDate >= today)).GroupBy(i => new { i.ProductBatchId, i.ProductBatch.CropTypeId }).Select(g => new { g.Key.ProductBatchId, g.Key.CropTypeId, Available = g.Sum(i => i.AvailableQuantity) }).ToListAsync(ct);
         var lines = order.OrderDetails.Select(d => { var available = stock.Where(s => d.RequestedProductBatchId.HasValue ? s.ProductBatchId == d.RequestedProductBatchId : s.CropTypeId == d.CropTypeId).Sum(s => s.Available); return new WarehouseDistributorOrderLine(d.OrderDetailId, d.CropType.CropName, d.RequestedProductBatch?.BatchCode, d.RequestedWeightKg, available, d.UnitPrice, d.ApprovedWeightKg, available >= d.RequestedWeightKg); }).ToList();
-        return new(order.PurchaseOrderId, order.OrderCode, order.OrderStatus, order.Distributor.DistributorName, order.TotalAmount, order.CreatedAt, order.ExpectedDeliveryDate, order.DeliveryAddress, order.ContactPhone, order.OrderNote, lines.All(l => l.StockAvailable), lines);
+        var adjustments = await db.StockAdjustmentResolutions.AsNoTracking().Where(r => r.PurchaseOrderId == order.PurchaseOrderId).OrderByDescending(r => r.StockAdjustmentId).Select(r => new WarehouseOrderAdjustment(r.StockAdjustmentId, r.StockAdjustment.AdjustmentCode, r.State)).ToListAsync(ct);
+        return new(order.PurchaseOrderId, order.OrderCode, order.OrderStatus, order.Distributor.DistributorName, order.TotalAmount, order.CreatedAt, order.ExpectedDeliveryDate, order.DeliveryAddress, order.ContactPhone, order.OrderNote, lines.All(l => l.StockAvailable), lines, order.CancellationReason, adjustments);
     }
     public async Task<WarehouseInventoryLevelChart> GetLevelChartAsync(CancellationToken ct)
     {

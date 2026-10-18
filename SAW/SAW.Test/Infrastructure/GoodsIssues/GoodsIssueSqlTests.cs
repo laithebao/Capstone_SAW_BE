@@ -44,7 +44,9 @@ public sealed class GoodsIssueSqlTests(GoodsIssueSqlFixture fixture) : IClassFix
         await using var db = F.Context(); var b = await db.ProductBatches.FindAsync(batch.ProductBatchId);
         b!.BatchStatus = "IN_STOCK"; b.QualityGrade = "E"; b.ExpiryDate = Today.AddDays(30);
         var key = Guid.NewGuid().ToString("N");
-        var buyer = new Distributor { Account = new Account { RoleId = await db.Roles.Select(r => r.RoleId).FirstAsync(), Username = key,
+        var buyerRole = await db.Roles.SingleOrDefaultAsync(r => r.RoleCode == "DISTRIBUTOR");
+        if (buyerRole == null) { buyerRole = new Role { RoleCode = "DISTRIBUTOR", RoleName = "Fixture Distributor", IsActive = true }; db.Roles.Add(buyerRole); await db.SaveChangesAsync(); }
+        var buyer = new Distributor { Account = new Account { RoleId = buyerRole.RoleId, Username = key,
             Email = key + "@test.invalid", FullName = "Issue buyer", PasswordHash = "unused-test", AccountStatus = "ACTIVE" },
             DistributorCode = "I-" + key[..20], DistributorName = "Issue distributor " + key[..5], TaxCode = key, ProfileStatus = "ACTIVE" };
         var order = new PurchaseOrder { Distributor = buyer, OrderCode = "ISSUE-" + key, OrderStatus = "APPROVED", DeliveryAddress = "Test address",
@@ -62,9 +64,14 @@ public sealed class GoodsIssueSqlTests(GoodsIssueSqlFixture fixture) : IClassFix
             foreach (var r in detail.Lines.Single().Reservations)
             {
                 var amount = Math.Min(pick, r.ReservedQuantityKg);
-                if (amount > 0) await Picking().ConfirmAsync(scenario.OrderId, new(Guid.NewGuid(), r.Id, line.OrderDetailId, r.InventoryId, b.ProductBatchId, amount, 0, "Fixture picking"), F.ActorId, default);
+                if (amount > 0) { db.PickingHistories.Add(new PickingHistory {InventoryReservationId=r.Id,PickedQuantity=amount,PickedByAccountId=F.ActorId,PickedAt=DateTime.UtcNow,Note="Fixture picking"}); await db.SaveChangesAsync(); }
                 pick -= amount;
             }
+        }
+        if (await db.PickingHistories.AnyAsync(h=>h.InventoryReservation.OrderDetailId==line.OrderDetailId)) {
+            var saved=await db.PurchaseOrders.FindAsync(scenario.OrderId);
+            saved!.OrderStatus=await db.InventoryReservations.Where(r=>r.OrderDetailId==line.OrderDetailId).AllAsync(r=>r.PickedQuantity==r.ReservedQuantity)?"PICKED":"PARTIALLY_PICKED";
+            await db.SaveChangesAsync();
         }
         return scenario;
     }
@@ -123,24 +130,21 @@ public sealed class GoodsIssueSqlTests(GoodsIssueSqlFixture fixture) : IClassFix
         Assert.Empty(await db.GoodsReceipts.Where(r => r.ProductBatchId == s.BatchId).ToListAsync());
     }
     [ReceivingSqlFact]
-    public async Task Partial_issue_keeps_remaining_hold_then_picking_and_second_issue_finish_without_releasing_others()
+    public async Task Partial_pick_and_partial_issue_are_rejected_then_full_lot_can_be_issued_once()
     {
-        var s = await ScenarioAsync(40); var input = await RequestAsync(s, 25); var draft = await Service().CreateAsync(input, F.ActorId, default);
-        await Service().ConfirmAsync(draft.Summary.Id, Confirm(draft), F.ActorId, default);
-        await using var db = F.Context(); var inv = await db.Inventories.AsNoTracking().SingleAsync(i => i.ProductBatchId == s.BatchId);
-        Assert.Equal(75, inv.QuantityOnHand); Assert.Equal(75, inv.ReservedQuantity);
-        var pick = await Picking().GetAsync(s.OrderId, default); Assert.True(pick.Order.CanPick);
-        var r = pick.Lines.Single().Reservations.Single();
-        await Picking().ConfirmAsync(s.OrderId, new(Guid.NewGuid(), r.Id, s.LineId, r.InventoryId, s.BatchId, 60, 40, null), F.ActorId, default);
-        var data = await Service().OrderAsync(s.OrderId, default); Assert.Equal(75, data.Allocations.Single().RemainingWeightKg);
-        Assert.Equal("PARTIALLY_ISSUED", (await Picking().GetAsync(s.OrderId, default)).Order.Status);
-        var second = await Service().CreateAsync(await RequestAsync(s, 75), F.ActorId, default);
-        await Service().ConfirmAsync(second.Summary.Id, Confirm(second), F.ActorId, default);
-        inv = await db.Inventories.AsNoTracking().SingleAsync(i => i.ProductBatchId == s.BatchId);
-        Assert.Equal(0, inv.QuantityOnHand); Assert.Equal(0, inv.ReservedQuantity);
-        Assert.Empty((await Service().EligibleAsync(s.Code, 1, 20, default)).Items);
-        Assert.Empty((await new PickingRepository(Options(), Accessor).SearchAsync(new(Search: s.Code), default)).Items);
+        var s=await ScenarioAsync(40);var before=await StockStateAsync(s);var input=await RequestAsync(s,25);
+        await Assert.ThrowsAsync<ConflictException>(()=>Service().CreateAsync(input,F.ActorId,default));
+        Assert.Equal(before,await StockStateAsync(s));Assert.Empty((await Service().EligibleAsync(s.Code,1,20,default)).Items);
+        var pick=await Picking().GetAsync(s.OrderId,default);var r=pick.Lines.Single().Reservations.Single();
+        await Picking().ConfirmAsync(s.OrderId,new(Guid.NewGuid(),r.Id,s.LineId,r.InventoryId,s.BatchId,60,40,null),F.ActorId,default);
+        var partial=await RequestAsync(s,25);before=await StockStateAsync(s);
+        await Assert.ThrowsAsync<ConflictException>(()=>Service().CreateAsync(partial,F.ActorId,default));Assert.Equal(before,await StockStateAsync(s));
+        var full=await Service().CreateAsync(await RequestAsync(s),F.ActorId,default);var confirm=Confirm(full);
+        await Service().ConfirmAsync(full.Summary.Id,confirm,F.ActorId,default);await Service().ConfirmAsync(full.Summary.Id,confirm,F.ActorId,default);
+        await using var db=F.Context();Assert.Equal(0,await db.Inventories.Where(i=>i.ProductBatchId==s.BatchId).SumAsync(i=>i.QuantityOnHand));
+        Assert.Equal(0,await db.Inventories.Where(i=>i.ProductBatchId==s.BatchId).SumAsync(i=>i.ReservedQuantity));
     }
+
     [ReceivingSqlFact]
     public async Task Multiple_positions_and_duplicate_drafts_only_committed_counts_and_concurrent_confirm_cannot_overissue()
     {
@@ -310,37 +314,31 @@ public sealed class GoodsIssueSqlTests(GoodsIssueSqlFixture fixture) : IClassFix
         }
     }
     [ReceivingSqlFact]
-    public async Task Fully_issued_first_position_does_not_prevent_picking_second_position()
+    public async Task Omitting_one_position_of_a_whole_lot_is_rejected_without_changing_stock()
     {
-        var s = await ScenarioAsync(40, [40, 60]); var order = await Service().OrderAsync(s.OrderId, default);
-        var first = order.Allocations.Single(a => a.PickedWeightKg == 40);
-        var draft = await Service().CreateAsync(new(Guid.NewGuid(), s.OrderId, Today, null, null, [new(first.ReservationId, 40)]), F.ActorId, default);
-        await Service().ConfirmAsync(draft.Summary.Id, Confirm(draft), F.ActorId, default);
-        var picking = await Picking().GetAsync(s.OrderId, default); Assert.True(picking.Order.CanPick);
-        var next = picking.Lines.Single().Reservations.Single(r => r.Status == "RESERVED");
-        await Picking().ConfirmAsync(s.OrderId, new(Guid.NewGuid(), next.Id, s.LineId, next.InventoryId, s.BatchId, 60, 0, null), F.ActorId, default);
-        order = await Service().OrderAsync(s.OrderId, default); var remaining = order.Allocations.Single(a => a.CanIssue);
-        var finish = await Service().CreateAsync(new(Guid.NewGuid(), s.OrderId, Today, null, null, [new(remaining.ReservationId, 60)]), F.ActorId, default);
-        await Service().ConfirmAsync(finish.Summary.Id, Confirm(finish), F.ActorId, default);
-        await using var db = F.Context(); Assert.Equal(0, await db.Inventories.Where(v => v.ProductBatchId == s.BatchId).SumAsync(v => v.QuantityOnHand));
+        var s=await ScenarioAsync(100,[40,60]);var before=await StockStateAsync(s);
+        var omitted=await RequestAsync(s,40);
+        await Assert.ThrowsAsync<ConflictException>(()=>Service().CreateAsync(omitted,F.ActorId,default));
+        Assert.Equal(before,await StockStateAsync(s));
+        var order=await Service().OrderAsync(s.OrderId,default);
+        var full=await Service().CreateAsync(new(Guid.NewGuid(),s.OrderId,Today,null,null,order.Allocations.Select(a=>new GoodsIssueLineRequest(a.ReservationId,a.ReservedWeightKg)).ToList()),F.ActorId,default);
+        await Service().ConfirmAsync(full.Summary.Id,Confirm(full),F.ActorId,default);
+        await using var db=F.Context();Assert.All(await db.Inventories.Where(i=>i.ProductBatchId==s.BatchId).ToListAsync(),i=>Assert.Equal(0,i.QuantityOnHand));
     }
+
     [ReceivingSqlFact]
-    public async Task Partial_issue_preserves_other_order_reservation_on_same_inventory()
+    public async Task Changed_lot_weight_and_other_order_hold_block_whole_lot_issue_without_releasing_any_hold()
     {
-        var s = await ScenarioAsync(100, [150]);
-        await using var db = F.Context(); var order = new PurchaseOrder { DistributorId = await db.PurchaseOrders.Where(o => o.PurchaseOrderId == s.OrderId).Select(o => o.DistributorId).SingleAsync(),
-            OrderCode = "LEGACY-" + Guid.NewGuid().ToString("N"), OrderStatus = "RESERVED", DeliveryAddress = "Test", ApprovedByAccountId = F.ActorId, ApprovedAt = DateTime.UtcNow, CreatedAt = DateTime.UtcNow };
-        var line = new OrderDetail { PurchaseOrder = order, CropTypeId = F.CropTypeId, RequestedProductBatchId = s.BatchId,
-            RequestedQuantity = 1, ApprovedQuantity = 1, RequestedWeightKg = 20, ApprovedWeightKg = 20, Unit = "Lô" };
-        var other = new InventoryReservation { OrderDetail = line, InventoryId = s.InventoryIds[0], ReservedQuantity = 20, ReservationStatus = "RESERVED", ReservedAt = DateTime.UtcNow };
-        db.Add(other); await db.SaveChangesAsync();
-        var draft = await Service().CreateAsync(await RequestAsync(s, 25), F.ActorId, default);
-        await Service().ConfirmAsync(draft.Summary.Id, Confirm(draft), F.ActorId, default);
-        var inv = await db.Inventories.AsNoTracking().SingleAsync(v => v.InventoryId == s.InventoryIds[0]);
-        Assert.Equal(125, inv.QuantityOnHand); Assert.Equal(95, inv.ReservedQuantity); Assert.Equal(30, inv.AvailableQuantity);
-        var saved = await db.InventoryReservations.AsNoTracking().SingleAsync(r => r.InventoryReservationId == other.InventoryReservationId);
-        Assert.Equal("RESERVED", saved.ReservationStatus); Assert.Equal(20, saved.ReservedQuantity); Assert.Equal(0, saved.PickedQuantity);
+        var s=await ScenarioAsync(100,[150]);await using var db=F.Context();
+        var otherOrder=new PurchaseOrder {DistributorId=await db.PurchaseOrders.Where(o=>o.PurchaseOrderId==s.OrderId).Select(o=>o.DistributorId).SingleAsync(),OrderCode="OTHER-"+Guid.NewGuid().ToString("N"),OrderStatus="APPROVED",DeliveryAddress="Fixture",ApprovedAt=DateTime.UtcNow,ApprovedByAccountId=F.ActorId};
+        var otherLine=new OrderDetail {PurchaseOrder=otherOrder,CropTypeId=F.CropTypeId,RequestedQuantity=1,ApprovedQuantity=1,RequestedWeightKg=20,ApprovedWeightKg=20,Unit="Lô",UnitPrice=1};
+        var other=new InventoryReservation {OrderDetail=otherLine,InventoryId=s.InventoryIds[0],ReservedQuantity=20,ReservationStatus="RESERVED",ReservedAt=DateTime.UtcNow};db.Add(other);await db.SaveChangesAsync();
+        var before=await StockStateAsync(s);var input=await RequestAsync(s);
+        await Assert.ThrowsAsync<ConflictException>(()=>Service().CreateAsync(input,F.ActorId,default));
+        Assert.Equal(before,await StockStateAsync(s));Assert.Equal(20,(await db.InventoryReservations.AsNoTracking().SingleAsync(r=>r.InventoryReservationId==other.InventoryReservationId)).ReservedQuantity);
+        Assert.All((await Service().OrderAsync(s.OrderId,default)).Allocations,r=>Assert.False(r.CanIssue));
     }
+
     [ReceivingSqlFact]
     public async Task Missing_workflow_migration_is_reported_without_creating_a_slip()
     {
@@ -353,34 +351,30 @@ public sealed class GoodsIssueSqlTests(GoodsIssueSqlFixture fixture) : IClassFix
             // Only this fixture database is changed; mimic an installation before prerequisite deployment.
             await db.Database.ExecuteSqlRawAsync(definition.Replace("SAW_GOODS_ISSUE_V1", "BEFORE_ISSUE_WORKFLOW"));
             var error = await Assert.ThrowsAsync<ConflictException>(() => Service().CreateAsync(request, F.ActorId, default));
-            Assert.Contains("xuất từng phần", error.Message);
+            Assert.Contains("đồng bộ xuất kho", error.Message);
             Assert.False(await db.GoodsIssues.AnyAsync(g => g.PurchaseOrderId == s.OrderId));
             Assert.Equal(100, await db.Inventories.Where(i => i.ProductBatchId == s.BatchId).SumAsync(i => i.QuantityOnHand));
         }
         finally { await db.Database.ExecuteSqlRawAsync(definition); }
     }
     [ReceivingSqlFact]
-    public async Task Decimal_kg_precision_is_preserved_across_partial_and_final_issue()
+    public async Task Fractional_client_quantity_cannot_split_a_whole_lot_even_at_valid_decimal_precision()
     {
-        var s = await ScenarioAsync(); var first = await Service().CreateAsync(await RequestAsync(s, 0.001m), F.ActorId, default);
-        await Service().ConfirmAsync(first.Summary.Id, Confirm(first), F.ActorId, default);
-        await using var db = F.Context();
-        var stock = await db.Inventories.AsNoTracking().SingleAsync(i => i.ProductBatchId == s.BatchId);
-        Assert.Equal(99.999m, stock.QuantityOnHand); Assert.Equal(99.999m, stock.ReservedQuantity);
-        var final = await Service().CreateAsync(await RequestAsync(s, 99.999m), F.ActorId, default);
-        await Service().ConfirmAsync(final.Summary.Id, Confirm(final), F.ActorId, default);
-        stock = await db.Inventories.AsNoTracking().SingleAsync(i => i.ProductBatchId == s.BatchId);
-        Assert.Equal(0, stock.QuantityOnHand); Assert.Equal(0, stock.ReservedQuantity);
+        var s=await ScenarioAsync();var before=await StockStateAsync(s);
+        foreach(var weight in new[]{0.001m,99.999m,100.001m}) {var input=await RequestAsync(s,weight);await Assert.ThrowsAsync<ConflictException>(()=>Service().CreateAsync(input,F.ActorId,default));}
+        Assert.Equal(before,await StockStateAsync(s));
+        var full=await Service().CreateAsync(await RequestAsync(s),F.ActorId,default);Assert.Equal(100,full.Lines.Single().WeightInKg);
     }
+
     [ReceivingSqlFact]
     public async Task Multirow_reservation_updates_and_draft_detail_insert_update_delete_are_set_based()
     {
         var s = await ScenarioAsync(100, [40, 60]); var order = await Service().OrderAsync(s.OrderId, default);
         var first = await Service().CreateAsync(new(Guid.NewGuid(), s.OrderId, Today, null, null,
-            order.Allocations.Select(r => new GoodsIssueLineRequest(r.ReservationId, 10)).ToList()), F.ActorId, default);
-        await Service().ConfirmAsync(first.Summary.Id, Confirm(first), F.ActorId, default);
+            order.Allocations.Select(r => new GoodsIssueLineRequest(r.ReservationId, r.ReservedWeightKg)).ToList()), F.ActorId, default);
+
         var second = await Service().CreateAsync(new(Guid.NewGuid(), s.OrderId, Today, null, null,
-            order.Allocations.Select(r => new GoodsIssueLineRequest(r.ReservationId, 5)).ToList()), F.ActorId, default);
+            order.Allocations.Select(r => new GoodsIssueLineRequest(r.ReservationId, r.ReservedWeightKg)).ToList()), F.ActorId, default);
         var state = await StockStateAsync(s);
         await using var db = F.Context();
         // A single UPDATE touches both reservations and invokes nested counter synchronization.
@@ -394,8 +388,8 @@ public sealed class GoodsIssueSqlTests(GoodsIssueSqlFixture fixture) : IClassFix
         Assert.Equal(state, await StockStateAsync(s));
         await db.Database.ExecuteSqlInterpolatedAsync($"DELETE FROM GOODS_ISSUE_DETAIL WHERE GoodsIssueID={third.GoodsIssueId}");
         Assert.Equal(state, await StockStateAsync(s));
-        Assert.Equal(80, await db.Inventories.Where(i => i.ProductBatchId == s.BatchId).SumAsync(i => i.QuantityOnHand));
-        Assert.Equal(80, await db.Inventories.Where(i => i.ProductBatchId == s.BatchId).SumAsync(i => i.ReservedQuantity));
+        Assert.Equal(100, await db.Inventories.Where(i => i.ProductBatchId == s.BatchId).SumAsync(i => i.QuantityOnHand));
+        Assert.Equal(100, await db.Inventories.Where(i => i.ProductBatchId == s.BatchId).SumAsync(i => i.ReservedQuantity));
         Assert.Equal(100, await db.OrderDetails.Where(l => l.OrderDetailId == s.LineId).Select(l => l.PickedWeightKg).SingleAsync());
         var batchCode = await db.ProductBatches.Where(b => b.ProductBatchId == s.BatchId).Select(b => b.BatchCode).SingleAsync();
         var manager = new WarehouseInventoryRepository(db, new OrderReservationAllocator(Options(), Accessor));
@@ -404,9 +398,27 @@ public sealed class GoodsIssueSqlTests(GoodsIssueSqlFixture fixture) : IClassFix
         var buyerId = await db.PurchaseOrders.Where(o => o.PurchaseOrderId == s.OrderId).Select(o => o.Distributor.AccountId).SingleAsync();
         var distributor = new DistributorOrderRepository(Options(), Accessor);
         var buyerLot = await distributor.LotAsync(buyerId, s.BatchId, default);
-        Assert.Equal("PARTIALLY_ISSUED", buyerLot.BatchStatus); Assert.False(buyerLot.CanPurchase);
+        Assert.Equal("IN_STOCK", buyerLot.BatchStatus); Assert.False(buyerLot.CanPurchase);
         Assert.Empty((await distributor.CatalogAsync(buyerId, new(Search: batchCode), default)).Items);
         Assert.Equal("DRAFT", second.Summary.IssueStatus);
+    }
+    [ReceivingSqlFact]
+    public async Task Multiple_lots_can_be_fulfilled_separately_but_each_lot_is_picked_and_issued_in_full()
+    {
+        var first=await ScenarioAsync(0);var second=await ScenarioAsync(0);
+        await using var db=F.Context();var secondLine=await db.OrderDetails.FindAsync(second.LineId);
+        secondLine!.PurchaseOrderId=first.OrderId;await db.SaveChangesAsync();
+        foreach(var s in new[]{first,second})
+        {
+            var d=await Picking().GetAsync(first.OrderId,default);var l=d.Lines.Single(l=>l.Id==s.LineId);var r=l.Reservations.Single();
+            await Picking().ConfirmAsync(first.OrderId,new(Guid.NewGuid(),r.Id,l.Id,r.InventoryId,s.BatchId,100,0,null),F.ActorId,default);
+            var order=await Service().OrderAsync(first.OrderId,default);var allocation=order.Allocations.Single(a=>a.OrderDetailId==s.LineId);Assert.True(allocation.CanIssue,allocation.LockReason);
+            var draft=await Service().CreateAsync(new(Guid.NewGuid(),first.OrderId,Today,null,null,[new(allocation.ReservationId,100)]),F.ActorId,default);
+            await Service().ConfirmAsync(draft.Summary.Id,Confirm(draft),F.ActorId,default);
+            Assert.Equal(0,await db.Inventories.Where(i=>i.ProductBatchId==s.BatchId).SumAsync(i=>i.QuantityOnHand));
+            Assert.Equal(s==first?"PARTIALLY_ISSUED":"ISSUED",await db.PurchaseOrders.Where(o=>o.PurchaseOrderId==first.OrderId).Select(o=>o.OrderStatus).SingleAsync());
+        }
+        Assert.Equal(2,await db.GoodsIssues.CountAsync(g=>g.PurchaseOrderId==first.OrderId&&g.IssueStatus=="COMMITTED"));
     }
     [DistributorBrowserFact]
     public async Task Browser_create_edit_confirm_list_and_stale_form_use_real_API_SQL()

@@ -42,7 +42,9 @@ public sealed class DistributorOrderSqlTests : IClassFixture<DistributorSqlFixtu
     private async Task<int> BuyerAsync()
     {
         await using var db = fixture.Context();
-        var roleId = await db.Roles.Select(r => r.RoleId).FirstAsync();
+        var role = await db.Roles.SingleOrDefaultAsync(r => r.RoleCode == "DISTRIBUTOR");
+        if (role == null) { role = new Role { RoleCode = "DISTRIBUTOR", RoleName = "Fixture Distributor", IsActive = true }; db.Roles.Add(role); await db.SaveChangesAsync(); }
+        var roleId = role.RoleId;
         var key = Guid.NewGuid().ToString("N");
         var account = new Account { RoleId = roleId, Username = key, Email = key + "@test.invalid", FullName = "Distributor test",
             PasswordHash = "test-only", AccountStatus = "ACTIVE" };
@@ -144,22 +146,22 @@ public sealed class DistributorOrderSqlTests : IClassFixture<DistributorSqlFixtu
         var buyer = await BuyerAsync(); var lot = await LotAsync();
         var firstRepo = Repository(new FixedClock(new DateTimeOffset(2031, 1, 1, 16, 59, 0, TimeSpan.Zero)));
         var first = await firstRepo.CreateAsync(buyer, Request(lot), default);
-        var second = await firstRepo.CreateAsync(buyer, Request(lot), default);
+        var second = await firstRepo.CreateAsync(buyer, Request(await LotAsync()), default);
         Assert.Equal("PO-20310101-01", first.OrderCode);
         Assert.Equal("PO-20310101-02", second.OrderCode);
         var nextRepo = Repository(new FixedClock(new DateTimeOffset(2031, 1, 1, 17, 1, 0, TimeSpan.Zero)));
-        Assert.Equal("PO-20310102-01", (await nextRepo.CreateAsync(buyer, Request(lot), default)).OrderCode);
+        Assert.Equal("PO-20310102-01", (await nextRepo.CreateAsync(buyer, Request(await LotAsync()), default)).OrderCode);
     }
 
     [ReceivingSqlFact]
     public async Task ConcurrentCreation_HasDistinctSequentialCodes_AndSameRequestDoesNotConsumeAnotherNumber()
     {
-        var buyer = await BuyerAsync(); var buyer2 = await BuyerAsync(); var lot = await LotAsync();
+        var buyer = await BuyerAsync(); var buyer2 = await BuyerAsync(); var lot = await LotAsync(); var secondLot = await LotAsync();
         var clock = new FixedClock(new DateTimeOffset(2032, 1, 1, 0, 0, 0, TimeSpan.Zero));
         var repo = Repository(clock);
-        var created = await Task.WhenAll(repo.CreateAsync(buyer, Request(lot), default), repo.CreateAsync(buyer2, Request(lot), default));
+        var created = await Task.WhenAll(repo.CreateAsync(buyer, Request(lot), default), repo.CreateAsync(buyer2, Request(secondLot), default));
         Assert.Equal(new[] { "PO-20320101-01", "PO-20320101-02" }, created.Select(o => o.OrderCode).OrderBy(c => c).ToArray());
-        var request = Request(lot);
+        var request = Request(await LotAsync());
         var repeated = await Task.WhenAll(repo.CreateAsync(buyer, request, default), repo.CreateAsync(buyer, request, default));
         Assert.Equal(repeated[0].Id, repeated[1].Id);
         Assert.Equal("PO-20320101-03", repeated[0].OrderCode);
@@ -347,7 +349,7 @@ public sealed class DistributorOrderSqlTests : IClassFixture<DistributorSqlFixtu
         api.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", Token(buyer, "DISTRIBUTOR"));
         var list = await api.GetAsync("/api/distributor/orders?page=1&pageSize=10"); Assert.Equal(HttpStatusCode.OK, list.StatusCode);
         var created = await api.PostAsJsonAsync("/api/distributor/orders", Request(lot)); Assert.Equal(HttpStatusCode.OK, created.StatusCode);
-        Assert.Equal(HttpStatusCode.OK, (await api.PostAsJsonAsync("/api/distributor/orders", Request(lot) with { ExpectedDeliveryDate = null })).StatusCode);
+        Assert.Equal(HttpStatusCode.OK, (await api.PostAsJsonAsync("/api/distributor/orders", Request(await LotAsync()) with { ExpectedDeliveryDate = null })).StatusCode);
         Assert.Equal(HttpStatusCode.BadRequest, (await api.PostAsJsonAsync("/api/distributor/orders", Request(lot) with { ExpectedDeliveryDate = DateOnly.FromDateTime(DateTime.UtcNow.AddHours(7)).AddDays(-1) })).StatusCode);
         var lotDetail = await api.GetAsync($"/api/distributor/orders/catalog/{lot.BatchId}"); Assert.Equal(HttpStatusCode.OK, lotDetail.StatusCode);
         foreach (var phone in new[] { "090123456", "090123456a", "+84901234567" })

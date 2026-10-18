@@ -11,6 +11,8 @@ public sealed partial class StockAdjustmentSqlTests
     public async Task Browser_count_disposal_conflict_images_and_role_guard_use_real_API_SQL()
     {
         var count=await Scenario();var disposal=await Scenario([40,60,0],true);var stale=await Scenario();
+        var heldOrder=await Order(count.Batch);
+        Assert.True(await new SAW.Infrastructure.Repositories.OrderReservationAllocator(Options(),Accessor).TryReserveAsync(heldOrder,F.ActorId,default));
         var beforeCount=await State(count.Batch);var beforeDisposal=await State(disposal.Batch);
         using var api=await F.ApiAsync();var root=new DirectoryInfo(AppContext.BaseDirectory);
         while(root!=null&&!Directory.Exists(Path.Combine(root.FullName,"Capstone_SAW_FE")))root=root.Parent;

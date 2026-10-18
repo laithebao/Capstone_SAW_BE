@@ -7,6 +7,7 @@ namespace SAW.Application.Features.StockAdjustments;
 public static class StockAdjustmentRules
 {
     public const string DisposalLockReason = "Lô hàng đang chờ duyệt yêu cầu loại bỏ; không thể bán, giữ hàng, soạn hàng hoặc xuất kho.";
+    public const string CountLockReason = "Lô hàng đang chờ duyệt điều chỉnh tồn; tạm dừng bán, giữ hàng, soạn hàng và xuất kho. Cần rà soát đơn/phần giữ hàng nếu khối lượng lô thay đổi.";
     public static readonly string[] Types = ["DAMAGE", "SPOILAGE", "COUNTING_ERROR", "OTHER"];
     public static void Scope(long id, string kind, long? inventoryId)
     {

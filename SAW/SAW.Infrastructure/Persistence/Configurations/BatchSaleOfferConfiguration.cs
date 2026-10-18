@@ -12,6 +12,9 @@ public sealed class BatchSaleOfferConfiguration : IEntityTypeConfiguration<Batch
         builder.HasKey(x => x.ProductBatchId);
         builder.Property(x => x.ProductBatchId).HasColumnName("ProductBatchID").ValueGeneratedNever();
         builder.Property(x => x.WholeLotPrice).HasPrecision(18, 2);
+        builder.Property(x => x.ApprovedRemainderWeightKg).HasPrecision(18, 3);
+        builder.HasOne<StockAdjustment>().WithMany().HasForeignKey(x => x.SourceStockAdjustmentId).OnDelete(DeleteBehavior.Restrict);
+        builder.HasOne<StockAdjustment>().WithMany().HasForeignKey(x => x.RepricedForAdjustmentId).OnDelete(DeleteBehavior.Restrict);
         builder.Property(x => x.UpdatedAt).HasDefaultValueSql("SYSUTCDATETIME()");
         builder.HasOne(x => x.ProductBatch).WithOne().HasForeignKey<BatchSaleOffer>(x => x.ProductBatchId)
             .OnDelete(DeleteBehavior.Restrict);

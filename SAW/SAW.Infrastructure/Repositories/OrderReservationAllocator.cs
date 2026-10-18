@@ -18,6 +18,7 @@ public sealed class OrderReservationAllocator(DbContextOptions<AppDbContext> opt
             {
                 var order = await db.PurchaseOrders.FromSqlInterpolated($"SELECT * FROM PURCHASE_ORDER WITH (UPDLOCK,HOLDLOCK) WHERE PurchaseOrderID={orderId}")
                     .SingleOrDefaultAsync(ct) ?? throw new NotFoundException("Không tìm thấy đơn hàng.");
+                if (await BatchHandlingEligibility.OrderHeldAsync(db, orderId, ct)) return false;
                 if (order.OrderStatus is "RESERVED" or "PARTIALLY_PICKED" or "PICKED")
                 {
                     var allocated = await db.OrderDetails.AsNoTracking().Where(l => l.PurchaseOrderId == orderId)
@@ -34,9 +35,10 @@ public sealed class OrderReservationAllocator(DbContextOptions<AppDbContext> opt
                 foreach (var batchId in lines.Select(l => l.RequestedProductBatchId!.Value).Distinct().Order())
                 {
                     var batch = await WarehouseOperationTransaction.LockBatchAsync(db, batchId, ct);
-                    if (await BatchHandlingEligibility.DisposalReasonAsync(db, batchId, ct) is not null) return false;
+                    if (await BatchHandlingEligibility.HandlingReasonAsync(db, batchId, ct) is not null) return false;
                     if (batch.BatchStatus != "IN_STOCK" || PickingRules.BatchLockReason(batch.BatchStatus, batch.ExpiryDate) is not null
                         || lines.Any(l => l.RequestedProductBatchId == batchId && l.CropTypeId != batch.CropTypeId)) return false;
+                    foreach (var line in lines.Where(l => l.RequestedProductBatchId == batchId)) await BatchHandlingEligibility.ValidateAdjustedSaleAsync(db, batchId, line.ApprovedWeightKg, ct);
                     var inventory = await WarehouseOperationTransaction.LockInventoryAsync(db, batchId, ct);
                     if (inventory.Count == 0 || inventory.Any(i => i.Unit != "kg")) return false;
                     foreach (var locationId in inventory.Select(i => i.WarehouseLocationId).Distinct().Order())

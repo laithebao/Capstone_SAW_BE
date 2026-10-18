@@ -20,7 +20,7 @@ public sealed partial class GoodsIssueRepository
         var rows = db.GoodsIssues.AsNoTracking().Where(g => g.IssueStatus == "DRAFT" || g.IssueStatus == "COMMITTED");
         if (query.Search is { } term) rows = rows.Where(g => g.IssueCode.Contains(term) || g.PurchaseOrder.OrderCode.Contains(term)
             || g.GoodsIssueDetails.Any(l => l.Inventory.ProductBatch.BatchCode.Contains(term)));
-        if (query.Status is { } status) rows = rows.Where(g => g.IssueStatus == status);
+        if (query.Status is { } status) rows = rows.Where(g => status == "CANCELLED" ? db.GoodsIssueInvalidations.Any(v => v.GoodsIssueId == g.GoodsIssueId) : g.IssueStatus == status && !db.GoodsIssueInvalidations.Any(v => v.GoodsIssueId == g.GoodsIssueId));
         if (query.WarehouseLocationId is { } location) rows = rows.Where(g => g.GoodsIssueDetails.Any(l => l.Inventory.WarehouseLocationId == location));
         if (query.FromDate is { } from) { var date = from.ToDateTime(TimeOnly.MinValue); rows = rows.Where(g => g.IssuedAt >= date); }
         if (query.ToDate is { } to) { var date = to.AddDays(1).ToDateTime(TimeOnly.MinValue); rows = rows.Where(g => g.IssuedAt < date); }
@@ -36,7 +36,7 @@ public sealed partial class GoodsIssueRepository
         {
             g.GoodsIssueId, g.IssueCode, g.PurchaseOrderId, g.PurchaseOrder.OrderCode,
             g.PurchaseOrder.Distributor.DistributorName, Weight = g.GoodsIssueDetails.Sum(l => (decimal?)l.WeightInKg) ?? 0,
-            g.IssuedAt, Staff = g.OperationAccount.FullName, g.IssueStatus
+            g.IssuedAt, Staff = g.OperationAccount.FullName, IssueStatus = db.GoodsIssueInvalidations.Any(v => v.GoodsIssueId == g.GoodsIssueId) ? "CANCELLED" : g.IssueStatus
         }).ToListAsync(ct);
         return new(data.Select(g => new GoodsIssueSummary(g.GoodsIssueId, g.IssueCode, g.PurchaseOrderId, g.OrderCode,
             g.DistributorName, g.Weight, DateOnly.FromDateTime(g.IssuedAt), g.Staff, g.IssueStatus)).ToList(), count, query.Page, query.PageSize);
@@ -52,9 +52,15 @@ public sealed partial class GoodsIssueRepository
         await using var db = Context();
         var today = DateOnly.FromDateTime(DateTime.UtcNow.AddHours(7));
         var rows = db.PurchaseOrders.AsNoTracking().Where(o => GoodsIssueRules.OrderStatuses.Contains(o.OrderStatus)
-            && o.ApprovedAt != null && o.ApprovedByAccountId != null
-            && o.OrderDetails.Any(l => l.InventoryReservations.Any(r => (r.ReservationStatus == "PARTIALLY_PICKED" || r.ReservationStatus == "PICKED")
+            && o.ApprovedAt != null && o.ApprovedByAccountId != null && !BatchHandlingEligibility.HeldOrders(db).Contains(o.PurchaseOrderId)
+            && o.OrderDetails.Any(l => l.RequestedProductBatchId != null
+                && l.RequestedProductBatch!.Inventories.Sum(i => (decimal?)i.QuantityOnHand) == l.ApprovedWeightKg
+                && !l.InventoryReservations.Any(r => r.ReleasedAt == null && PickingRules.ActiveReservations.Contains(r.ReservationStatus)
+                    && (r.ReservationStatus != "PICKED" || r.PickedQuantity != r.ReservedQuantity))
+                && l.InventoryReservations.Where(r => r.ReleasedAt == null && r.ReservationStatus == "PICKED").Sum(r => (decimal?)r.ReservedQuantity) == l.ApprovedWeightKg
+                && l.InventoryReservations.Any(r => r.ReservationStatus == "PICKED"
                 && r.ReleasedAt == null && r.Inventory.Unit == "kg" && r.Inventory.WarehouseLocation.LocationStatus == "ACTIVE"
+                && !BatchHandlingEligibility.PendingHandlingBatches(db).Contains(r.Inventory.ProductBatchId)
                 && (r.Inventory.ProductBatch.BatchStatus == "IN_STOCK" || r.Inventory.ProductBatch.BatchStatus == "RESERVED" || r.Inventory.ProductBatch.BatchStatus == "PARTIALLY_ISSUED")
                 && (r.Inventory.ProductBatch.ExpiryDate == null || r.Inventory.ProductBatch.ExpiryDate >= today)
                 && r.PickedQuantity > (r.GoodsIssueDetails.Where(d => d.GoodsIssue.IssueStatus == "COMMITTED").Sum(d => (decimal?)d.WeightInKg) ?? 0)
@@ -77,20 +83,36 @@ public sealed partial class GoodsIssueRepository
             .Include(o => o.OrderDetails).ThenInclude(l => l.InventoryReservations).ThenInclude(r => r.Inventory).ThenInclude(i => i.WarehouseLocation)
             .Include(o => o.OrderDetails).ThenInclude(l => l.InventoryReservations).ThenInclude(r => r.GoodsIssueDetails).ThenInclude(d => d.GoodsIssue)
             .AsSplitQuery().SingleOrDefaultAsync(o => o.PurchaseOrderId == id, ct) ?? throw new NotFoundException("Không tìm thấy đơn hàng.");
-        var blockedBatches = await BatchHandlingEligibility.PendingDisposalBatches(db).ToListAsync(ct);
-        var allocations = order.OrderDetails.OrderBy(l => l.OrderDetailId).SelectMany(l => l.InventoryReservations.OrderBy(r => r.InventoryReservationId).Select(r =>
+        var orderHeld = await BatchHandlingEligibility.OrderHeldAsync(db, id, ct);
+        var blockedBatches = await db.StockAdjustments.AsNoTracking().Where(a => BatchHandlingEligibility.PendingHandlingBatches(db).Contains(a.Inventory.ProductBatchId))
+            .Select(a => new { a.Inventory.ProductBatchId, a.RequestKind }).ToListAsync(ct);
+        var batchIds = order.OrderDetails.Where(l => l.RequestedProductBatchId != null).Select(l => l.RequestedProductBatchId!.Value).ToList();
+        var stocks = await db.Inventories.AsNoTracking().Where(i => batchIds.Contains(i.ProductBatchId)).ToListAsync(ct);
+        var allocations = order.OrderDetails.OrderBy(l => l.OrderDetailId).SelectMany(l => l.InventoryReservations
+            .Where(r => (r.ReleasedAt == null && PickingRules.ActiveReservations.Contains(r.ReservationStatus))
+                || r.GoodsIssueDetails.Any(d => d.GoodsIssue.IssueStatus == "COMMITTED"))
+            .OrderBy(r => r.InventoryReservationId).Select(r =>
         {
             var issued = r.GoodsIssueDetails.Where(d => d.GoodsIssue.IssueStatus == "COMMITTED").Sum(d => d.WeightInKg);
             var remaining = Math.Max(0, r.PickedQuantity - issued);
-            var reason = !GoodsIssueRules.OrderStatuses.Contains(order.OrderStatus) || order.ApprovedAt is null || order.ApprovedByAccountId is null
+            var reason = orderHeld ? "Đơn đang tạm dừng xử lý điều chỉnh tồn." : !GoodsIssueRules.OrderStatuses.Contains(order.OrderStatus) || order.ApprovedAt is null || order.ApprovedByAccountId is null
                 ? "Đơn không còn cho phép xuất kho."
-                : r.ReservationStatus is not ("PARTIALLY_PICKED" or "PICKED") || r.ReleasedAt != null || remaining <= 0
+                : r.ReservationStatus != "PICKED" || r.ReleasedAt != null || remaining <= 0
                     ? "Phần giữ hàng chưa được soạn hoặc đã xuất hết."
                 : r.Inventory.Unit != "kg" || r.Inventory.WarehouseLocation.LocationStatus != "ACTIVE"
                     ? "Vị trí không hoạt động hoặc đơn vị tồn không phải kg."
                 : PickingRules.BatchLockReason(r.Inventory.ProductBatch.BatchStatus, r.Inventory.ProductBatch.ExpiryDate);
             if (reason is null && (r.Inventory.QuantityOnHand <= 0 || l.ApprovedWeightKg <= 0)) reason = "Tồn thực tế hoặc lượng duyệt không đủ.";
-            if (blockedBatches.Contains(r.Inventory.ProductBatchId)) reason = SAW.Application.Features.StockAdjustments.StockAdjustmentRules.DisposalLockReason;
+            reason ??= WholeLotFulfillment.Reason(l, l.InventoryReservations.ToList(), stocks.Where(i => i.ProductBatchId == r.Inventory.ProductBatchId).ToList(), requirePicked: true);
+            if (reason is null && l.InventoryReservations.Any(p => p.GoodsIssueDetails.Any(d => d.GoodsIssue.IssueStatus == "COMMITTED")))
+                reason = "Lô đã xuất một phần hoặc xuất hết; cần rà soát hồ sơ, không tiếp tục xuất từng phần.";
+            if (reason is null && l.InventoryReservations.Where(p => p.ReleasedAt == null && PickingRules.ActiveReservations.Contains(p.ReservationStatus))
+                .Any(p => p.Inventory.Unit != "kg" || p.Inventory.WarehouseLocation.LocationStatus != "ACTIVE"))
+                reason = "Có vị trí giữ hàng không hoạt động hoặc đơn vị tồn không phải kg.";
+            var pending = blockedBatches.Where(a => a.ProductBatchId == r.Inventory.ProductBatchId).ToList();
+            if (pending.Count > 0) reason = pending.Any(a => a.RequestKind == "DISPOSAL")
+                ? SAW.Application.Features.StockAdjustments.StockAdjustmentRules.DisposalLockReason
+                : SAW.Application.Features.StockAdjustments.StockAdjustmentRules.CountLockReason;
             return new GoodsIssueAllocation(r.InventoryReservationId, l.OrderDetailId, r.InventoryId, r.Inventory.ProductBatchId,
                 r.Inventory.ProductBatch.BatchCode, r.Inventory.ProductBatch.ProductName, r.Inventory.WarehouseLocationId,
                 r.Inventory.WarehouseLocation.LocationCode, r.Inventory.ProductBatch.ExpiryDate, l.ApprovedWeightKg,
@@ -116,11 +138,16 @@ public sealed partial class GoodsIssueRepository
             .OrderByDescending(a => a.CreatedAt).ThenByDescending(a => a.AuditLogId)
             .Select(a => new GoodsIssueHistory(a.AuditLogId, a.ActionType, a.CreatedAt, a.Account == null ? null : a.Account.FullName, a.Description)).ToListAsync(ct);
         // Include the immutable operation receipt ID: an edit/revert cannot recreate an old version (ABA).
+        var invalid = await db.GoodsIssueInvalidations.AsNoTracking().SingleOrDefaultAsync(v => v.GoodsIssueId == id, ct);
+        var orderHold = await BatchHandlingEligibility.OrderHeldAsync(db, g.PurchaseOrderId, ct);
+        var effectiveStatus = invalid != null ? "CANCELLED" : g.IssueStatus;
+        var canEdit = g.IssueStatus == "DRAFT" && invalid == null && !orderHold && GoodsIssueRules.OrderStatuses.Contains(g.PurchaseOrder.OrderStatus);
+        var editReason = invalid?.Reason ?? (orderHold ? "Đơn đang tạm dừng xử lý điều chỉnh tồn." : "Phiếu đã xác nhận; chỉ được xem.");
         var snapshot = Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(JsonSerializer.Serialize(new
         { g.GoodsIssueId, g.PurchaseOrderId, g.IssuedAt, g.ReceiverName, g.Note, g.IssueStatus, g.CommittedAt, Lines = lines, Version = history.FirstOrDefault()?.Id }))));
         return new(new(g.GoodsIssueId, g.IssueCode, g.PurchaseOrderId, g.PurchaseOrder.OrderCode, g.PurchaseOrder.Distributor.DistributorName,
-            lines.Sum(l => l.WeightInKg), DateOnly.FromDateTime(g.IssuedAt), g.OperationAccount.FullName, g.IssueStatus),
-            g.ReceiverName, g.Note, g.CommittedAt, snapshot, g.IssueStatus == "DRAFT",
-            g.IssueStatus == "DRAFT" ? null : "Phiếu đã xác nhận; chỉ được xem.", lines, history);
+            lines.Sum(l => l.WeightInKg), DateOnly.FromDateTime(g.IssuedAt), g.OperationAccount.FullName, effectiveStatus),
+            g.ReceiverName, g.Note, g.CommittedAt, snapshot, canEdit,
+            canEdit ? null : editReason, lines, history);
     }
 }

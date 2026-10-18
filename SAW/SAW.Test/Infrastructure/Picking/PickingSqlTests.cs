@@ -45,7 +45,9 @@ public sealed class PickingSqlTests(PickingSqlFixture fixture) : IClassFixture<P
         var stored = await db.ProductBatches.FindAsync(batch.ProductBatchId); stored!.BatchStatus="IN_STOCK";
         stored.QualityGrade="E"; stored.ExpiryDate=DateOnly.FromDateTime(DateTime.UtcNow.AddHours(7)).AddDays(30);
         var key=Guid.NewGuid().ToString("N");
-        var account=new Account { RoleId=await db.Roles.Select(r=>r.RoleId).FirstAsync(),Username=key,Email=key+"@test.invalid",FullName="Picking buyer",PasswordHash="unused-test",AccountStatus="ACTIVE" };
+        var buyerRole=await db.Roles.SingleOrDefaultAsync(r=>r.RoleCode=="DISTRIBUTOR");
+        if(buyerRole==null){buyerRole=new Role{RoleCode="DISTRIBUTOR",RoleName="Fixture Distributor",IsActive=true};db.Add(buyerRole);await db.SaveChangesAsync();}
+        var account=new Account { RoleId=buyerRole.RoleId,Username=key,Email=key+"@test.invalid",FullName="Picking buyer",PasswordHash="unused-test",AccountStatus="ACTIVE" };
         var buyer=new Distributor { Account=account,DistributorCode="P-"+key[..20],DistributorName="Picking distributor "+key[..5],TaxCode=key,ProfileStatus="ACTIVE" };
         var approved=status!="PENDING";
         var order=new PurchaseOrder { Distributor=buyer,OrderCode="PICK-"+key,OrderStatus=status,DeliveryAddress="Test address",OrderNote="Keep original note",
@@ -120,55 +122,60 @@ public sealed class PickingSqlTests(PickingSqlFixture fixture) : IClassFixture<P
         Assert.Single(await verify.InventoryReservations.Where(r=>r.OrderDetailId==s.LineId).ToListAsync());
     }
     [ReceivingSqlFact]
-    public async Task Partial_then_full_picking_uses_real_triggers_once_and_never_reduces_stock_or_releases_reservation()
+    public async Task Historical_partial_pick_is_preserved_then_remaining_whole_lot_is_confirmed_once()
     {
         var s=await ScenarioAsync();Assert.True(await Allocator().TryReserveAsync(s.OrderId,F.ActorId,default));
-        var first=await RequestAsync(s,40);await Repository().ConfirmAsync(s.OrderId,first,F.ActorId,default);
-        var partial=await Repository().GetAsync(s.OrderId,default);
-        Assert.Equal("PARTIALLY_PICKED",partial.Order.Status);Assert.Equal("PARTIALLY_PICKED",partial.Lines.Single().Reservations.Single().Status);
-        Assert.Equal((100m,100m,40m,1,1,"PARTIALLY_PICKED"),await StateAsync(s));
-        await Repository().ConfirmAsync(s.OrderId,first,F.ActorId,default);
-        Assert.Equal((100m,100m,40m,1,1,"PARTIALLY_PICKED"),await StateAsync(s));
+        var first=await RequestAsync(s,40);var before=await StateAsync(s);
+        await Assert.ThrowsAsync<ConflictException>(()=>Repository().ConfirmAsync(s.OrderId,first,F.ActorId,default));
+        Assert.Equal(before,await StateAsync(s));
+        // Saved history from the previous workflow remains immutable. Only this private fixture is seeded.
+        await using(var seed=F.Context()) { seed.PickingHistories.Add(new PickingHistory {InventoryReservationId=first.ReservationId,
+            PickedByAccountId=F.ActorId,PickedQuantity=40,PickedAt=DateTime.UtcNow,Note="Historical partial pick"}); await seed.SaveChangesAsync(); }
         var second=await RequestAsync(s,60);await Repository().ConfirmAsync(s.OrderId,second,F.ActorId,default);
         await Repository().ConfirmAsync(s.OrderId,second,F.ActorId,default);
-        Assert.Equal((100m,100m,100m,2,2,"PICKED"),await StateAsync(s));
+        Assert.Equal((100m,100m,100m,2,1,"PICKED"),await StateAsync(s));
         await using var db=F.Context();
-        Assert.Equal(0,await db.GoodsIssues.CountAsync(i=>i.PurchaseOrderId==s.OrderId));
-        Assert.Equal(0,await db.StockAdjustments.CountAsync(a=>a.Inventory.ProductBatchId==s.BatchId));
+        Assert.Equal(40,await db.PickingHistories.Where(h=>h.InventoryReservation.OrderDetailId==s.LineId&&h.Note=="Historical partial pick").Select(h=>h.PickedQuantity).SingleAsync());
+        Assert.False(await db.GoodsIssues.AnyAsync(i=>i.PurchaseOrderId==s.OrderId));
         Assert.Equal("IN_STOCK",(await db.ProductBatches.FindAsync(s.BatchId))!.BatchStatus);
-        Assert.Single(await db.OrderStatusHistories.Where(h=>h.PurchaseOrderId==s.OrderId&&h.NewStatus=="PICKED").ToListAsync());
     }
+
     [ReceivingSqlFact]
-    public async Task Multiple_locations_only_finish_order_when_every_active_reservation_is_picked()
+    public async Task One_confirmation_picks_the_whole_lot_across_all_locations_atomically()
     {
         var s=await ScenarioAsync(quantities:[40,60]);Assert.True(await Allocator().TryReserveAsync(s.OrderId,F.ActorId,default));
-        await Repository().ConfirmAsync(s.OrderId,await RequestAsync(s,40),F.ActorId,default);
-        var d=await Repository().GetAsync(s.OrderId,default);Assert.Equal("PARTIALLY_PICKED",d.Order.Status);
-        Assert.Equal(new[]{"PICKED","RESERVED"},d.Lines.Single().Reservations.Select(r=>r.Status));
-        await Repository().ConfirmAsync(s.OrderId,await RequestAsync(s,60,1),F.ActorId,default);
-        Assert.Equal((100m,100m,100m,2,2,"PICKED"),await StateAsync(s));
+        var invalid=await RequestAsync(s,40);var before=await StateAsync(s);
+        await Assert.ThrowsAsync<ConflictException>(()=>Repository().ConfirmAsync(s.OrderId,invalid,F.ActorId,default));
+        Assert.Equal(before,await StateAsync(s));
+        var request=await RequestAsync(s,100);await Repository().ConfirmAsync(s.OrderId,request,F.ActorId,default);
+        await Repository().ConfirmAsync(s.OrderId,request,F.ActorId,default);
+        var d=await Repository().GetAsync(s.OrderId,default);
+        Assert.All(d.Lines.Single().Reservations,r=>Assert.Equal("PICKED",r.Status));
+        Assert.Equal((100m,100m,100m,2,1,"PICKED"),await StateAsync(s));
     }
+
     [ReceivingSqlFact]
     public async Task Kg_precision_note_boundaries_and_original_supplier_units_are_preserved()
     {
         var s=await ScenarioAsync();Assert.True(await Allocator().TryReserveAsync(s.OrderId,F.ActorId,default));
         var service=new PickingService(Repository());
-        var request=(await RequestAsync(s,0.001m)) with {Note=" "+new string('n',1000)+" "};
+        var request=(await RequestAsync(s,100)) with {Note=" "+new string('n',1000)+" "};
         var detail=await service.ConfirmAsync(s.OrderId,request,F.ActorId,default);
-        Assert.Equal(0.001m,detail.Order.PickedWeightKg);Assert.Equal(1000,detail.Lines.Single().Reservations.Single().History.Single().Note!.Length);
-        await service.ConfirmAsync(s.OrderId,(await RequestAsync(s,99.999m)) with {Note="  "},F.ActorId,default);
-        Assert.Equal((100m,100m,100m,2,2,"PICKED"),await StateAsync(s));
+        Assert.Equal(100m,detail.Order.PickedWeightKg);Assert.Equal(1000,detail.Lines.Single().Reservations.Single().History.Single().Note!.Length);
+        var another=await ScenarioAsync();await Allocator().TryReserveAsync(another.OrderId,F.ActorId,default);
+        await service.ConfirmAsync(another.OrderId,(await RequestAsync(another,100)) with {Note="  "},F.ActorId,default);
+        Assert.Equal((100m,100m,100m,1,1,"PICKED"),await StateAsync(s));
         await using var db=F.Context();var batch=await db.ProductBatches.FindAsync(s.BatchId);
         Assert.Equal("Box",batch!.Unit);Assert.Equal(10,batch.DeclaredQuantity);Assert.Equal(100,batch.WeightInKg);
         Assert.Equal("Supplier note",batch.Note);Assert.Equal("Lô",(await db.OrderDetails.FindAsync(s.LineId))!.Unit);
-        Assert.Null((await db.PickingHistories.Where(h=>h.InventoryReservation.OrderDetailId==s.LineId).OrderByDescending(h=>h.PickingHistoryId).FirstAsync()).Note);
+        Assert.Null((await db.PickingHistories.Where(h=>h.InventoryReservation.OrderDetailId==another.LineId).OrderByDescending(h=>h.PickingHistoryId).FirstAsync()).Note);
     }
     [ReceivingSqlFact]
     public async Task Over_quantity_old_snapshot_foreign_reservation_and_changed_retry_payload_do_not_write()
     {
         var s=await ScenarioAsync();var other=await ScenarioAsync();
         await Allocator().TryReserveAsync(s.OrderId,F.ActorId,default);await Allocator().TryReserveAsync(other.OrderId,F.ActorId,default);
-        var req=await RequestAsync(s,20);var before=await StateAsync(s);
+        var req=await RequestAsync(s,100);var before=await StateAsync(s);
         var foreign=await RequestAsync(other,1);
         await Assert.ThrowsAsync<ConflictException>(()=>Repository().ConfirmAsync(s.OrderId,req with{QuantityKg=101},F.ActorId,default));
         await Assert.ThrowsAsync<ConflictException>(()=>Repository().ConfirmAsync(s.OrderId,foreign,F.ActorId,default));
@@ -202,7 +209,7 @@ public sealed class PickingSqlTests(PickingSqlFixture fixture) : IClassFixture<P
     [ReceivingSqlFact]
     public async Task Concurrent_stale_picking_only_one_wins_and_same_request_replay_is_idempotent()
     {
-        var s=await ScenarioAsync();await Allocator().TryReserveAsync(s.OrderId,F.ActorId,default);var first=await RequestAsync(s,70);
+        var s=await ScenarioAsync();await Allocator().TryReserveAsync(s.OrderId,F.ActorId,default);var first=await RequestAsync(s,100);
         int otherActor;
         await using(var setup=F.Context())
         {
@@ -212,7 +219,7 @@ public sealed class PickingSqlTests(PickingSqlFixture fixture) : IClassFixture<P
         }
         async Task<bool> Attempt(ConfirmPickingRequest r,int actor){try{await Repository(actorId:actor).ConfirmAsync(s.OrderId,r,actor,default);return true;}catch(ConflictException){return false;}}
         var results=await Task.WhenAll(Attempt(first,F.ActorId),Attempt(first with{RequestId=Guid.NewGuid()},otherActor));
-        Assert.Equal(1,results.Count(x=>x));Assert.Equal((100m,100m,70m,1,1,"PARTIALLY_PICKED"),await StateAsync(s));
+        Assert.Equal(1,results.Count(x=>x));Assert.Equal((100m,100m,100m,1,1,"PICKED"),await StateAsync(s));
         await using(var verify=F.Context())
         {
             var pickedBy=await verify.PickingHistories.Where(h=>h.InventoryReservation.OrderDetailId==s.LineId).Select(h=>h.PickedByAccountId).SingleAsync();
@@ -253,7 +260,7 @@ public sealed class PickingSqlTests(PickingSqlFixture fixture) : IClassFixture<P
     [ReceivingSqlFact]
     public async Task Persistence_failure_rolls_back_picking_and_reservations_but_keeps_committed_approval()
     {
-        var s=await ScenarioAsync();await Allocator().TryReserveAsync(s.OrderId,F.ActorId,default);var req=await RequestAsync(s,20);var before=await StateAsync(s);
+        var s=await ScenarioAsync();await Allocator().TryReserveAsync(s.OrderId,F.ActorId,default);var req=await RequestAsync(s,100);var before=await StateAsync(s);
         await Assert.ThrowsAsync<DbUpdateException>(()=>Repository(new FailWrite("audit")).ConfirmAsync(s.OrderId,req,F.ActorId,default));
         Assert.Equal(before,await StateAsync(s));
         var pending=await ScenarioAsync("PENDING",[40,60]);
@@ -286,7 +293,7 @@ public sealed class PickingSqlTests(PickingSqlFixture fixture) : IClassFixture<P
         [new Claim("account_id",(accountId??F.ActorId).ToString()),new Claim(ClaimTypes.Role,role)],expires:DateTime.UtcNow.AddMinutes(20),
         signingCredentials:new SigningCredentials(new SymmetricSecurityKey(Encoding.UTF8.GetBytes(ReceivingSqlFixture.JwtKey)),SecurityAlgorithms.HmacSha256)));
     [DistributorBrowserFact]
-    public async Task Browser_staff_list_partial_complete_stale_expired_and_manager_allocation_retry()
+    public async Task Browser_staff_whole_lot_complete_stale_expired_and_manager_allocation_retry()
     {
         var main=await ScenarioAsync();var waiting=await ScenarioAsync(quantities:[99]);var expired=await ScenarioAsync();var stale=await ScenarioAsync();
         foreach(var s in new[]{main,expired,stale})Assert.True(await Allocator().TryReserveAsync(s.OrderId,F.ActorId,default));
@@ -308,10 +315,10 @@ public sealed class PickingSqlTests(PickingSqlFixture fixture) : IClassFixture<P
         using var process=Process.Start(start)!;var output=process.StandardOutput.ReadToEndAsync();var error=process.StandardError.ReadToEndAsync();
         try{await process.WaitForExitAsync(new CancellationTokenSource(TimeSpan.FromMinutes(4)).Token);}catch{process.Kill(entireProcessTree:true);throw;}
         var log=await output+await error;await File.WriteAllTextAsync(Path.Combine(evidence,"picking-browser.log"),log);Assert.True(process.ExitCode==0,log);
-        Assert.Equal((100m,100m,100m,2,2,"PICKED"),await StateAsync(main));
+        Assert.Equal((100m,100m,100m,1,1,"PICKED"),await StateAsync(main));
         Assert.Equal((99m,0m,0m,0,0,"APPROVED"),await StateAsync(waiting));
         Assert.Equal((100m,100m,0m,0,0,"RESERVED"),await StateAsync(expired));
-        Assert.Equal((100m,100m,10m,1,1,"PARTIALLY_PICKED"),await StateAsync(stale));
+        Assert.Equal((100m,100m,100m,1,1,"PICKED"),await StateAsync(stale));
     }
     [ReceivingSqlFact]
     public async Task HTTP_roles_validation_spoofing_and_waiting_allocation_are_enforced_by_backend()
@@ -338,7 +345,7 @@ public sealed class PickingSqlTests(PickingSqlFixture fixture) : IClassFixture<P
         Assert.Equal((100m,0m,0m,0,0,"APPROVED"),await StateAsync(s));
         api.DefaultRequestHeaders.Authorization=new AuthenticationHeaderValue("Bearer",Token("WAREHOUSE_MANAGER"));
         Assert.Equal(HttpStatusCode.OK,(await api.PostAsync($"/api/warehouse-manager/orders/{s.OrderId}/reserve",null)).StatusCode);
-        api.DefaultRequestHeaders.Authorization=new AuthenticationHeaderValue("Bearer",Token("OPERATION_STAFF"));var req=await RequestAsync(s,10);
+        api.DefaultRequestHeaders.Authorization=new AuthenticationHeaderValue("Bearer",Token("OPERATION_STAFF"));var req=await RequestAsync(s,100);
         foreach(var field in new[]{"pickedByAccountId","orderStatus","pickedQuantity","pickedAt","role"})
         {
             var body=JsonSerializer.SerializeToNode(req,new JsonSerializerOptions(JsonSerializerDefaults.Web))!.AsObject();body[field]="forged";
@@ -347,6 +354,6 @@ public sealed class PickingSqlTests(PickingSqlFixture fixture) : IClassFixture<P
         Assert.Equal(HttpStatusCode.OK,(await api.PostAsJsonAsync(path+"/"+s.OrderId+"/confirm-picking",req)).StatusCode);
         Assert.Equal(HttpStatusCode.OK,(await api.PostAsJsonAsync(path+"/"+s.OrderId+"/confirm-picking",req)).StatusCode);
         Assert.Equal(HttpStatusCode.Conflict,(await api.PostAsJsonAsync(path+"/"+s.OrderId+"/confirm-picking",req with{RequestId=Guid.NewGuid()})).StatusCode);
-        Assert.Equal((100m,100m,10m,1,1,"PARTIALLY_PICKED"),await StateAsync(s));
+        Assert.Equal((100m,100m,100m,1,1,"PICKED"),await StateAsync(s));
     }
 }

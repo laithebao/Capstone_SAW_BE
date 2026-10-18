@@ -63,8 +63,8 @@ public sealed partial class StockAdjustmentSqlTests
     {
         var s=await Scenario();var order=await Order(s.Batch);Assert.True(await new OrderReservationAllocator(Options(),Accessor).TryReserveAsync(order,F.ActorId,default));
         var picking=new PickingService(new PickingRepository(Options(),Accessor));var detail=await picking.GetAsync(order,default);var line=detail.Lines.Single();var r=line.Reservations.Single();
-        await picking.ConfirmAsync(order,new(Guid.NewGuid(),r.Id,line.Id,r.InventoryId,s.Batch,40,0,null),F.ActorId,default);
-        var issues=new GoodsIssueService(new GoodsIssueRepository(Options(),Accessor));var draft=await issues.CreateAsync(new(Guid.NewGuid(),order,DateOnly.FromDateTime(DateTime.UtcNow.AddHours(7)),null,null,[new(r.Id,20)]),F.ActorId,default);
+        await picking.ConfirmAsync(order,new(Guid.NewGuid(),r.Id,line.Id,r.InventoryId,s.Batch,100,0,null),F.ActorId,default);
+        var issues=new GoodsIssueService(new GoodsIssueRepository(Options(),Accessor));var draft=await issues.CreateAsync(new(Guid.NewGuid(),order,DateOnly.FromDateTime(DateTime.UtcNow.AddHours(7)),null,null,[new(r.Id,100)]),F.ActorId,default);
         // Isolated deliberately inconsistent legacy fixture verifies independent terminal-state guards.
         await using var db=F.Context();await db.ProductBatches.Where(b=>b.ProductBatchId==s.Batch).ExecuteUpdateAsync(x=>x.SetProperty(b=>b.BatchStatus,"DISPOSED"));var before=await State(s.Batch);
         Assert.False((await picking.GetAsync(order,default)).Lines.Single().Reservations.Single().CanPick);

@@ -15,6 +15,7 @@ public class StockAdjustment
     public string? InventorySnapshotJson { get; set; }
     public ICollection<StockAdjustmentLine> Lines { get; set; } = [];
     public ICollection<StockAdjustmentImage> Images { get; set; } = [];
+    public StockAdjustmentResolution? Resolution { get; set; }
 
     public int CreatedByAccountId { get; set; }
     public int? ReviewedByAccountId { get; set; }

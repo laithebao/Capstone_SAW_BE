@@ -97,11 +97,11 @@ public sealed partial class StockAdjustmentSqlTests
         await Assert.ThrowsAsync<Microsoft.Data.SqlClient.SqlException>(()=>db.StockAdjustmentLines.Where(l=>l.StockAdjustmentId==a.Summary.Id).ExecuteDeleteAsync());
     }
     [ReceivingSqlFact]
-    public async Task Active_reservation_blocks_disposal_and_rejection_preserves_stock_and_old_reservations()
+    public async Task Linked_disposal_can_be_approved_but_rejection_preserves_stock_and_reservations()
     {
         var s=await Scenario();var order=await Order(s.Batch);Assert.True(await new OrderReservationAllocator(Options(),Accessor).TryReserveAsync(order,F.ActorId,default));
-        var a=await Service().CreateAsync(await Request(s.Batch,"DISPOSAL"),F.ActorId,default);var actor=await Manager();var view=await Reviews(actor).GetAsync(a.Summary.Id,default);Assert.False(view.CanApprove);Assert.Contains("reservation",view.ApprovalLockReason);Assert.NotEmpty(view.Reservations);
-        var before=await State(s.Batch);await Assert.ThrowsAsync<ConflictException>(()=>Reviews(actor).ReviewAsync(a.Summary.Id,Decision(view),actor,default));
+        var a=await Service().CreateAsync(await Request(s.Batch,"DISPOSAL"),F.ActorId,default);var actor=await Manager();var view=await Reviews(actor).GetAsync(a.Summary.Id,default);Assert.True(view.CanApprove,view.ApprovalLockReason);Assert.NotEmpty(view.Reservations);
+        var before=await State(s.Batch);
         var rejected=await Reviews(actor).ReviewAsync(a.Summary.Id,Decision(view,"REJECT"," Resolve held order first "),actor,default);Assert.Equal("Resolve held order first",rejected.Request.ReviewNote);Assert.Equal("REJECTED",rejected.Request.Summary.Status);Assert.Equal(before,await State(s.Batch));
         Assert.True((await Service().ScopeAsync(s.Batch,"DISPOSAL",null,default)).CanRequest);
     }
@@ -110,8 +110,10 @@ public sealed partial class StockAdjustmentSqlTests
     {
         foreach(var held in new[]{false,true})
         {
-            var s=await Scenario();await using var db=F.Context();var a=new StockAdjustment{AdjustmentCode="LEGACY-"+Guid.NewGuid().ToString("N"),InventoryId=s.Stocks[0],SystemQuantity=100,ActualQuantity=95,AdjustmentType="COUNTING_ERROR",Reason="Legacy count",CreatedByAccountId=F.ActorId,CreatedAt=DateTime.UtcNow};db.Add(a);await db.SaveChangesAsync();
+            var s=await Scenario();
             if(held){var order=await Order(s.Batch);Assert.True(await new OrderReservationAllocator(Options(),Accessor).TryReserveAsync(order,F.ActorId,default));}
+            await using var db=F.Context();var a=new StockAdjustment{AdjustmentCode="LEGACY-"+Guid.NewGuid().ToString("N"),InventoryId=s.Stocks[0],SystemQuantity=100,ActualQuantity=95,AdjustmentType="COUNTING_ERROR",Reason="Legacy count",CreatedByAccountId=F.ActorId,CreatedAt=DateTime.UtcNow};db.Add(a);await db.SaveChangesAsync();
+
             var actor=await Manager();var view=await Reviews(actor).GetAsync(a.StockAdjustmentId,default);Assert.False(view.HasOriginalSnapshot);
             if(held){Assert.False(view.CanApprove);await Assert.ThrowsAsync<ConflictException>(()=>Reviews(actor).ReviewAsync(a.StockAdjustmentId,Decision(view),actor,default));}
             else{Assert.True(view.CanApprove,view.ApprovalLockReason);await Reviews(actor).ReviewAsync(a.StockAdjustmentId,Decision(view),actor,default);Assert.Equal(95,await db.Inventories.Where(i=>i.ProductBatchId==s.Batch).Select(i=>i.QuantityOnHand).SingleAsync());}
