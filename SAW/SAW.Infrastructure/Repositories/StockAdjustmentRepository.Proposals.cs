@@ -75,8 +75,6 @@ public sealed partial class StockAdjustmentRepository
                     draft.CustomerMessage = request.Message.Trim();
                     if (request.Action == "SEND") { draft.ProposalStatus = "SENT"; draft.SentAt = DateTime.UtcNow; MoveCountScope(countScope, r, "PENDING_CUSTOMER", true); }
                 }
-                var customer = await db.PurchaseOrders.Where(o => o.PurchaseOrderId == r.PurchaseOrderId).Select(o => o.Distributor.AccountId).SingleAsync(ct);
-                if (request.Action != "SAVE") Notify(db, customer, id, r.PurchaseOrderId, request.Action == "SEND" ? "Đề xuất thay đổi đơn hàng" : "Đã rút đề xuất thay đổi đơn", request.Message?.Trim() ?? request.Reason!.Trim(), true);
             }
             r.Version++; r.UpdatedAt = DateTime.UtcNow;
             await db.SaveChangesAsync(ct); // Obtain proposal identity inside the same rollback boundary.
@@ -126,11 +124,6 @@ public sealed partial class StockAdjustmentRepository
             }
             r.Version++; r.UpdatedAt = DateTime.UtcNow;
             RecordResolution(db, r.StockAdjustmentId, actorId, "CUSTOMER_" + request.Decision, request.RequestId, hash, before, new { proposal.StockAdjustmentProposalId, proposal.Revision, r.State, request.Reason, r.ExpectedInventorySnapshotJson, r.ExpectedOrderSnapshotJson });
-            await NotifyWarehouseAsync(db, r.StockAdjustmentId, "Khách đã phản hồi đề xuất", request.Decision switch {
-                "ACCEPT" => "Khách hàng đã đồng ý giá và khối lượng đề xuất. Vui lòng duyệt kết quả kiểm đếm để tiếp tục đơn.",
-                "DECLINE" => "Khách hàng không tiếp tục mua. Đơn đã hủy; yêu cầu kiểm đếm vẫn chờ quản lý kho xử lý.",
-                _ => "Khách hàng đã rút đồng ý. Đơn tiếp tục tạm dừng để kho xem xét lại đề xuất."
-            }, ct, managersOnly: true, notificationType: "STOCK_ADJUSTMENT_CUSTOMER_RESPONSE");
             await db.SaveChangesAsync(ct); return true;
         }, ct);
     }

@@ -12,14 +12,10 @@ namespace SAW.Test.Infrastructure.StockAdjustments;
 public sealed partial class StockAdjustmentSqlTests
 {
     [ReceivingSqlFact]
-    public async Task Request_notifies_managers_only_and_staff_API_exposes_operational_progress_without_negotiations()
+    public async Task Staff_API_exposes_operational_progress_without_negotiations()
     {
         var s = await Scenario(); var sale = await SalesOrder(s.Batch); var manager = await Manager();
         var a = await Service().CreateAsync(await Request(s.Batch, actual: 80), F.ActorId, default);
-        await using var db = F.Context();
-        var recipients = await db.Notifications.Where(n => n.RelatedEntityId == a.Summary.Id.ToString() && n.Title == "Có phiếu điều chỉnh tồn cần xử lý")
-            .Select(n => n.Account.Role.RoleCode).ToListAsync();
-        Assert.NotEmpty(recipients); Assert.All(recipients, role => Assert.Equal("WAREHOUSE_MANAGER", role));
         var sent = await Send(a.Summary.Id, manager); var proposal = sent.Proposals.Single();
         await Resolution().RespondAsync(sale.Order, new(Guid.NewGuid(), sent.Version, proposal.Id, proposal.Revision, "ACCEPT", null), sale.Customer, default);
         using var api = await F.ApiAsync();
@@ -35,34 +31,7 @@ public sealed partial class StockAdjustmentSqlTests
         Assert.Equal("CUSTOMER_ACCEPTED", (await Reviews(manager).GetAsync(a.Summary.Id, default)).Request.Resolution!.State);
         var view = await Reviews(manager).GetAsync(a.Summary.Id, default);
         await Reviews(manager).ReviewAsync(a.Summary.Id, Decision(view), manager, default);
-        var notice = Assert.Single(await db.Notifications.Where(n => n.RelatedEntityId == a.Summary.Id.ToString()
-            && n.AccountId == F.ActorId && n.NotificationType == "STOCK_ADJUSTMENT_STAFF_RESULT").ToListAsync());
-        Assert.Contains("được duyệt", notice.Message); Assert.DoesNotContain("giá", notice.Message);
-    }
 
-    [ReceivingSqlFact]
-    public async Task Legacy_misrouted_notices_are_hidden_and_customer_cancellation_does_not_echo_customer_reason()
-    {
-        var s = await Scenario(); var sale = await SalesOrder(s.Batch); var manager = await Manager();
-        var a = await Service().CreateAsync(await Request(s.Batch, actual: 80), F.ActorId, default);
-        var sent = await Send(a.Summary.Id, manager); var proposal = sent.Proposals.Single();
-        await Resolution().RespondAsync(sale.Order, new(Guid.NewGuid(), sent.Version, proposal.Id, proposal.Revision, "DECLINE", "i dont like"), sale.Customer, default);
-        await using var db = F.Context();
-        var cancellation = await db.Notifications.SingleAsync(n => n.AccountId == sale.Customer && n.Title == "Đơn hàng đã hủy");
-        Assert.Contains("Bạn đã từ chối", cancellation.Message); Assert.DoesNotContain("i dont like", cancellation.Message);
-        Assert.Contains("i dont like", (await db.PurchaseOrders.FindAsync(sale.Order))!.CancellationReason);
-        Notification Legacy(int recipient) => new() { AccountId = recipient, Title = "Có phiếu điều chỉnh tồn cần xử lý",
-            Message = "Nhân viên kho vừa gửi kết quả kiểm đếm.", NotificationType = "STOCK_ADJUSTMENT", Priority = "HIGH",
-            RelatedEntityType = "STOCK_ADJUSTMENT", RelatedEntityId = a.Summary.Id.ToString(), CreatedAt = DateTime.UtcNow };
-        var staff = Legacy(F.ActorId); var customer = Legacy(sale.Customer); var warehouse = Legacy(manager);
-        customer.RelatedEntityType = "DISTRIBUTOR_ORDER"; customer.RelatedEntityId = sale.Order.ToString();
-        db.AddRange(staff, customer, warehouse); await db.SaveChangesAsync();
-        var inbox = new NotificationInboxRepository(Options(), Accessor);
-        Assert.DoesNotContain((await inbox.ListAsync(F.ActorId, 1, 50, default)).Items, n => n.Id == staff.NotificationId);
-        Assert.DoesNotContain((await inbox.ListAsync(sale.Customer, 1, 50, default)).Items, n => n.Id == customer.NotificationId);
-        Assert.Contains((await inbox.ListAsync(manager, 1, 50, default)).Items, n => n.Id == warehouse.NotificationId);
-        await Assert.ThrowsAsync<NotFoundException>(() => inbox.ReadAsync(F.ActorId, staff.NotificationId, default));
-        await Assert.ThrowsAsync<NotFoundException>(() => inbox.ReadAsync(sale.Customer, customer.NotificationId, default));
     }
 
     [ReceivingSqlFact]

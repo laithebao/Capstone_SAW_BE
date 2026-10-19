@@ -51,7 +51,7 @@ public sealed partial class StockAdjustmentSqlTests
     }
 
     [ReceivingSqlFact]
-    public async Task Resolution_API_enforces_roles_unknown_fields_ownership_and_persistent_inbox_ownership()
+    public async Task Resolution_API_enforces_roles_unknown_fields_and_order_ownership()
     {
         var s = await Scenario(); var sale = await SalesOrder(s.Batch); var manager = await Manager();
         var a = await Service().CreateAsync(await Request(s.Batch, actual: 80), F.ActorId, default); var sent = await Send(a.Summary.Id, manager); var p = sent.Proposals.Single();
@@ -67,9 +67,6 @@ public sealed partial class StockAdjustmentSqlTests
         var tampered = await api.PostAsJsonAsync($"api/distributor/orders/{sale.Order}/adjustments/respond", new { requestId = Guid.NewGuid(), expectedVersion = sent.Version, proposalId = p.Id, revision = p.Revision, decision = "ACCEPT", reason = (string?)null, actorId = manager, total = 1 });
         Assert.Equal(HttpStatusCode.BadRequest, tampered.StatusCode);
         Assert.Equal(HttpStatusCode.OK, (await api.GetAsync($"api/distributor/orders/{sale.Order}/adjustments")).StatusCode);
-        Assert.Equal(HttpStatusCode.OK, (await api.GetAsync("api/notifications")).StatusCode);
-        await using var db = F.Context(); var managerNotice = await db.Notifications.Where(n => n.AccountId == manager).Select(n => n.NotificationId).FirstAsync();
-        Assert.Equal(HttpStatusCode.NotFound, (await api.PostAsync($"api/notifications/{managerNotice}/read", null)).StatusCode);
         api.DefaultRequestHeaders.Authorization = null;
         Assert.Equal(HttpStatusCode.Unauthorized, (await api.GetAsync($"api/distributor/orders/{sale.Order}/adjustments")).StatusCode);
     }

@@ -37,13 +37,13 @@ public sealed partial class StockAdjustmentSqlTests
         Assert.Equal(1, await db.AuditLogs.CountAsync(l => l.EntityName == "STOCK_ADJUSTMENT" && l.EntityId == a.Summary.Id.ToString() && l.ActionType == "REVIEW_STOCK_ADJUSTMENT"));
     }
     [ReceivingSqlFact]
-    public async Task Disposal_failure_after_cancel_and_release_rolls_back_all_order_stock_and_notification_changes()
+    public async Task Disposal_failure_after_cancel_and_release_rolls_back_all_order_stock_and_audit_changes()
     {
         var s = await Scenario(); var sale = await SalesOrder(s.Batch); var manager = await Manager();
         var a = await Service().CreateAsync(await Request(s.Batch, "DISPOSAL"), F.ActorId, default); var view = await Reviews(manager).GetAsync(a.Summary.Id, default); var initial = await State(s.Batch);
-        await using var db = F.Context(); var notices = await db.Notifications.CountAsync();
+        await using var db = F.Context(); var audits = await db.AuditLogs.CountAsync();
         await Assert.ThrowsAsync<DbUpdateException>(() => Reviews(manager, new FailResolutionAudit("REVIEW_STOCK_ADJUSTMENT")).ReviewAsync(a.Summary.Id, Decision(view), manager, default));
-        Assert.Equal(initial, await State(s.Batch)); Assert.Equal(notices, await db.Notifications.CountAsync());
+        Assert.Equal(initial, await State(s.Batch)); Assert.Equal(audits, await db.AuditLogs.CountAsync());
         Assert.Equal("RESERVED", await db.PurchaseOrders.Where(o => o.PurchaseOrderId == sale.Order).Select(o => o.OrderStatus).SingleAsync());
         Assert.Equal("PENDING", (await ReadEntity(a.Summary.Id)).AdjustmentStatus);
     }

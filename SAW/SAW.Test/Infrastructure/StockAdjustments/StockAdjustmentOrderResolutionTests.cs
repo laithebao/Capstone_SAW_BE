@@ -52,9 +52,9 @@ public sealed partial class StockAdjustmentSqlTests
         Assert.All(await db.Inventories.Where(i => i.ProductBatchId == s.Batch).ToListAsync(), i => { Assert.Equal(0, i.QuantityOnHand); Assert.Equal(0, i.ReservedQuantity); });
         Assert.All(await db.InventoryReservations.Where(r => r.OrderDetail.PurchaseOrderId == sale.Order).ToListAsync(), r => Assert.Equal("RELEASED", r.ReservationStatus));
         Assert.Equal("DISPOSED", await db.ProductBatches.Where(b => b.ProductBatchId == s.Batch).Select(b => b.BatchStatus).SingleAsync());
-        var count = await db.Notifications.CountAsync(); var state = await State(s.Batch);
+        var count = await db.AuditLogs.CountAsync(); var state = await State(s.Batch);
         await Reviews(manager).ReviewAsync(a.Summary.Id, command, manager, default);
-        Assert.Equal(state, await State(s.Batch)); Assert.Equal(count, await db.Notifications.CountAsync());
+        Assert.Equal(state, await State(s.Batch)); Assert.Equal(count, await db.AuditLogs.CountAsync());
     }
     [ReceivingSqlFact]
     public async Task Customer_decline_cancels_before_count_review_and_owned_release_snapshot_remains_reviewable()

@@ -23,11 +23,6 @@ public sealed partial class StockAdjustmentRepository
         await InvalidateDraftsAsync(db, r, orderId, actorId, reason, ct);
         order.OrderStatus = "CANCELLED"; order.CancellationReason = reason.Length > 1000 ? reason[..1000] : reason; order.UpdatedAt = DateTime.UtcNow;
         await db.SaveChangesAsync(ct); // SQL reservation sync owns all kg counters.
-        var customer = await db.PurchaseOrders.Where(o => o.PurchaseOrderId == orderId).Select(o => o.Distributor.AccountId).SingleAsync(ct);
-        Notify(db, customer, r.StockAdjustmentId, orderId, "Đơn hàng đã hủy",
-            r.StockAdjustment.RequestKind == "DISPOSAL"
-                ? "Đơn hàng của bạn đã được hủy vì lô hàng không đủ điều kiện giao. Thanh toán/hoàn tiền được xử lý ngoài hệ thống."
-                : "Bạn đã từ chối đề xuất thay đổi. Đơn hàng của bạn đã được hủy. Thanh toán/hoàn tiền được xử lý ngoài hệ thống.", true);
     }
     private static async Task InvalidateDraftsAsync(AppDbContext db, StockAdjustmentResolution r, long orderId, int actor, string reason, CancellationToken ct)
     {
@@ -85,7 +80,5 @@ public sealed partial class StockAdjustmentRepository
         if (allLines.Any(l => l.ApprovedWeightKg <= 0 || l.ReservedWeightKg != l.ApprovedWeightKg))
             throw new ConflictException("Chưa phân bổ đủ các dòng của đơn; toàn bộ quyết định được hoàn tác.");
         order.OrderStatus = "RESERVED"; proposal.ProposalStatus = "FINALIZED";
-        var customer = await db.PurchaseOrders.Where(o => o.PurchaseOrderId == order.PurchaseOrderId).Select(o => o.Distributor.AccountId).SingleAsync(ct);
-        Notify(db, customer, r.StockAdjustmentId, order.PurchaseOrderId, "Đơn đã được điều chỉnh", "Khối lượng và giá mới đã có hiệu lực sau phê duyệt kho. Đối soát tiền thực hiện ngoài hệ thống.", true, "STOCK_ADJUSTMENT_REVIEW");
     }
 }

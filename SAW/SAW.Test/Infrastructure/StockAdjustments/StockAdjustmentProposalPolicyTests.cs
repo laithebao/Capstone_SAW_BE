@@ -25,7 +25,7 @@ public sealed partial class StockAdjustmentSqlTests
         Assert.Equal("INTERNAL-DO-NOT-DISCLOSE", (await Service().GetAsync(a.Summary.Id, default)).ReviewNote);
     }
     [ReceivingSqlFact]
-    public async Task Proposal_revisions_are_immutable_old_customer_responses_conflict_and_replays_do_not_duplicate_notifications()
+    public async Task Proposal_revisions_are_immutable_old_customer_responses_conflict_and_replays_do_not_duplicate_audit_receipts()
     {
         var s = await Scenario(); var sale = await SalesOrder(s.Batch); var manager = await Manager();
         var a = await Service().CreateAsync(await Request(s.Batch, actual: 80), F.ActorId, default);
@@ -36,8 +36,8 @@ public sealed partial class StockAdjustmentSqlTests
         await Assert.ThrowsAsync<ConflictException>(() => Resolution().RespondAsync(sale.Order, new(Guid.NewGuid(), sent.Version, old.Id, old.Revision, "ACCEPT", null), sale.Customer, default));
         var fresh = await Send(a.Summary.Id, manager, 8400000); var proposal = fresh.Proposals.First(); Assert.Equal(2, proposal.Revision);
         var command = new AdjustmentResponseRequest(Guid.NewGuid(), fresh.Version, proposal.Id, proposal.Revision, "ACCEPT", null);
-        await Resolution().RespondAsync(sale.Order, command, sale.Customer, default); var notificationCount = await db.Notifications.CountAsync();
-        await Resolution().RespondAsync(sale.Order, command, sale.Customer, default); Assert.Equal(notificationCount, await db.Notifications.CountAsync());
+        await Resolution().RespondAsync(sale.Order, command, sale.Customer, default); var auditCount = await db.AuditLogs.CountAsync();
+        await Resolution().RespondAsync(sale.Order, command, sale.Customer, default); Assert.Equal(auditCount, await db.AuditLogs.CountAsync());
         var audit = await db.AuditLogs.SingleAsync(a => a.ActionType == "RESOLUTION_CUSTOMER_ACCEPT" && a.NewDataJson!.Contains(command.RequestId.ToString()));
         Assert.Contains("SENT", audit.OldDataJson); Assert.Contains("CUSTOMER_ACCEPTED", audit.NewDataJson);
         await Assert.ThrowsAsync<ConflictException>(() => Resolution().RespondAsync(sale.Order, command with { Decision = "DECLINE", Reason = "Opposite" }, sale.Customer, default));
@@ -92,14 +92,14 @@ public sealed partial class StockAdjustmentSqlTests
         }
     }
     [ReceivingSqlFact]
-    public async Task Failure_persisting_customer_decline_rolls_back_order_release_proposal_notifications_and_hold_version()
+    public async Task Failure_persisting_customer_decline_rolls_back_order_release_proposal_audits_and_hold_version()
     {
         var s = await Scenario(); var sale = await SalesOrder(s.Batch); var manager = await Manager();
         var a = await Service().CreateAsync(await Request(s.Batch, actual: 80), F.ActorId, default); var sent = await Send(a.Summary.Id, manager); var p = sent.Proposals.Single(); var initial = await State(s.Batch);
-        await using var db = F.Context(); var notices = await db.Notifications.CountAsync();
+        await using var db = F.Context(); var audits = await db.AuditLogs.CountAsync();
         var failing = new StockAdjustmentRepository(Options(new FailResolutionAudit("RESOLUTION_CUSTOMER_DECLINE")), Accessor, Storage().Object);
         await Assert.ThrowsAsync<DbUpdateException>(() => failing.RespondAsync(sale.Order, new(Guid.NewGuid(), sent.Version, p.Id, p.Revision, "DECLINE", "Không mua"), sale.Customer, default));
-        Assert.Equal(initial, await State(s.Batch)); Assert.Equal(notices, await db.Notifications.CountAsync());
+        Assert.Equal(initial, await State(s.Batch)); Assert.Equal(audits, await db.AuditLogs.CountAsync());
         var current = (await Service().GetAsync(a.Summary.Id, default)).Resolution!; Assert.Equal(sent.Version, current.Version); Assert.Equal("SENT", current.Proposals.Single().Status);
     }
     [ReceivingSqlFact]
