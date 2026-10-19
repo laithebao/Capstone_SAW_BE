@@ -14,6 +14,8 @@ using SAW.Domain.Entities;
 using SAW.Infrastructure.Repositories;
 using SAW.Infrastructure.Persistence;
 using SAW.Test.Infrastructure.ProductBatches;
+using SAW.Application.Features.QrCodes.Dtos;
+using SAW.Infrastructure.QrCodes;
 
 namespace SAW.Test.Infrastructure.DistributorOrders;
 
@@ -361,6 +363,14 @@ public sealed class DistributorOrderSqlTests : IClassFixture<DistributorSqlFixtu
     public async Task Browser_Catalog_Create_List_Detail_Cancel_AndRoleGuards()
     {
         var buyer = await BuyerAsync(); var lot = await LotAsync();
+        var publicToken = new string('b', 32) + Guid.NewGuid().ToString("N");
+        var traceabilityUrl = "https://saw.test.invalid/trace/" + publicToken;
+        const string qrImageUrl = "https://assets.test.invalid/distributor-qr.png";
+        await using (var db = fixture.Context()) {
+            db.QrCodes.Add(new QrCode { ProductBatchId = lot.BatchId, PublicToken = publicToken,
+                TraceabilityUrl = traceabilityUrl, QrImageUrl = qrImageUrl, IsActive = true, GeneratedAt = DateTime.UtcNow });
+            await db.SaveChangesAsync();
+        }
         using var api = await fixture.ApiAsync();
         var root = new DirectoryInfo(AppContext.BaseDirectory);
         while (root is not null && !Directory.Exists(Path.Combine(root.FullName, "Capstone_SAW_FE"))) root = root.Parent;
@@ -371,6 +381,8 @@ public sealed class DistributorOrderSqlTests : IClassFixture<DistributorSqlFixtu
         start.Environment["SAW_TEST_API_URL"] = api.BaseAddress!.ToString();
         start.Environment["SAW_TEST_BATCH_CODE"] = lot.BatchCode;
         start.Environment["SAW_TEST_TOKEN"] = Token(buyer, "DISTRIBUTOR");
+        start.Environment["SAW_TEST_QR_IMAGE"] = Convert.ToBase64String(new PngQrCodeRenderer().RenderPng(traceabilityUrl));
+        start.Environment["SAW_TEST_TRACEABILITY_URL"] = traceabilityUrl;
         using var process = System.Diagnostics.Process.Start(start)!;
         var output = process.StandardOutput.ReadToEndAsync(); var error = process.StandardError.ReadToEndAsync();
         try { await process.WaitForExitAsync(new CancellationTokenSource(TimeSpan.FromMinutes(3)).Token); }
@@ -381,6 +393,46 @@ public sealed class DistributorOrderSqlTests : IClassFixture<DistributorSqlFixtu
         Assert.Equal("CANCELLED", order.Status);
         Assert.Equal(1500000m, order.TotalAmount);
     }
+
+    [ReceivingSqlFact]
+    public async Task CatalogQr_UsesExistingQr_EnforcesLotVisibility_AndHidesDisabledQr()
+    {
+        var buyer = await BuyerAsync(); var stranger = await BuyerAsync(); var lot = await LotAsync();
+        var publicToken = Guid.NewGuid().ToString("N") + Guid.NewGuid().ToString("N");
+        var traceabilityUrl = "https://saw.test.invalid/trace/" + publicToken;
+        const string qrImageUrl = "https://assets.test.invalid/existing-lot.png";
+        await using var db = fixture.Context();
+        db.QrCodes.Add(new QrCode { ProductBatchId = lot.BatchId, PublicToken = publicToken,
+            TraceabilityUrl = traceabilityUrl, QrImageUrl = qrImageUrl, IsActive = true, GeneratedAt = DateTime.UtcNow });
+        await db.SaveChangesAsync();
+        using var api = await fixture.ApiAsync();
+        var url = $"/api/distributor/orders/catalog/{lot.BatchId}/qr-code";
+        Assert.Equal(HttpStatusCode.Unauthorized, (await api.GetAsync(url)).StatusCode);
+        api.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", Token(buyer, "OPERATION_STAFF"));
+        Assert.Equal(HttpStatusCode.Forbidden, (await api.GetAsync(url)).StatusCode);
+        api.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", Token(buyer, "DISTRIBUTOR"));
+        var ready = (await api.GetFromJsonAsync<QrEnvelope>(url))!.Data;
+        Assert.Equal("READY", ready.Status); Assert.Equal(lot.BatchId, ready.ProductBatchId);
+        Assert.Equal(traceabilityUrl, ready.TraceabilityUrl); Assert.Equal(qrImageUrl, ready.QrImageUrl);
+        Assert.Equal(publicToken, ready.PublicToken);
+        // The distributor QR route must not open the internal operation endpoint to this role.
+        Assert.Equal(HttpStatusCode.Forbidden, (await api.GetAsync($"/api/operation/product-batches/{lot.BatchId}/qr-code")).StatusCode);
+        Assert.Equal(HttpStatusCode.NotFound, (await api.GetAsync("/api/distributor/orders/catalog/9223372036854775807/qr-code")).StatusCode);
+        await Repository().CreateAsync(buyer, Request(lot), default);
+        await db.BatchSaleOffers.Where(o => o.ProductBatchId == lot.BatchId).ExecuteUpdateAsync(s => s.SetProperty(o => o.IsPublished, false));
+        Assert.Equal(HttpStatusCode.OK, (await api.GetAsync(url)).StatusCode); // Buyer's own ordered lot remains readable.
+        api.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", Token(stranger, "DISTRIBUTOR"));
+        Assert.Equal(HttpStatusCode.NotFound, (await api.GetAsync(url)).StatusCode);
+        api.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", Token(buyer, "DISTRIBUTOR"));
+        await db.QrCodes.Where(q => q.ProductBatchId == lot.BatchId).ExecuteUpdateAsync(s => s.SetProperty(q => q.IsActive, false));
+        var disabled = (await api.GetFromJsonAsync<QrEnvelope>(url))!.Data;
+        Assert.Equal("UNAVAILABLE", disabled.Status); Assert.Null(disabled.QrImageUrl); Assert.Null(disabled.TraceabilityUrl); Assert.Null(disabled.PublicToken);
+        await db.Distributors.Where(d => d.AccountId == buyer).ExecuteUpdateAsync(s => s.SetProperty(d => d.ProfileStatus, "PENDING_REVIEW"));
+        Assert.Equal(HttpStatusCode.Forbidden, (await api.GetAsync(url)).StatusCode);
+        Assert.Equal(1, await db.QrCodes.CountAsync(q => q.ProductBatchId == lot.BatchId));
+    }
+
+    private sealed record QrEnvelope(ProductBatchQrCodeResponse Data);
 
     private static string Token(int account, string role) => new JwtSecurityTokenHandler().WriteToken(new JwtSecurityToken(
         "uc28-test", "uc28-test", [new Claim("account_id", account.ToString()), new Claim(ClaimTypes.Role, role)],

@@ -4,13 +4,16 @@ using Microsoft.AspNetCore.Mvc;
 using SAW.Application.Features.DistributorOrders;
 using SAW.Domain.Common;
 using SAW.Application.Features.StockAdjustments;
+using SAW.Application.Features.QrCodes.Dtos;
+using SAW.Application.Features.QrCodes.Interfaces;
 
 namespace SAW.API.Controllers;
 
 [ApiController]
 [Route("api/distributor/orders")]
 [Authorize(Roles = "DISTRIBUTOR")]
-public sealed class DistributorOrdersController(IDistributorOrderService service, IStockAdjustmentResolutionRepository resolution) : ControllerBase
+public sealed class DistributorOrdersController(IDistributorOrderService service, IStockAdjustmentResolutionRepository resolution,
+    IProductBatchQrCodeService qrCodes) : ControllerBase
 {
     [HttpGet("dashboard")]
     public async Task<IActionResult> Dashboard(CancellationToken ct) =>
@@ -21,6 +24,13 @@ public sealed class DistributorOrdersController(IDistributorOrderService service
     [HttpGet("catalog/{id:long}")]
     public async Task<IActionResult> Lot(long id, CancellationToken ct) =>
         Ok(ApiResponse<DistributorLotDetail>.Success(await service.LotAsync(ActorId(), id, ct)));
+    [HttpGet("catalog/{id:long}/qr-code")]
+    public async Task<IActionResult> LotQrCode(long id, CancellationToken ct)
+    {
+        // Apply the same catalog/owned-order visibility as the lot detail before exposing its QR.
+        await service.LotAsync(ActorId(), id, ct);
+        return Ok(ApiResponse<ProductBatchQrCodeResponse>.Success(await qrCodes.GetAsync(id, ct)));
+    }
     [HttpGet]
     public async Task<IActionResult> List([FromQuery] DistributorQuery query, CancellationToken ct) =>
         Ok(ApiResponse<DistributorPage<DistributorOrderSummary>>.Success(await service.ListAsync(ActorId(), query, ct)));
