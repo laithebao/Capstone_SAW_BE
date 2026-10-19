@@ -75,12 +75,12 @@ public sealed record WarehouseSaleOfferItem(
     string? IneligibilityReason,
     DateTime? UpdatedAt,
     bool IsSold = false,
-    bool IsPendingApproval = false);
+    bool IsPendingApproval = false, bool RequiresRepricing = false, string? PublicationSnapshot = null);
 
 public sealed record WarehouseSaleOfferPage(
     IReadOnlyList<WarehouseSaleOfferItem> Items, int TotalCount, int Page, int PageSize);
 
-public sealed record WarehouseSaleOfferUpdateRequest(decimal WholeLotPrice, bool IsPublished);
+public sealed record WarehouseSaleOfferUpdateRequest(decimal WholeLotPrice, bool IsPublished, string? ExpectedSnapshot = null);
 
 public sealed record WarehouseDistributorOrderLine(
     long OrderDetailId, string ProductName, string? BatchCode, decimal RequestedWeightKg,
@@ -96,7 +96,8 @@ public sealed record WarehouseDistributorOrderPage(
 public sealed record WarehouseDistributorOrderDetail(
     long Id, string OrderCode, string Status, string DistributorName, decimal TotalAmount,
     DateTime CreatedAt, DateOnly? ExpectedDeliveryDate, string DeliveryAddress, string? ContactPhone, string? OrderNote, bool StockAvailable,
-    IReadOnlyList<WarehouseDistributorOrderLine> Lines);
+    IReadOnlyList<WarehouseDistributorOrderLine> Lines, string? CancellationReason = null, IReadOnlyList<WarehouseOrderAdjustment>? Adjustments = null);
+public sealed record WarehouseOrderAdjustment(long Id, string Code, string State);
 
 public interface IWarehouseInventoryRepository
 {

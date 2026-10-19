@@ -31,7 +31,7 @@ public sealed class ProductBatchQueryRepository(AppDbContext dbContext) : IProdu
                 b.VerifiedQuantity == null && b.VerifiedWeightInKg == null)
             .OrderByDescending(b => b.CreatedAt).ThenByDescending(b => b.ProductBatchId)
             .Select(b => new SubmittedDeclarationOption(
-                b.ProductBatchId, b.BatchCode, b.ProductName, b.DeclaredQuantity, b.Unit))
+                b.ProductBatchId, b.BatchCode, b.ProductName, b.DeclaredQuantity, b.Unit, b.CropType.CropName))
             .ToListAsync(cancellationToken);
 
     public async Task<(IReadOnlyList<ProductBatch> Items, int TotalCount)> SearchAsync(
@@ -126,7 +126,7 @@ public sealed class ProductBatchQueryRepository(AppDbContext dbContext) : IProdu
         transactions.AddRange(await dbContext.GoodsIssueDetails.AsNoTracking()
             .Where(d => d.Inventory.ProductBatchId == id)
             .Select(d => new ProductBatchWarehouseTransaction(d.GoodsIssueDetailId, "GOODS_ISSUE",
-                d.GoodsIssue.IssueCode, d.GoodsIssue.IssueStatus, d.GoodsIssue.CommittedAt ?? d.GoodsIssue.IssuedAt,
+                d.GoodsIssue.IssueCode, dbContext.GoodsIssueInvalidations.Any(v => v.GoodsIssueId == d.GoodsIssueId) ? "CANCELLED" : d.GoodsIssue.IssueStatus, d.GoodsIssue.CommittedAt ?? d.GoodsIssue.IssuedAt,
                 d.IssuedQuantity, d.Unit, d.WeightInKg, d.Inventory.WarehouseLocation.LocationCode,
                 null, d.GoodsIssue.OperationAccount.FullName, d.GoodsIssue.Note)).ToListAsync(ct));
         transactions.AddRange(await dbContext.StockTransfers.AsNoTracking().Where(t => t.ProductBatchId == id)
@@ -136,10 +136,11 @@ public sealed class ProductBatchQueryRepository(AppDbContext dbContext) : IProdu
                 t.OperationAccount.FullName, t.Note)).ToListAsync(ct));
         transactions.AddRange(await dbContext.StockAdjustments.AsNoTracking()
             .Where(a => a.Inventory.ProductBatchId == id)
-            .Select(a => new ProductBatchWarehouseTransaction(a.StockAdjustmentId, "STOCK_ADJUSTMENT",
-                a.AdjustmentCode, a.AdjustmentStatus, a.CreatedAt, a.DifferenceQuantity, a.Inventory.Unit,
-                null, a.Inventory.WarehouseLocation.LocationCode, null, a.CreatedByAccount.FullName,
-                a.Reason)).ToListAsync(ct));
+            .Select(a => new ProductBatchWarehouseTransaction(a.StockAdjustmentId, a.RequestKind == "DISPOSAL" ? "STOCK_DISPOSAL" : "STOCK_ADJUSTMENT",
+                a.AdjustmentCode, a.AdjustmentStatus, a.ReviewedAt ?? a.CreatedAt, a.DifferenceQuantity, a.Inventory.Unit,
+                null, a.RequestKind == "DISPOSAL" ? "Toàn bộ vị trí của lô" : a.Inventory.WarehouseLocation.LocationCode,
+                null, a.ReviewedByAccount == null ? a.CreatedByAccount.FullName : a.ReviewedByAccount.FullName,
+                a.ReviewNote == null ? a.Reason : a.Reason + " · Xử lý: " + a.ReviewNote)).ToListAsync(ct));
         return new(qc, receipts, history, transactions.OrderByDescending(t => t.RecordedAt)
             .ThenBy(t => t.TransactionType, StringComparer.Ordinal).ThenByDescending(t => t.Id).ToList());
     }

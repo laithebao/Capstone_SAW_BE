@@ -38,6 +38,7 @@ public sealed class QcInspectionServiceTests
         ProductName = "Rice",
         CropTypeId = cropTypeId,
         WeightInKg = weight,
+        VerifiedWeightInKg = weight,
         BatchStatus = status,
         CropType = new CropType { CropTypeId = cropTypeId, CropName = "Rice" }
     };
@@ -258,6 +259,63 @@ public sealed class QcInspectionServiceTests
     // ═════════════════════════════════════════════════════════════════════════
     // UC21 – Declare Batch Sampling Ratio
     // ═════════════════════════════════════════════════════════════════════════
+
+    [Fact]
+    public async Task UC21_Sampling_UsesVerifiedWeight_AndReplacesPreviouslyCalculatedSize()
+    {
+        var batch = MakeBatch(weight: 125m);
+        batch.VerifiedWeightInKg = 100m;
+        var inspection = MakeInspection(batch: batch);
+        inspection.SamplingRatio = 0.10m;
+        inspection.SampleSize = 12.5m;
+        _repo.Setup(r => r.GetInspectionAsync(1, It.IsAny<CancellationToken>())).ReturnsAsync(inspection);
+
+        await CreateService().UpdateSamplingRatioAsync(1, new UpdateSamplingRatioRequest(0.10m), 5, "QC_STAFF", default);
+
+        Assert.Equal(10m, inspection.SampleSize);
+        Assert.Equal(125m, batch.WeightInKg);
+        Assert.Equal(100m, batch.VerifiedWeightInKg);
+        _repo.Verify(r => r.SaveChangesAsync(It.IsAny<CancellationToken>()), Times.Once);
+    }
+
+    [Theory]
+    [InlineData(1250, 999, 0.03, false)]
+    [InlineData(900, 1000, 0.03, true)]
+    [InlineData(125, 119, 0.10, true)]
+    public async Task UC21_SamplingMinimumAndSize_UseReceivedKg(decimal declared, decimal received, decimal ratio, bool accepted)
+    {
+        var batch = MakeBatch(weight: declared);
+        batch.VerifiedWeightInKg = received;
+        var inspection = MakeInspection(batch: batch);
+        _repo.Setup(r => r.GetInspectionAsync(1, It.IsAny<CancellationToken>())).ReturnsAsync(inspection);
+        if (accepted)
+        {
+            await CreateService().UpdateSamplingRatioAsync(1, new UpdateSamplingRatioRequest(ratio), 5, "QC_STAFF", default);
+            Assert.Equal(received * ratio, inspection.SampleSize);
+        }
+        else
+        {
+            await Assert.ThrowsAsync<BadRequestException>(() => CreateService().UpdateSamplingRatioAsync(
+                1, new UpdateSamplingRatioRequest(ratio), 5, "QC_STAFF", default));
+            _repo.Verify(r => r.SaveChangesAsync(It.IsAny<CancellationToken>()), Times.Never);
+        }
+    }
+
+    [Theory]
+    [InlineData(null)]
+    [InlineData(0)]
+    [InlineData(-1)]
+    public async Task UC21_Sampling_WithoutValidReceivedWeight_DoesNotFallbackToDeclaration(int? received)
+    {
+        var batch = MakeBatch(weight: 125m);
+        batch.VerifiedWeightInKg = received;
+        var inspection = MakeInspection(batch: batch);
+        _repo.Setup(r => r.GetInspectionAsync(1, It.IsAny<CancellationToken>())).ReturnsAsync(inspection);
+        await Assert.ThrowsAsync<BadRequestException>(() => CreateService().UpdateSamplingRatioAsync(
+            1, new UpdateSamplingRatioRequest(0.1m), 5, "QC_STAFF", default));
+        _repo.Verify(r => r.SaveChangesAsync(It.IsAny<CancellationToken>()), Times.Never);
+        Assert.Null(inspection.SampleSize);
+    }
 
     [Fact]
     public async Task UC21_UpdateSamplingRatioAsync_WithValidRatio_UpdatesInspection()

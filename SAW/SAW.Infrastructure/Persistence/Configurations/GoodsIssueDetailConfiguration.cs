@@ -8,7 +8,7 @@ public class GoodsIssueDetailConfiguration : IEntityTypeConfiguration<GoodsIssue
 {
     public void Configure(EntityTypeBuilder<GoodsIssueDetail> builder)
     {
-        builder.ToTable("GOODS_ISSUE_DETAIL");
+        builder.ToTable("GOODS_ISSUE_DETAIL", table => table.UseSqlOutputClause(false));
         builder.HasKey(x => x.GoodsIssueDetailId);
         builder.Property(x => x.GoodsIssueDetailId).HasColumnName("GoodsIssueDetailID").UseIdentityColumn();
         builder.Property(x => x.GoodsIssueId).HasColumnName("GoodsIssueID").IsRequired();

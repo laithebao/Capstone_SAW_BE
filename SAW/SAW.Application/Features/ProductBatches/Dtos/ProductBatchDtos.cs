@@ -10,7 +10,7 @@ public sealed record ProductBatchListItem(
     int SupplierId, string SupplierName,
     int CropTypeId, string CropTypeName, string CategoryName,
     decimal Quantity, string Unit, DateTime CreatedAt, DateTime? UpdatedAt,
-    string BatchStatus);
+    string BatchStatus, decimal? VerifiedQuantity = null);
 
 public sealed record ProductBatchListResponse(
     IReadOnlyList<ProductBatchListItem> Items, int TotalCount, int Page, int PageSize);

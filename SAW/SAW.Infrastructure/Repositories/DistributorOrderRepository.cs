@@ -27,7 +27,7 @@ public sealed class DistributorOrderRepository(DbContextOptions<AppDbContext> op
         }).SingleOrDefaultAsync(ct);
         var recent = await rows.OrderByDescending(o => o.CreatedAt).ThenByDescending(o => o.PurchaseOrderId).Take(4)
             .Select(o => new DistributorOrderSummary(o.PurchaseOrderId, o.OrderCode, o.OrderStatus,
-                o.OrderDetails.Count, o.TotalAmount, o.CreatedAt, o.ExpectedDeliveryDate)).ToListAsync(ct);
+                o.OrderDetails.Count, o.TotalAmount, o.CreatedAt, o.ExpectedDeliveryDate, db.StockAdjustmentResolutions.Where(r => r.PurchaseOrderId == o.PurchaseOrderId && r.State != "RESOLVED" && r.State != "CLEARED" && r.State != "REPLACED").OrderByDescending(r => r.StockAdjustmentId).Select(r => r.State).FirstOrDefault())).ToListAsync(ct);
         return new(totals?.Pending ?? 0, totals?.Successful ?? 0, totals?.Cancelled ?? 0, totals?.Spent ?? 0m, recent);
     }
     private static async Task<Distributor> OwnerAsync(AppDbContext db, int accountId, CancellationToken ct) =>
@@ -39,6 +39,7 @@ public sealed class DistributorOrderRepository(DbContextOptions<AppDbContext> op
     {
         var today = DateOnly.FromDateTime(DateTime.UtcNow.AddHours(7));
         return db.BatchSaleOffers.AsNoTracking().Where(o => o.IsPublished && o.WholeLotPrice > 0
+            && !BatchHandlingEligibility.PendingHandlingBatches(db).Contains(o.ProductBatchId)
             && o.ProductBatch.BatchStatus == "IN_STOCK"
             && o.ProductBatch.CropType.IsActive
             && (o.ProductBatch.ExpiryDate == null || o.ProductBatch.ExpiryDate >= today)
@@ -47,7 +48,9 @@ public sealed class DistributorOrderRepository(DbContextOptions<AppDbContext> op
             && !db.Inventories.Any(i => i.ProductBatchId == o.ProductBatchId
                 && (i.ReservedQuantity != 0 || i.Unit != "kg" || i.WarehouseLocation.LocationStatus != "ACTIVE"))
             && db.Inventories.Where(i => i.ProductBatchId == o.ProductBatchId).Sum(i => i.QuantityOnHand)
-                == o.ProductBatch.VerifiedWeightInKg
+                == (o.ApprovedRemainderWeightKg ?? o.ProductBatch.VerifiedWeightInKg)
+            && (o.SourceStockAdjustmentId == null || o.RepricedForAdjustmentId == o.SourceStockAdjustmentId
+                && db.StockAdjustments.Any(a => a.StockAdjustmentId == o.SourceStockAdjustmentId && a.AdjustmentStatus == "APPROVED" && a.RequestKind == "COUNT" && a.Inventory.ProductBatchId == o.ProductBatchId))
             // A lot with an order still in progress is temporarily unavailable to every distributor.
             // Rejected/cancelled orders release the lot; all other order states keep it off the catalog.
             && !db.OrderDetails.Any(l => l.RequestedProductBatchId == o.ProductBatchId
@@ -73,7 +76,7 @@ public sealed class DistributorOrderRepository(DbContextOptions<AppDbContext> op
             .Select(o => new CatalogLot(o.ProductBatchId, o.ProductBatch.BatchCode, o.ProductBatch.ProductName,
                 o.ProductBatch.CropType.CropName, o.ProductBatch.Supplier.SupplierName, o.ProductBatch.GrowingArea.AreaName,
                 o.ProductBatch.QualityGrade, o.ProductBatch.HarvestDate, o.ProductBatch.ExpiryDate,
-                o.ProductBatch.VerifiedWeightInKg!.Value, o.WholeLotPrice)).ToListAsync(ct);
+                o.ApprovedRemainderWeightKg ?? o.ProductBatch.VerifiedWeightInKg!.Value, o.WholeLotPrice)).ToListAsync(ct);
         return new(items, total, query.Page, query.PageSize);
     }
 
@@ -89,14 +92,15 @@ public sealed class DistributorOrderRepository(DbContextOptions<AppDbContext> op
         var lot = await db.ProductBatches.AsNoTracking().Include(b => b.CropType).Include(b => b.Supplier)
             .Include(b => b.GrowingArea).SingleOrDefaultAsync(b => b.ProductBatchId == id, ct)
             ?? throw new NotFoundException("Không tìm thấy lô hàng.");
-        var price = await db.BatchSaleOffers.Where(o => o.ProductBatchId == id).Select(o => (decimal?)o.WholeLotPrice).SingleOrDefaultAsync(ct);
+        var offer = await db.BatchSaleOffers.AsNoTracking().SingleOrDefaultAsync(o => o.ProductBatchId == id, ct);
+        var price = offer?.WholeLotPrice;
         var qc = await db.QcInspections.AsNoTracking()
             .Include(q => q.InspectionStandardVersion).ThenInclude(v => v.InspectionStandardSet)
             .Where(q => q.ProductBatchId == id)
             .OrderByDescending(q => q.StartedAt).ThenByDescending(q => q.QcInspectionId).FirstOrDefaultAsync(ct);
         return new(lot.ProductBatchId, lot.BatchCode, lot.ProductName, lot.CropType.CropName, lot.CropType.CategoryName,
             lot.Supplier.SupplierName, lot.GrowingArea.AreaName, lot.GrowingArea.Province, lot.GrowingArea.District, lot.GrowingArea.Ward,
-            lot.QualityGrade, lot.HarvestDate, lot.ExpiryDate, lot.VerifiedWeightInKg ?? lot.WeightInKg, price, lot.BatchStatus,
+            lot.QualityGrade, lot.HarvestDate, lot.ExpiryDate, offer?.ApprovedRemainderWeightKg ?? lot.VerifiedWeightInKg ?? lot.WeightInKg, price, lot.BatchStatus,
             saleable, lot.VerifiedPackagingType ?? lot.PackagingType, lot.VerifiedPackageCount ?? lot.PackageCount,
             lot.VerifiedPackageUnitWeightKg ?? lot.PackageUnitWeightKg, lot.ExpectedMinTempC, lot.ExpectedMaxTempC,
             lot.ExpectedMinHumidityPct, lot.ExpectedMaxHumidityPct, qc?.QcResult,
@@ -121,7 +125,7 @@ public sealed class DistributorOrderRepository(DbContextOptions<AppDbContext> op
         var items = await rows.OrderByDescending(o => o.CreatedAt).ThenByDescending(o => o.PurchaseOrderId)
             .Skip((query.Page - 1) * query.PageSize).Take(query.PageSize)
             .Select(o => new DistributorOrderSummary(o.PurchaseOrderId, o.OrderCode, o.OrderStatus,
-                o.OrderDetails.Count, o.TotalAmount, o.CreatedAt, o.ExpectedDeliveryDate)).ToListAsync(ct);
+                o.OrderDetails.Count, o.TotalAmount, o.CreatedAt, o.ExpectedDeliveryDate, db.StockAdjustmentResolutions.Where(r => r.PurchaseOrderId == o.PurchaseOrderId && r.State != "RESOLVED" && r.State != "CLEARED" && r.State != "REPLACED").OrderByDescending(r => r.StockAdjustmentId).Select(r => r.State).FirstOrDefault())).ToListAsync(ct);
         return new(items, total, query.Page, query.PageSize);
     }
 
@@ -133,7 +137,7 @@ public sealed class DistributorOrderRepository(DbContextOptions<AppDbContext> op
             .Include(o => o.StatusHistories).AsSplitQuery()
             .SingleOrDefaultAsync(o => o.PurchaseOrderId == id && o.DistributorId == owner.DistributorId, ct)
             ?? throw new NotFoundException("Không tìm thấy đơn hàng của bạn.");
-        var cancel = order.OrderStatus == "PENDING" && !await HasProcessingAsync(db, id, ct);
+        var cancel = order.OrderStatus == "PENDING" && !await HasProcessingAsync(db, id, ct) && !await BatchHandlingEligibility.OrderHeldAsync(db, id, ct);
         var receipt = await CanReceiveAsync(db, order, ct);
         return new(order.PurchaseOrderId, order.OrderCode, order.OrderStatus, order.DeliveryAddress, order.ContactPhone,
             order.ExpectedDeliveryDate, order.OrderNote, order.TotalAmount, Utc(order.CreatedAt),
@@ -141,7 +145,8 @@ public sealed class DistributorOrderRepository(DbContextOptions<AppDbContext> op
             order.ReceivedAt is { } received ? Utc(received) : null, cancel, receipt,
             order.OrderDetails.OrderBy(l => l.OrderDetailId).Select(l => new DistributorOrderLine(
                 l.RequestedProductBatchId ?? 0, l.RequestedProductBatch?.BatchCode ?? "", l.RequestedProductBatch?.ProductName ?? "",
-                l.RequestedWeightKg, l.UnitPrice)).ToList(),
+                l.ApprovedWeightKg > 0 ? l.ApprovedWeightKg : l.RequestedWeightKg, l.UnitPrice, l.RequestedWeightKg,
+                db.OrderAmendments.Where(a => a.OrderDetailId == l.OrderDetailId).OrderBy(a => a.OrderAmendmentId).Select(a => (decimal?)a.PreviousWholeLotPrice).FirstOrDefault() ?? l.UnitPrice)).ToList(),
             order.StatusHistories.OrderBy(h => h.ChangedAt).ThenBy(h => h.OrderStatusHistoryId)
                 .Select(h => new DistributorOrderEvent(h.OldStatus, h.NewStatus, Utc(h.ChangedAt), h.ChangeReason)).ToList());
     }
@@ -164,11 +169,11 @@ public sealed class DistributorOrderRepository(DbContextOptions<AppDbContext> op
                 await db.Inventories.FromSqlInterpolated($"SELECT * FROM INVENTORY WITH (UPDLOCK, HOLDLOCK) WHERE ProductBatchID={selected.BatchId}").LoadAsync(ct);
                 var lot = await Saleable(db).Include(o => o.ProductBatch).SingleOrDefaultAsync(o => o.ProductBatchId == selected.BatchId, ct)
                     ?? throw new ConflictException("Một lô đã hết khả dụng, hết hạn hoặc ngừng bán. Vui lòng chọn lại lô.");
-                if (lot.WholeLotPrice != selected.ExpectedPrice || lot.ProductBatch.VerifiedWeightInKg != selected.ExpectedWeightKg)
+                if (lot.WholeLotPrice != selected.ExpectedPrice || (lot.ApprovedRemainderWeightKg ?? lot.ProductBatch.VerifiedWeightInKg) != selected.ExpectedWeightKg)
                     throw new ConflictException($"Giá hoặc khối lượng lô {lot.ProductBatch.BatchCode} đã thay đổi. Vui lòng tải lại danh sách.");
                 order.OrderDetails.Add(new OrderDetail { CropTypeId = lot.ProductBatch.CropTypeId,
                     RequestedProductBatchId = selected.BatchId, RequestedQuantity = 1, Unit = "Lô",
-                    RequestedWeightKg = lot.ProductBatch.VerifiedWeightInKg!.Value, UnitPrice = lot.WholeLotPrice });
+                    RequestedWeightKg = lot.ApprovedRemainderWeightKg ?? lot.ProductBatch.VerifiedWeightInKg!.Value, UnitPrice = lot.WholeLotPrice });
             }
             order.SubtotalAmount = order.OrderDetails.Sum(l => l.UnitPrice);
             if (order.SubtotalAmount > 9999999999999999.99m) throw new BadRequestException("Tổng giá trị đơn vượt giới hạn lưu trữ.");
@@ -210,6 +215,7 @@ public sealed class DistributorOrderRepository(DbContextOptions<AppDbContext> op
         {
             var order = await LockOwnedAsync(db, accountId, id, ct);
             if (order.OrderStatus == "CANCELLED") return true;
+            if (await BatchHandlingEligibility.OrderHeldAsync(db, id, ct)) throw new ConflictException("Đơn đang chờ xử lý điều chỉnh tồn; vui lòng phản hồi đề xuất trên đơn.");
             if (order.OrderStatus != "PENDING" || await HasProcessingAsync(db, id, ct))
                 throw new ConflictException("Chỉ được hủy đơn chờ duyệt và chưa được xử lý. Vui lòng tải lại đơn.");
             order.OrderStatus = "CANCELLED"; order.CancellationReason = null; order.UpdatedAt = DateTime.UtcNow;
@@ -247,8 +253,8 @@ public sealed class DistributorOrderRepository(DbContextOptions<AppDbContext> op
         if (order.OrderStatus is not ("ISSUED" or "DISPATCHED") || order.ReceivedAt is not null) return false;
         var lines = db.OrderDetails.Where(l => l.PurchaseOrderId == order.PurchaseOrderId);
         return await lines.AnyAsync(ct) && !await lines.AnyAsync(l => l.ApprovedWeightKg <= 0
-            || l.ApprovedWeightKg != l.RequestedWeightKg
-            || (l.GoodsIssueDetails.Where(i => i.GoodsIssue.IssueStatus == "COMMITTED").Sum(i => (decimal?)i.WeightInKg) ?? 0) != l.RequestedWeightKg, ct);
+            || l.ApprovedWeightKg != l.RequestedWeightKg && !db.OrderAmendments.Any(a => a.OrderDetailId == l.OrderDetailId && a.EffectiveWeightKg == l.ApprovedWeightKg && a.EffectiveWholeLotPrice == l.UnitPrice)
+            || (l.GoodsIssueDetails.Where(i => i.GoodsIssue.IssueStatus == "COMMITTED").Sum(i => (decimal?)i.WeightInKg) ?? 0) != l.ApprovedWeightKg, ct);
     }
 
     private static async Task<PurchaseOrder> LockOwnedAsync(AppDbContext db, int accountId, long id, CancellationToken ct)
@@ -280,6 +286,7 @@ public sealed class DistributorOrderRepository(DbContextOptions<AppDbContext> op
             {
                 await db.Database.ExecuteSqlInterpolatedAsync($"EXEC sys.sp_set_session_context @key=N'AccountID', @value={actorId}", ct);
                 await using var tx = await db.Database.BeginTransactionAsync(IsolationLevel.Serializable, ct);
+                await db.Database.ExecuteSqlRawAsync("SELECT COUNT_BIG(*) FROM INVENTORY WITH (TABLOCKX,HOLDLOCK)", ct);
                 var result = await action(db);
                 await tx.CommitAsync(ct);
                 return result;

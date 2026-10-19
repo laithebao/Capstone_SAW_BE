@@ -8,7 +8,7 @@ public class PickingHistoryConfiguration : IEntityTypeConfiguration<PickingHisto
 {
     public void Configure(EntityTypeBuilder<PickingHistory> builder)
     {
-        builder.ToTable("PICKING_HISTORY");
+        builder.ToTable("PICKING_HISTORY", table => table.UseSqlOutputClause(false));
         builder.HasKey(x => x.PickingHistoryId);
         builder.Property(x => x.PickingHistoryId).HasColumnName("PickingHistoryID").UseIdentityColumn();
         builder.Property(x => x.InventoryReservationId).HasColumnName("InventoryReservationID").IsRequired();

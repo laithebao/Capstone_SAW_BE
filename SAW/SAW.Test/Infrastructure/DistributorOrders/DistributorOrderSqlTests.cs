@@ -12,7 +12,10 @@ using SAW.Application.Features.DistributorOrders;
 using SAW.Application.Features.WarehouseInventory;
 using SAW.Domain.Entities;
 using SAW.Infrastructure.Repositories;
+using SAW.Infrastructure.Persistence;
 using SAW.Test.Infrastructure.ProductBatches;
+using SAW.Application.Features.QrCodes.Dtos;
+using SAW.Infrastructure.QrCodes;
 
 namespace SAW.Test.Infrastructure.DistributorOrders;
 
@@ -41,7 +44,9 @@ public sealed class DistributorOrderSqlTests : IClassFixture<DistributorSqlFixtu
     private async Task<int> BuyerAsync()
     {
         await using var db = fixture.Context();
-        var roleId = await db.Roles.Select(r => r.RoleId).FirstAsync();
+        var role = await db.Roles.SingleOrDefaultAsync(r => r.RoleCode == "DISTRIBUTOR");
+        if (role == null) { role = new Role { RoleCode = "DISTRIBUTOR", RoleName = "Fixture Distributor", IsActive = true }; db.Roles.Add(role); await db.SaveChangesAsync(); }
+        var roleId = role.RoleId;
         var key = Guid.NewGuid().ToString("N");
         var account = new Account { RoleId = roleId, Username = key, Email = key + "@test.invalid", FullName = "Distributor test",
             PasswordHash = "test-only", AccountStatus = "ACTIVE" };
@@ -143,22 +148,22 @@ public sealed class DistributorOrderSqlTests : IClassFixture<DistributorSqlFixtu
         var buyer = await BuyerAsync(); var lot = await LotAsync();
         var firstRepo = Repository(new FixedClock(new DateTimeOffset(2031, 1, 1, 16, 59, 0, TimeSpan.Zero)));
         var first = await firstRepo.CreateAsync(buyer, Request(lot), default);
-        var second = await firstRepo.CreateAsync(buyer, Request(lot), default);
+        var second = await firstRepo.CreateAsync(buyer, Request(await LotAsync()), default);
         Assert.Equal("PO-20310101-01", first.OrderCode);
         Assert.Equal("PO-20310101-02", second.OrderCode);
         var nextRepo = Repository(new FixedClock(new DateTimeOffset(2031, 1, 1, 17, 1, 0, TimeSpan.Zero)));
-        Assert.Equal("PO-20310102-01", (await nextRepo.CreateAsync(buyer, Request(lot), default)).OrderCode);
+        Assert.Equal("PO-20310102-01", (await nextRepo.CreateAsync(buyer, Request(await LotAsync()), default)).OrderCode);
     }
 
     [ReceivingSqlFact]
     public async Task ConcurrentCreation_HasDistinctSequentialCodes_AndSameRequestDoesNotConsumeAnotherNumber()
     {
-        var buyer = await BuyerAsync(); var buyer2 = await BuyerAsync(); var lot = await LotAsync();
+        var buyer = await BuyerAsync(); var buyer2 = await BuyerAsync(); var lot = await LotAsync(); var secondLot = await LotAsync();
         var clock = new FixedClock(new DateTimeOffset(2032, 1, 1, 0, 0, 0, TimeSpan.Zero));
         var repo = Repository(clock);
-        var created = await Task.WhenAll(repo.CreateAsync(buyer, Request(lot), default), repo.CreateAsync(buyer2, Request(lot), default));
+        var created = await Task.WhenAll(repo.CreateAsync(buyer, Request(lot), default), repo.CreateAsync(buyer2, Request(secondLot), default));
         Assert.Equal(new[] { "PO-20320101-01", "PO-20320101-02" }, created.Select(o => o.OrderCode).OrderBy(c => c).ToArray());
-        var request = Request(lot);
+        var request = Request(await LotAsync());
         var repeated = await Task.WhenAll(repo.CreateAsync(buyer, request, default), repo.CreateAsync(buyer, request, default));
         Assert.Equal(repeated[0].Id, repeated[1].Id);
         Assert.Equal("PO-20320101-03", repeated[0].OrderCode);
@@ -257,7 +262,9 @@ public sealed class DistributorOrderSqlTests : IClassFixture<DistributorSqlFixtu
 
         await using (var warehouseDb = fixture.Context())
         {
-            var warehouse = new WarehouseInventoryRepository(warehouseDb);
+            var warehouse = new WarehouseInventoryRepository(warehouseDb,
+                new OrderReservationAllocator(new DbContextOptionsBuilder<AppDbContext>().UseSqlServer(fixture.ConnectionString).Options,
+                    new HttpContextAccessor()));
             var candidate = Assert.Single((await warehouse.GetSaleOffersAsync(lot.BatchCode, 1, 20, default)).Items);
             Assert.True(candidate.CanPublish);
             var published = await warehouse.UpdateSaleOfferAsync(lot.BatchId,
@@ -344,7 +351,7 @@ public sealed class DistributorOrderSqlTests : IClassFixture<DistributorSqlFixtu
         api.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", Token(buyer, "DISTRIBUTOR"));
         var list = await api.GetAsync("/api/distributor/orders?page=1&pageSize=10"); Assert.Equal(HttpStatusCode.OK, list.StatusCode);
         var created = await api.PostAsJsonAsync("/api/distributor/orders", Request(lot)); Assert.Equal(HttpStatusCode.OK, created.StatusCode);
-        Assert.Equal(HttpStatusCode.OK, (await api.PostAsJsonAsync("/api/distributor/orders", Request(lot) with { ExpectedDeliveryDate = null })).StatusCode);
+        Assert.Equal(HttpStatusCode.OK, (await api.PostAsJsonAsync("/api/distributor/orders", Request(await LotAsync()) with { ExpectedDeliveryDate = null })).StatusCode);
         Assert.Equal(HttpStatusCode.BadRequest, (await api.PostAsJsonAsync("/api/distributor/orders", Request(lot) with { ExpectedDeliveryDate = DateOnly.FromDateTime(DateTime.UtcNow.AddHours(7)).AddDays(-1) })).StatusCode);
         var lotDetail = await api.GetAsync($"/api/distributor/orders/catalog/{lot.BatchId}"); Assert.Equal(HttpStatusCode.OK, lotDetail.StatusCode);
         foreach (var phone in new[] { "090123456", "090123456a", "+84901234567" })
@@ -356,6 +363,14 @@ public sealed class DistributorOrderSqlTests : IClassFixture<DistributorSqlFixtu
     public async Task Browser_Catalog_Create_List_Detail_Cancel_AndRoleGuards()
     {
         var buyer = await BuyerAsync(); var lot = await LotAsync();
+        var publicToken = new string('b', 32) + Guid.NewGuid().ToString("N");
+        var traceabilityUrl = "https://saw.test.invalid/trace/" + publicToken;
+        const string qrImageUrl = "https://assets.test.invalid/distributor-qr.png";
+        await using (var db = fixture.Context()) {
+            db.QrCodes.Add(new QrCode { ProductBatchId = lot.BatchId, PublicToken = publicToken,
+                TraceabilityUrl = traceabilityUrl, QrImageUrl = qrImageUrl, IsActive = true, GeneratedAt = DateTime.UtcNow });
+            await db.SaveChangesAsync();
+        }
         using var api = await fixture.ApiAsync();
         var root = new DirectoryInfo(AppContext.BaseDirectory);
         while (root is not null && !Directory.Exists(Path.Combine(root.FullName, "Capstone_SAW_FE"))) root = root.Parent;
@@ -366,6 +381,8 @@ public sealed class DistributorOrderSqlTests : IClassFixture<DistributorSqlFixtu
         start.Environment["SAW_TEST_API_URL"] = api.BaseAddress!.ToString();
         start.Environment["SAW_TEST_BATCH_CODE"] = lot.BatchCode;
         start.Environment["SAW_TEST_TOKEN"] = Token(buyer, "DISTRIBUTOR");
+        start.Environment["SAW_TEST_QR_IMAGE"] = Convert.ToBase64String(new PngQrCodeRenderer().RenderPng(traceabilityUrl));
+        start.Environment["SAW_TEST_TRACEABILITY_URL"] = traceabilityUrl;
         using var process = System.Diagnostics.Process.Start(start)!;
         var output = process.StandardOutput.ReadToEndAsync(); var error = process.StandardError.ReadToEndAsync();
         try { await process.WaitForExitAsync(new CancellationTokenSource(TimeSpan.FromMinutes(3)).Token); }
@@ -376,6 +393,46 @@ public sealed class DistributorOrderSqlTests : IClassFixture<DistributorSqlFixtu
         Assert.Equal("CANCELLED", order.Status);
         Assert.Equal(1500000m, order.TotalAmount);
     }
+
+    [ReceivingSqlFact]
+    public async Task CatalogQr_UsesExistingQr_EnforcesLotVisibility_AndHidesDisabledQr()
+    {
+        var buyer = await BuyerAsync(); var stranger = await BuyerAsync(); var lot = await LotAsync();
+        var publicToken = Guid.NewGuid().ToString("N") + Guid.NewGuid().ToString("N");
+        var traceabilityUrl = "https://saw.test.invalid/trace/" + publicToken;
+        const string qrImageUrl = "https://assets.test.invalid/existing-lot.png";
+        await using var db = fixture.Context();
+        db.QrCodes.Add(new QrCode { ProductBatchId = lot.BatchId, PublicToken = publicToken,
+            TraceabilityUrl = traceabilityUrl, QrImageUrl = qrImageUrl, IsActive = true, GeneratedAt = DateTime.UtcNow });
+        await db.SaveChangesAsync();
+        using var api = await fixture.ApiAsync();
+        var url = $"/api/distributor/orders/catalog/{lot.BatchId}/qr-code";
+        Assert.Equal(HttpStatusCode.Unauthorized, (await api.GetAsync(url)).StatusCode);
+        api.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", Token(buyer, "OPERATION_STAFF"));
+        Assert.Equal(HttpStatusCode.Forbidden, (await api.GetAsync(url)).StatusCode);
+        api.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", Token(buyer, "DISTRIBUTOR"));
+        var ready = (await api.GetFromJsonAsync<QrEnvelope>(url))!.Data;
+        Assert.Equal("READY", ready.Status); Assert.Equal(lot.BatchId, ready.ProductBatchId);
+        Assert.Equal(traceabilityUrl, ready.TraceabilityUrl); Assert.Equal(qrImageUrl, ready.QrImageUrl);
+        Assert.Equal(publicToken, ready.PublicToken);
+        // The distributor QR route must not open the internal operation endpoint to this role.
+        Assert.Equal(HttpStatusCode.Forbidden, (await api.GetAsync($"/api/operation/product-batches/{lot.BatchId}/qr-code")).StatusCode);
+        Assert.Equal(HttpStatusCode.NotFound, (await api.GetAsync("/api/distributor/orders/catalog/9223372036854775807/qr-code")).StatusCode);
+        await Repository().CreateAsync(buyer, Request(lot), default);
+        await db.BatchSaleOffers.Where(o => o.ProductBatchId == lot.BatchId).ExecuteUpdateAsync(s => s.SetProperty(o => o.IsPublished, false));
+        Assert.Equal(HttpStatusCode.OK, (await api.GetAsync(url)).StatusCode); // Buyer's own ordered lot remains readable.
+        api.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", Token(stranger, "DISTRIBUTOR"));
+        Assert.Equal(HttpStatusCode.NotFound, (await api.GetAsync(url)).StatusCode);
+        api.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", Token(buyer, "DISTRIBUTOR"));
+        await db.QrCodes.Where(q => q.ProductBatchId == lot.BatchId).ExecuteUpdateAsync(s => s.SetProperty(q => q.IsActive, false));
+        var disabled = (await api.GetFromJsonAsync<QrEnvelope>(url))!.Data;
+        Assert.Equal("UNAVAILABLE", disabled.Status); Assert.Null(disabled.QrImageUrl); Assert.Null(disabled.TraceabilityUrl); Assert.Null(disabled.PublicToken);
+        await db.Distributors.Where(d => d.AccountId == buyer).ExecuteUpdateAsync(s => s.SetProperty(d => d.ProfileStatus, "PENDING_REVIEW"));
+        Assert.Equal(HttpStatusCode.Forbidden, (await api.GetAsync(url)).StatusCode);
+        Assert.Equal(1, await db.QrCodes.CountAsync(q => q.ProductBatchId == lot.BatchId));
+    }
+
+    private sealed record QrEnvelope(ProductBatchQrCodeResponse Data);
 
     private static string Token(int account, string role) => new JwtSecurityTokenHandler().WriteToken(new JwtSecurityToken(
         "uc28-test", "uc28-test", [new Claim("account_id", account.ToString()), new Claim(ClaimTypes.Role, role)],

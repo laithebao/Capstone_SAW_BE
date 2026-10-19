@@ -5,6 +5,9 @@ using System.Text.RegularExpressions;
 using Microsoft.Data.SqlClient;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Diagnostics;
+using Microsoft.EntityFrameworkCore.Infrastructure;
+using Microsoft.EntityFrameworkCore.Migrations;
+using SAW.Infrastructure.Migrations;
 using SAW.Domain.Entities;
 using SAW.Infrastructure.Persistence;
 
@@ -23,6 +26,9 @@ public sealed class ReceivingSqlFactAttribute : FactAttribute
 
 public sealed class ReceivingSqlFixture : IAsyncLifetime
 {
+    private readonly bool useMigrationBaseline;
+    public ReceivingSqlFixture() { }
+    internal ReceivingSqlFixture(bool useMigrationBaseline) => this.useMigrationBaseline = useMigrationBaseline;
     private readonly string _database = "SAW_UC28_Test_" + Guid.NewGuid().ToString("N");
     private string _master = "";
     private bool _created;
@@ -61,11 +67,34 @@ public sealed class ReceivingSqlFixture : IAsyncLifetime
             await using var db = Context();
             // EF's full model contains multiple cascade paths. This isolated schema retains
             // every FK but uses NO ACTION on delete; these tests never delete entities.
-            var script = db.Database.GenerateCreateScript().Replace("ON DELETE CASCADE", "ON DELETE NO ACTION");
             await using var connection = new SqlConnection(ConnectionString);
             await connection.OpenAsync();
-            foreach (var command in Regex.Split(script, @"^\s*GO\s*$", RegexOptions.Multiline))
-                if (!string.IsNullOrWhiteSpace(command)) await ExecuteAsync(connection, command);
+            if (useMigrationBaseline)
+            {
+                // Supported external legacy baseline, followed by the REAL migration chain.
+                // InitialCreate.Up is empty; do not invent migration history or alter shared migrations.
+                var model = db.GetService<IModelRuntimeInitializer>().Initialize(new InitialCreate().TargetModel, designTime: true);
+                var changes = db.GetService<IMigrationsModelDiffer>().GetDifferences(null, model.GetRelationalModel());
+                foreach (var command in db.GetService<IMigrationsSqlGenerator>().Generate(changes, model))
+                    await ExecuteAsync(connection, command.CommandText.Replace("ON DELETE CASCADE", "ON DELETE NO ACTION"));
+                await ExecuteAsync(connection, """
+                    ALTER TABLE INVENTORY DROP COLUMN AvailableQuantity;
+                    ALTER TABLE INVENTORY ADD AvailableQuantity AS (QuantityOnHand-ReservedQuantity) PERSISTED;
+                    ALTER TABLE ORDER_DETAIL DROP COLUMN LineSubtotal,LineTotal;
+                    ALTER TABLE ORDER_DETAIL ADD LineSubtotal AS CONVERT(decimal(18,2),RequestedQuantity*UnitPrice) PERSISTED;
+                    ALTER TABLE ORDER_DETAIL ADD LineTotal AS CONVERT(decimal(18,2),RequestedQuantity*UnitPrice+TaxAmount) PERSISTED;
+                    ALTER TABLE STOCK_ADJUSTMENT DROP COLUMN DifferenceQuantity,VariancePercent;
+                    ALTER TABLE STOCK_ADJUSTMENT ADD DifferenceQuantity AS (ActualQuantity-SystemQuantity) PERSISTED;
+                    ALTER TABLE STOCK_ADJUSTMENT ADD VariancePercent AS (CASE WHEN SystemQuantity=0 THEN NULL ELSE CONVERT(decimal(9,2),ABS((ActualQuantity-SystemQuantity)*100/SystemQuantity)) END) PERSISTED;
+                    """);
+                await db.GetService<IMigrator>().MigrateAsync();
+            }
+            else
+            {
+                var script = db.Database.GenerateCreateScript().Replace("ON DELETE CASCADE", "ON DELETE NO ACTION");
+                foreach (var command in Regex.Split(script, @"^\s*GO\s*$", RegexOptions.Multiline))
+                    if (!string.IsNullOrWhiteSpace(command)) await ExecuteAsync(connection, command);
+            }
             // Match the dev DB's timestamp precision and existing QC batch/date index.
             await ExecuteAsync(connection, """
                 ALTER TABLE PRODUCT_BATCH ALTER COLUMN CreatedAt datetime2(0) NOT NULL;

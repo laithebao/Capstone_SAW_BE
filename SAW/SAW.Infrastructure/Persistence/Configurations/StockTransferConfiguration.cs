@@ -8,7 +8,7 @@ public class StockTransferConfiguration : IEntityTypeConfiguration<StockTransfer
 {
     public void Configure(EntityTypeBuilder<StockTransfer> builder)
     {
-        builder.ToTable("STOCK_TRANSFER");
+        builder.ToTable("STOCK_TRANSFER", t => t.UseSqlOutputClause(false));
         builder.HasKey(x => x.StockTransferId);
         builder.Property(x => x.StockTransferId).HasColumnName("StockTransferID").UseIdentityColumn();
         builder.Property(x => x.TransferCode).HasColumnName("TransferCode").HasMaxLength(50).IsRequired();

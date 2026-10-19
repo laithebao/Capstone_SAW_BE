@@ -129,14 +129,17 @@ public sealed class QcInspectionService(IQcInspectionRepository repository) : IQ
 
         // Business rule: minimum ratio
         var batch = inspection.ProductBatch;
-        decimal minRatio = batch.WeightInKg < 1000m ? 0.05m : 0.03m;
+        if (batch.VerifiedWeightInKg is null or <= 0m)
+            throw new BadRequestException("Lô hàng chưa có khối lượng kiểm nhận hợp lệ để lấy mẫu.");
+        var weightInKg = batch.VerifiedWeightInKg.Value;
+        decimal minRatio = weightInKg < 1000m ? 0.05m : 0.03m;
         if (request.SamplingRatio < minRatio)
             throw new BadRequestException(
-                $"Tỷ lệ lấy mẫu tối thiểu cho lô {batch.WeightInKg:F0} kg là {minRatio * 100:F0}%. " +
+                $"Tỷ lệ lấy mẫu tối thiểu cho lô {weightInKg:F0} kg là {minRatio * 100:F0}%. " +
                 $"Giá trị nhập ({request.SamplingRatio * 100:F2}%) quá thấp.");
 
         inspection.SamplingRatio = request.SamplingRatio;
-        inspection.SampleSize    = batch.WeightInKg * request.SamplingRatio;
+        inspection.SampleSize    = weightInKg * request.SamplingRatio;
 
         if (inspection.InspectionStatus == "DRAFT")
             inspection.InspectionStatus = "IN_PROGRESS";

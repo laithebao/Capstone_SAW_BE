@@ -11,6 +11,7 @@ public class ProductBatchConfiguration : IEntityTypeConfiguration<ProductBatch>
         builder.ToTable("PRODUCT_BATCH", tb =>
         {
             tb.UseSqlOutputClause(false);
+            tb.HasCheckConstraint("CK_PRODUCT_BATCH_Status", "[BatchStatus] IN (N'PENDING_PREDECLARATION',N'SUBMITTED',N'PENDING_QC',N'APPROVED_FOR_STORAGE',N'QUARANTINE',N'REJECTED',N'RECEIVED',N'IN_STOCK',N'RESERVED',N'PARTIALLY_ISSUED',N'ISSUED',N'CANCELLED',N'DISPOSED')");
             tb.HasCheckConstraint("CK_PRODUCT_BATCH_VerifiedPackageCount",
                 "[VerifiedPackageCount] IS NULL OR [VerifiedPackageCount] > 0");
             tb.HasCheckConstraint("CK_PRODUCT_BATCH_VerifiedPackageUnitWeightKg",

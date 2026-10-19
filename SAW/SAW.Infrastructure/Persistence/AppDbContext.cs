@@ -12,7 +12,9 @@ public class AppDbContext : DbContext
     private static readonly HashSet<Type> ExcludedEntityTypes =
     [
         typeof(AuditLog), typeof(RefreshToken), typeof(PasswordResetToken),
-        typeof(EmailVerificationToken)
+        typeof(EmailVerificationToken),
+        // These workflow records have semantic audit receipts after generated keys are saved.
+        typeof(StockAdjustmentResolution), typeof(StockAdjustmentProposal), typeof(OrderAmendment), typeof(GoodsIssueInvalidation)
     ];
 
     private static readonly HashSet<string> SensitiveProperties = new(StringComparer.OrdinalIgnoreCase)
@@ -88,6 +90,12 @@ public class AppDbContext : DbContext
     public DbSet<GoodsIssue> GoodsIssues => Set<GoodsIssue>();
     public DbSet<GoodsIssueDetail> GoodsIssueDetails => Set<GoodsIssueDetail>();
     public DbSet<StockAdjustment> StockAdjustments => Set<StockAdjustment>();
+    public DbSet<StockAdjustmentLine> StockAdjustmentLines => Set<StockAdjustmentLine>();
+    public DbSet<StockAdjustmentImage> StockAdjustmentImages => Set<StockAdjustmentImage>();
+    public DbSet<StockAdjustmentResolution> StockAdjustmentResolutions => Set<StockAdjustmentResolution>();
+    public DbSet<StockAdjustmentProposal> StockAdjustmentProposals => Set<StockAdjustmentProposal>();
+    public DbSet<OrderAmendment> OrderAmendments => Set<OrderAmendment>();
+    public DbSet<GoodsIssueInvalidation> GoodsIssueInvalidations => Set<GoodsIssueInvalidation>();
     public DbSet<StockTransfer> StockTransfers => Set<StockTransfer>();
 
     // 11. Traceability, Notification, Audit, AI

@@ -44,6 +44,34 @@ public sealed class ProductBatchVerificationTests
     }
 
     [Fact]
+    public async Task SubmittedDetail_PreservesSupplierUnitAndPackaging_AndIncludesCategoryWithoutWriting()
+    {
+        var batch = SubmittedBatch();
+        batch.CropType.CategoryName = "Ngũ cốc";
+        batch.Unit = "Bao";
+        batch.DeclaredQuantity = 40m;
+        batch.WeightInKg = 1000m;
+        batch.PackagingType = "Bao";
+        batch.PackageCount = 40;
+        batch.PackageUnitWeightKg = 25m;
+        SetupBatch(batch);
+
+        var result = await Service().GetSubmittedDetailAsync(7, 2, CancellationToken.None);
+
+        Assert.Equal("Ngũ cốc", result.CategoryName);
+        Assert.Equal("Rice", result.CropTypeName);
+        Assert.Equal("Bao", result.Unit);
+        Assert.Equal(40m, result.DeclaredQuantity);
+        Assert.Equal(1000m, result.WeightInKg);
+        Assert.Equal("Bao", result.PackagingType);
+        Assert.Equal(40, result.PackageCount);
+        Assert.Equal(25m, result.PackageUnitWeightKg);
+        Assert.Equal("SUBMITTED", batch.BatchStatus);
+        Assert.Null(batch.VerifiedQuantity);
+        _verification.VerifyNoOtherCalls();
+    }
+
+    [Fact]
     public async Task SubmittedBatch_IsVerifiedWithoutChangingDeclarationOrCreatingAnotherBatch()
     {
         var batch = SubmittedBatch();
@@ -70,6 +98,32 @@ public sealed class ProductBatchVerificationTests
                 history.ProductBatchId == 7 && history.OldStatus == "SUBMITTED" &&
                 history.NewStatus == "PENDING_QC" && history.ChangedByAccountId == 11),
             It.IsAny<CancellationToken>()), Times.Once);
+    }
+
+    [Theory]
+    [InlineData("Bao")]
+    [InlineData("Thùng")]
+    public async Task Confirm_NonuniformPackages_PreservesActualWeightWithoutCommonUnitWeight(string unit)
+    {
+        var batch = SubmittedBatch();
+        batch.Unit = unit;
+        batch.DeclaredQuantity = 5m;
+        batch.WeightInKg = 125m;
+        batch.PackageCount = 5;
+        batch.PackageUnitWeightKg = 25m;
+        SetupBatch(batch);
+
+        var result = await Service().VerifyAsync(7, 2, 11,
+            new VerifyProductBatchRequest(5m, 119m, unit, 5, null, "3 x 25 + 24 + 20 = 119 kg"), CancellationToken.None);
+
+        Assert.Equal(119m, result.VerifiedWeightInKg);
+        _verification.Verify(x => x.ConfirmAsync(7, 2,
+            It.Is<VerifiedReceivingDetails>(details => details.VerifiedQuantity == 5m &&
+                details.VerifiedWeightInKg == 119m && details.VerifiedPackageCount == 5 &&
+                details.VerifiedPackageUnitWeightKg == null && details.ReceivingNote == "3 x 25 + 24 + 20 = 119 kg"),
+            It.IsAny<BatchStatusHistory>(), It.IsAny<CancellationToken>()), Times.Once);
+        Assert.Equal(125m, batch.WeightInKg);
+        Assert.Equal(25m, batch.PackageUnitWeightKg);
     }
 
     [Theory]
