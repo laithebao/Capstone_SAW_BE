@@ -33,9 +33,20 @@ public class SupplierBatchCommandService(IProductBatchRepository batches, ISuppl
     {
         var supplier = await GetSupplier(accountId, ct);
         var weight = await Validate(supplier.SupplierId, request, ct);
+        if (request.SupplyContractId is not > 0)
+            throw new ArgumentException("Vui lòng chọn hợp đồng đã được duyệt trước khi khai báo lô hàng.");
+        if (request.ExpectedDeliveryDate is null)
+            throw new ArgumentException("Vui lòng chọn ngày giao hàng dự kiến để kiểm tra sản lượng hợp đồng.");
+        var today = DateOnly.FromDateTime(DateTime.UtcNow.AddHours(7));
+        if (!await batches.IsSupplyContractEligibleForBatchAsync(
+                supplier.SupplierId, request.SupplyContractId.Value, request.CropTypeId,
+                today, request.ExpectedDeliveryDate.Value, ct))
+            throw new ArgumentException(
+                "Hợp đồng không hợp lệ, chưa được duyệt, không đúng loại nông sản hoặc ngày giao nằm ngoài thời hạn hợp đồng.");
         var batch = new ProductBatch
         {
             BatchCode = await batches.GenerateBatchCodeAsync(ct), SupplierId = supplier.SupplierId,
+            SupplyContractId = request.SupplyContractId.Value,
             BatchStatus = "SUBMITTED", CreatedAt = DateTime.UtcNow
         };
         Apply(batch, request, weight);

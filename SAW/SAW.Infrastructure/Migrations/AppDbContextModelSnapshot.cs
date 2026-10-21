@@ -1963,6 +1963,10 @@ namespace SAW.Infrastructure.Migrations
                         .HasColumnType("int")
                         .HasColumnName("SupplierID");
 
+                    b.Property<long?>("SupplyContractId")
+                        .HasColumnType("bigint")
+                        .HasColumnName("SupplyContractID");
+
                     b.Property<string>("Unit")
                         .IsRequired()
                         .HasMaxLength(20)
@@ -2013,6 +2017,9 @@ namespace SAW.Infrastructure.Migrations
                     b.HasIndex("GrowingAreaId");
 
                     b.HasIndex("SupplierId");
+
+                    b.HasIndex("SupplyContractId")
+                        .HasDatabaseName("IX_PRODUCT_BATCH_SupplyContractID");
 
                     b.ToTable("PRODUCT_BATCH", null, t =>
                         {
@@ -3332,6 +3339,144 @@ namespace SAW.Infrastructure.Migrations
                     b.ToTable("SUPPLIER_GROWING_AREA", (string)null);
                 });
 
+            modelBuilder.Entity("SAW.Domain.Entities.SupplyContract", b =>
+                {
+                    b.Property<long>("SupplyContractId")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("bigint")
+                        .HasColumnName("SupplyContractID");
+
+                    SqlServerPropertyBuilderExtensions.UseIdentityColumn(b.Property<long>("SupplyContractId"));
+
+                    b.Property<int?>("AdminAccountId")
+                        .HasColumnType("int")
+                        .HasColumnName("AdminAccountID");
+
+                    b.Property<string>("AdminRejectionReason")
+                        .HasMaxLength(1000)
+                        .HasColumnType("nvarchar(1000)");
+
+                    b.Property<DateTime?>("AdminReviewedAt")
+                        .HasColumnType("datetime2");
+
+                    b.Property<string>("CancellationReason")
+                        .HasMaxLength(1000)
+                        .HasColumnType("nvarchar(1000)");
+
+                    b.Property<string>("CancellationRequestReason")
+                        .HasMaxLength(1000)
+                        .HasColumnType("nvarchar(1000)");
+
+                    b.Property<DateTime?>("CancellationRequestedAt")
+                        .HasColumnType("datetime2");
+
+                    b.Property<DateTime?>("CancelledAt")
+                        .HasColumnType("datetime2");
+
+                    b.Property<string>("ContractCode")
+                        .IsRequired()
+                        .HasMaxLength(40)
+                        .HasColumnType("nvarchar(40)");
+
+                    b.Property<string>("ContractStatus")
+                        .IsRequired()
+                        .ValueGeneratedOnAdd()
+                        .HasMaxLength(30)
+                        .HasColumnType("nvarchar(30)")
+                        .HasDefaultValue("PENDING_SUPPLIER");
+
+                    b.Property<DateTime>("CreatedAt")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("datetime2")
+                        .HasDefaultValueSql("SYSDATETIME()");
+
+                    b.Property<int>("CropTypeId")
+                        .HasColumnType("int")
+                        .HasColumnName("CropTypeID");
+
+                    b.Property<string>("DeliveryPeriod")
+                        .IsRequired()
+                        .HasMaxLength(10)
+                        .HasColumnType("nvarchar(10)");
+
+                    b.Property<decimal>("DeliveryQuantityKg")
+                        .HasPrecision(18, 2)
+                        .HasColumnType("decimal(18,2)");
+
+                    b.Property<DateOnly>("EndDate")
+                        .HasColumnType("date");
+
+                    b.Property<string>("QualityGrade")
+                        .IsRequired()
+                        .HasMaxLength(5)
+                        .HasColumnType("nvarchar(5)");
+
+                    b.Property<int>("Revision")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("int")
+                        .HasDefaultValue(1);
+
+                    b.Property<DateOnly>("StartDate")
+                        .HasColumnType("date");
+
+                    b.Property<int>("SupplierId")
+                        .HasColumnType("int")
+                        .HasColumnName("SupplierID");
+
+                    b.Property<string>("SupplierRejectionReason")
+                        .HasMaxLength(1000)
+                        .HasColumnType("nvarchar(1000)");
+
+                    b.Property<DateTime?>("SupplierRespondedAt")
+                        .HasColumnType("datetime2");
+
+                    b.Property<string>("Terms")
+                        .HasMaxLength(2000)
+                        .HasColumnType("nvarchar(2000)");
+
+                    b.Property<decimal>("UnitPriceVndPerKg")
+                        .HasPrecision(18, 2)
+                        .HasColumnType("decimal(18,2)");
+
+                    b.Property<DateTime?>("UpdatedAt")
+                        .HasColumnType("datetime2");
+
+                    b.Property<int>("WarehouseManagerAccountId")
+                        .HasColumnType("int")
+                        .HasColumnName("WarehouseManagerAccountID");
+
+                    b.HasKey("SupplyContractId");
+
+                    b.HasIndex("AdminAccountId");
+
+                    b.HasIndex("ContractCode")
+                        .IsUnique()
+                        .HasDatabaseName("UQ_SUPPLY_CONTRACT_Code");
+
+                    b.HasIndex("CropTypeId");
+
+                    b.HasIndex("SupplierId", "ContractStatus")
+                        .HasDatabaseName("IX_SUPPLY_CONTRACT_Supplier_Status");
+
+                    b.HasIndex("WarehouseManagerAccountId", "ContractStatus")
+                        .HasDatabaseName("IX_SUPPLY_CONTRACT_Warehouse_Status");
+
+                    b.ToTable("SUPPLY_CONTRACT", null, t =>
+                        {
+                            t.HasCheckConstraint("CK_SUPPLY_CONTRACT_DateRange", "[EndDate] >= [StartDate]");
+
+                            t.HasCheckConstraint("CK_SUPPLY_CONTRACT_DeliveryPeriod", "[DeliveryPeriod] IN ('WEEK','MONTH')");
+
+                            t.HasCheckConstraint("CK_SUPPLY_CONTRACT_DeliveryQuantity", "[DeliveryQuantityKg] > 0");
+
+                            t.HasCheckConstraint("CK_SUPPLY_CONTRACT_QualityGrade", "[QualityGrade] IN ('A','B','C','D','E')");
+
+                            t.HasCheckConstraint("CK_SUPPLY_CONTRACT_Status", "[ContractStatus] IN ('PENDING_SUPPLIER','SUPPLIER_REJECTED','PENDING_ADMIN','ADMIN_REJECTED','APPROVED','CANCELLATION_REQUESTED','CANCELLED')");
+
+                            t.HasCheckConstraint("CK_SUPPLY_CONTRACT_UnitPrice", "[UnitPriceVndPerKg] > 0");
+                        });
+                });
+
             modelBuilder.Entity("SAW.Domain.Entities.WarehouseLocation", b =>
                 {
                     b.Property<int>("WarehouseLocationId")
@@ -3983,11 +4128,19 @@ namespace SAW.Infrastructure.Migrations
                         .IsRequired()
                         .HasConstraintName("FK_PRODUCT_BATCH_SUPPLIER");
 
+                    b.HasOne("SAW.Domain.Entities.SupplyContract", "SupplyContract")
+                        .WithMany("ProductBatches")
+                        .HasForeignKey("SupplyContractId")
+                        .OnDelete(DeleteBehavior.Restrict)
+                        .HasConstraintName("FK_PRODUCT_BATCH_SUPPLY_CONTRACT");
+
                     b.Navigation("CropType");
 
                     b.Navigation("GrowingArea");
 
                     b.Navigation("Supplier");
+
+                    b.Navigation("SupplyContract");
                 });
 
             modelBuilder.Entity("SAW.Domain.Entities.PurchaseOrder", b =>
@@ -4370,6 +4523,44 @@ namespace SAW.Infrastructure.Migrations
                     b.Navigation("Supplier");
                 });
 
+            modelBuilder.Entity("SAW.Domain.Entities.SupplyContract", b =>
+                {
+                    b.HasOne("SAW.Domain.Entities.Account", "AdminAccount")
+                        .WithMany()
+                        .HasForeignKey("AdminAccountId")
+                        .OnDelete(DeleteBehavior.Restrict)
+                        .HasConstraintName("FK_SUPPLY_CONTRACT_ADMIN");
+
+                    b.HasOne("SAW.Domain.Entities.CropType", "CropType")
+                        .WithMany()
+                        .HasForeignKey("CropTypeId")
+                        .OnDelete(DeleteBehavior.Restrict)
+                        .IsRequired()
+                        .HasConstraintName("FK_SUPPLY_CONTRACT_CROP_TYPE");
+
+                    b.HasOne("SAW.Domain.Entities.Supplier", "Supplier")
+                        .WithMany()
+                        .HasForeignKey("SupplierId")
+                        .OnDelete(DeleteBehavior.Restrict)
+                        .IsRequired()
+                        .HasConstraintName("FK_SUPPLY_CONTRACT_SUPPLIER");
+
+                    b.HasOne("SAW.Domain.Entities.Account", "WarehouseManagerAccount")
+                        .WithMany()
+                        .HasForeignKey("WarehouseManagerAccountId")
+                        .OnDelete(DeleteBehavior.Restrict)
+                        .IsRequired()
+                        .HasConstraintName("FK_SUPPLY_CONTRACT_WAREHOUSE_MANAGER");
+
+                    b.Navigation("AdminAccount");
+
+                    b.Navigation("CropType");
+
+                    b.Navigation("Supplier");
+
+                    b.Navigation("WarehouseManagerAccount");
+                });
+
             modelBuilder.Entity("SAW.Domain.Entities.Account", b =>
                 {
                     b.Navigation("AccountPermissions");
@@ -4537,6 +4728,11 @@ namespace SAW.Infrastructure.Migrations
                     b.Navigation("SupplierCropTypes");
 
                     b.Navigation("SupplierGrowingAreas");
+                });
+
+            modelBuilder.Entity("SAW.Domain.Entities.SupplyContract", b =>
+                {
+                    b.Navigation("ProductBatches");
                 });
 
             modelBuilder.Entity("SAW.Domain.Entities.WarehouseLocation", b =>

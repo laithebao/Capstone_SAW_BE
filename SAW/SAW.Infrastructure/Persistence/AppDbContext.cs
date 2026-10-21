@@ -39,6 +39,7 @@ public class AppDbContext : DbContext
     // 02. Business Partners
     public DbSet<Supplier> Suppliers => Set<Supplier>();
     public DbSet<Distributor> Distributors => Set<Distributor>();
+    public DbSet<SupplyContract> SupplyContracts => Set<SupplyContract>();
 
     // 03. Crop & Certifications
     public DbSet<CropType> CropTypes => Set<CropType>();

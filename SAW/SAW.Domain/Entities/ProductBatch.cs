@@ -6,6 +6,7 @@ public class ProductBatch
     public string BatchCode { get; set; } = default!;
 
     public int SupplierId { get; set; }
+    public long? SupplyContractId { get; set; }
     public int CropTypeId { get; set; }
     
     // THÊM MỚI
@@ -51,6 +52,7 @@ public class ProductBatch
 
     // Navigation
     public Supplier Supplier { get; set; } = default!;
+    public SupplyContract? SupplyContract { get; set; }
     public CropType CropType { get; set; } = default!;
     
     // THÊM MỚI

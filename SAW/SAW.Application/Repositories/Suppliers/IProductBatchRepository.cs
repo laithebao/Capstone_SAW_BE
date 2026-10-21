@@ -14,6 +14,9 @@ public interface IProductBatchRepository
     Task<SupplierBatchListResponse> GetBatchesBySupplierAccountIdAsync(int accountId, GetSupplierBatchesQueryRequest request, CancellationToken cancellationToken = default);
     Task<bool> IsCropTypeRegisteredForSupplierAsync(int supplierId, int cropTypeId, CancellationToken cancellationToken = default);
     Task<bool> IsGrowingAreaRegisteredForSupplierAsync(int supplierId, int areaId, CancellationToken cancellationToken = default);
+    Task<bool> IsSupplyContractEligibleForBatchAsync(
+        int supplierId, long supplyContractId, int cropTypeId, DateOnly today, DateOnly expectedDeliveryDate,
+        CancellationToken cancellationToken = default);
     Task<List<SupplierDocumentDto>> GetDocumentsAsync(long batchId, CancellationToken cancellationToken = default);
     Task<string> GenerateBatchCodeAsync(CancellationToken cancellationToken = default);
     Task AddProductBatchAsync(ProductBatch batch, BatchStatusHistory initialHistory, List<string>? documentUrls, CancellationToken cancellationToken = default);

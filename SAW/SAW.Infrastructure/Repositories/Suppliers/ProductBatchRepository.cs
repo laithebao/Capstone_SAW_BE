@@ -1,5 +1,7 @@
+using System.Data;
 using Microsoft.EntityFrameworkCore;
 using SAW.Application.Exceptions;
+using SAW.Application.Features.SupplyContracts;
 using SAW.Application.Features.Suppliers.Commands;
 using SAW.Application.Features.Suppliers.DTOs;
 using SAW.Application.Repositories.Suppliers;
@@ -84,6 +86,18 @@ public class ProductBatchRepository(AppDbContext db, TimeProvider? timeProvider 
         db.SupplierCropTypes.AnyAsync(s => s.SupplierId == supplierId && s.CropTypeId == cropId && s.IsActive && s.CropType.IsActive, ct);
     public Task<bool> IsGrowingAreaRegisteredForSupplierAsync(int supplierId, int areaId, CancellationToken ct = default) =>
         db.SupplierGrowingAreas.AnyAsync(s => s.SupplierId == supplierId && s.GrowingAreaId == areaId, ct);
+    public Task<bool> IsSupplyContractEligibleForBatchAsync(
+        int supplierId, long supplyContractId, int cropTypeId, DateOnly today,
+        DateOnly expectedDeliveryDate, CancellationToken ct = default) =>
+        db.SupplyContracts.AnyAsync(contract =>
+            contract.SupplyContractId == supplyContractId
+            && contract.SupplierId == supplierId
+            && contract.CropTypeId == cropTypeId
+            && contract.ContractStatus == "APPROVED"
+            && contract.StartDate <= today
+            && contract.EndDate >= today
+            && contract.StartDate <= expectedDeliveryDate
+            && contract.EndDate >= expectedDeliveryDate, ct);
     public Task<string> GenerateBatchCodeAsync(CancellationToken ct = default)
     {
         var localDate = DateOnly.FromDateTime((timeProvider ?? TimeProvider.System)
@@ -118,9 +132,10 @@ public class ProductBatchRepository(AppDbContext db, TimeProvider? timeProvider 
     public Task AddProductBatchAsync(ProductBatch batch, BatchStatusHistory history, List<string>? urls, CancellationToken ct = default) =>
         db.Database.CreateExecutionStrategy().ExecuteAsync(async () =>
         {
-            await using var tx = await db.Database.BeginTransactionAsync(ct);
+            await using var tx = await db.Database.BeginTransactionAsync(IsolationLevel.Serializable, ct);
             try
             {
+                await EnsureSupplyContractQuotaAsync(batch, null, ct);
                 await SetActor(history.ChangedByAccountId, ct);
                 db.ProductBatches.Add(batch);
                 await db.SaveChangesAsync(ct);
@@ -140,9 +155,11 @@ public class ProductBatchRepository(AppDbContext db, TimeProvider? timeProvider 
         DateTime? expectedUpdatedAt, List<string>? urls, CancellationToken ct = default) =>
         db.Database.CreateExecutionStrategy().ExecuteAsync(async () =>
         {
-            await using var tx = await db.Database.BeginTransactionAsync(ct);
+            await using var tx = await db.Database.BeginTransactionAsync(IsolationLevel.Serializable, ct);
             try
             {
+                if (desired.BatchStatus != "CANCELLED")
+                    await EnsureSupplyContractQuotaAsync(desired, desired.ProductBatchId, ct);
                 // This lock is held until commit and also blocks ordinary staff UPDATE statements.
                 var current = await db.ProductBatches.FromSqlInterpolated($"SELECT * FROM dbo.PRODUCT_BATCH WITH (UPDLOCK, HOLDLOCK) WHERE ProductBatchID = {desired.ProductBatchId}")
                     .SingleOrDefaultAsync(ct) ?? throw new KeyNotFoundException("Không tìm thấy lô hàng.");
@@ -182,6 +199,46 @@ public class ProductBatchRepository(AppDbContext db, TimeProvider? timeProvider 
             }
             finally { await SetActor(null, CancellationToken.None); }
         });
+
+    private async Task EnsureSupplyContractQuotaAsync(
+        ProductBatch batch, long? excludedBatchId, CancellationToken ct)
+    {
+        if (batch.SupplyContractId is not > 0)
+            return;
+        if (batch.ExpectedDeliveryDate is null)
+            throw new ArgumentException("Vui lòng chọn ngày giao hàng dự kiến để kiểm tra sản lượng hợp đồng.");
+
+        var contract = await db.SupplyContracts
+            .FromSqlInterpolated($"SELECT * FROM dbo.SUPPLY_CONTRACT WITH (UPDLOCK, HOLDLOCK) WHERE SupplyContractID = {batch.SupplyContractId.Value}")
+            .SingleOrDefaultAsync(ct)
+            ?? throw new ArgumentException("Không tìm thấy hợp đồng đã chọn.");
+        var today = DateOnly.FromDateTime(DateTime.UtcNow.AddHours(7));
+        var deliveryDate = batch.ExpectedDeliveryDate.Value;
+        if (contract.SupplierId != batch.SupplierId
+            || contract.CropTypeId != batch.CropTypeId
+            || contract.ContractStatus != "APPROVED"
+            || today < contract.StartDate
+            || today > contract.EndDate
+            || deliveryDate < contract.StartDate
+            || deliveryDate > contract.EndDate)
+            throw new ArgumentException(
+                "Hợp đồng không hợp lệ, chưa được duyệt, không đúng loại nông sản hoặc ngày giao nằm ngoài thời hạn hợp đồng.");
+
+        var (periodStart, periodEnd) = SupplyContractQuotaPeriod.GetBounds(
+            contract.StartDate, contract.EndDate, contract.DeliveryPeriod, deliveryDate);
+        var used = await db.ProductBatches
+            .Where(x => x.SupplyContractId == contract.SupplyContractId
+                && (!excludedBatchId.HasValue || x.ProductBatchId != excludedBatchId.Value)
+                && x.ExpectedDeliveryDate >= periodStart
+                && x.ExpectedDeliveryDate <= periodEnd
+                && x.BatchStatus != "CANCELLED"
+                && x.BatchStatus != "REJECTED")
+            .SumAsync(x => (decimal?)x.WeightInKg, ct) ?? 0m;
+        var remaining = Math.Max(0m, contract.DeliveryQuantityKg - used);
+        if (batch.WeightInKg > remaining)
+            throw new ConflictException(
+                $"Khối lượng lô là {batch.WeightInKg:0.###} kg, vượt quá {remaining:0.###} kg còn lại của hợp đồng trong chu kỳ {periodStart:dd/MM/yyyy} - {periodEnd:dd/MM/yyyy}.");
+    }
 
     private Task SetActor(int? id, CancellationToken ct) => db.Database.ExecuteSqlInterpolatedAsync(
         $"EXEC sys.sp_set_session_context @key=N'AccountID', @value={id}", ct);
