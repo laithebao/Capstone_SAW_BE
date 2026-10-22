@@ -64,6 +64,21 @@ public sealed class SupplyContractsController(ISupplyContractService service) : 
         Ok(ApiResponse<SupplyContractDetail>.Success(
             await service.CancelByWarehouseAsync(ActorId(), id, request, ct), "Đã hủy hợp đồng."));
 
+    [HttpPost("{id:long}/warehouse-cancel-reject")]
+    [Authorize(Roles = "WAREHOUSE_MANAGER")]
+    public async Task<ActionResult<ApiResponse<SupplyContractDetail>>> WarehouseCancelReject(
+        long id, SupplyContractReasonRequest request, CancellationToken ct) =>
+        Ok(ApiResponse<SupplyContractDetail>.Success(
+            await service.RejectCancellationByWarehouseAsync(ActorId(), id, request, ct),
+            "Đã không duyệt yêu cầu hủy hợp đồng."));
+
+    [HttpPost("{id:long}/admin-cancel")]
+    [Authorize(Roles = "ADMINISTRATOR")]
+    public async Task<ActionResult<ApiResponse<SupplyContractDetail>>> AdminCancel(
+        long id, CancellationToken ct) =>
+        Ok(ApiResponse<SupplyContractDetail>.Success(
+            await service.CancelByAdminAsync(ActorId(), id, ct), "Admin đã hủy hợp đồng."));
+
     [HttpPost("{id:long}/supplier-confirm")]
     [Authorize(Roles = "SUPPLIER")]
     public async Task<ActionResult<ApiResponse<SupplyContractDetail>>> SupplierConfirm(

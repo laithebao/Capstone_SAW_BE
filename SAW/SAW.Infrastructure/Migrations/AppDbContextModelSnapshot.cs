@@ -2746,9 +2746,6 @@ namespace SAW.Infrastructure.Migrations
 
             modelBuilder.Entity("SAW.Domain.Entities.StockAdjustmentImage", b =>
                 {
-                    b.Property<bool>("DeletePending")
-                        .HasColumnType("bit");
-
                     b.Property<Guid>("StockAdjustmentImageId")
                         .HasColumnType("uniqueidentifier");
 
@@ -2756,6 +2753,9 @@ namespace SAW.Infrastructure.Migrations
                         .IsRequired()
                         .HasMaxLength(200)
                         .HasColumnType("nvarchar(200)");
+
+                    b.Property<bool>("DeletePending")
+                        .HasColumnType("bit");
 
                     b.Property<string>("ImageUrl")
                         .IsRequired()
@@ -2840,7 +2840,6 @@ namespace SAW.Infrastructure.Migrations
 
             modelBuilder.Entity("SAW.Domain.Entities.StockAdjustmentProposal", b =>
                 {
-                    b.Property<string>("ScopeSnapshotJson").IsRequired().HasColumnType("nvarchar(max)");
                     b.Property<long>("StockAdjustmentProposalId")
                         .ValueGeneratedOnAdd()
                         .HasColumnType("bigint");
@@ -2900,6 +2899,10 @@ namespace SAW.Infrastructure.Migrations
                     b.Property<int>("Revision")
                         .HasColumnType("int");
 
+                    b.Property<string>("ScopeSnapshotJson")
+                        .IsRequired()
+                        .HasColumnType("nvarchar(max)");
+
                     b.Property<DateTime?>("SentAt")
                         .HasColumnType("datetime2");
 
@@ -2929,13 +2932,10 @@ namespace SAW.Infrastructure.Migrations
 
             modelBuilder.Entity("SAW.Domain.Entities.StockAdjustmentResolution", b =>
                 {
-                    b.Property<long?>("CoordinatingStockAdjustmentId").HasColumnType("bigint");
-                    b.HasIndex("CoordinatingStockAdjustmentId");
-                    b.Property<decimal?>("ResolvedBatchWeightKg")
-                        .HasPrecision(18, 3)
-                        .HasColumnType("decimal(18,3)");
-
                     b.Property<long>("StockAdjustmentId")
+                        .HasColumnType("bigint");
+
+                    b.Property<long?>("CoordinatingStockAdjustmentId")
                         .HasColumnType("bigint");
 
                     b.Property<string>("ExpectedInventorySnapshotJson")
@@ -2958,6 +2958,10 @@ namespace SAW.Infrastructure.Migrations
                         .HasMaxLength(1000)
                         .HasColumnType("nvarchar(1000)");
 
+                    b.Property<decimal?>("ResolvedBatchWeightKg")
+                        .HasPrecision(18, 3)
+                        .HasColumnType("decimal(18,3)");
+
                     b.Property<string>("State")
                         .IsRequired()
                         .HasMaxLength(30)
@@ -2971,6 +2975,8 @@ namespace SAW.Infrastructure.Migrations
                         .HasColumnType("int");
 
                     b.HasKey("StockAdjustmentId");
+
+                    b.HasIndex("CoordinatingStockAdjustmentId");
 
                     b.HasIndex("OrderDetailId");
 
@@ -4368,7 +4374,11 @@ namespace SAW.Infrastructure.Migrations
 
             modelBuilder.Entity("SAW.Domain.Entities.StockAdjustmentResolution", b =>
                 {
-                    b.HasOne("SAW.Domain.Entities.StockAdjustment", null).WithMany().HasForeignKey("CoordinatingStockAdjustmentId").OnDelete(DeleteBehavior.Restrict);
+                    b.HasOne("SAW.Domain.Entities.StockAdjustment", null)
+                        .WithMany()
+                        .HasForeignKey("CoordinatingStockAdjustmentId")
+                        .OnDelete(DeleteBehavior.Restrict);
+
                     b.HasOne("SAW.Domain.Entities.OrderDetail", "OrderDetail")
                         .WithMany()
                         .HasForeignKey("OrderDetailId")

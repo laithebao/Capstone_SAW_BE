@@ -8,7 +8,7 @@ public sealed class SupplyContractService(ISupplyContractRepository repository) 
     private static readonly string[] Statuses =
     [
         "PENDING_SUPPLIER", "SUPPLIER_REJECTED", "PENDING_ADMIN", "ADMIN_REJECTED", "APPROVED",
-        "CANCELLATION_REQUESTED", "CANCELLED"
+        "CANCELLATION_REQUESTED", "PENDING_ADMIN_CANCELLATION", "CANCELLED"
     ];
     private static readonly string[] Grades = ["A", "B", "C", "D", "E"];
     private static readonly string[] DeliveryPeriods = ["WEEK", "MONTH"];
@@ -125,6 +125,21 @@ public sealed class SupplyContractService(ISupplyContractRepository repository) 
         ValidateAccountAndId(warehouseManagerAccountId, id);
         return repository.CancelByWarehouseAsync(
             warehouseManagerAccountId, id, ActionReason(request.Reason, "Lý do hủy"), ct);
+    }
+
+    public Task<SupplyContractDetail> RejectCancellationByWarehouseAsync(
+        int warehouseManagerAccountId, long id, SupplyContractReasonRequest request, CancellationToken ct)
+    {
+        ValidateAccountAndId(warehouseManagerAccountId, id);
+        return repository.RejectCancellationByWarehouseAsync(
+            warehouseManagerAccountId, id, ActionReason(request.Reason, "Lý do không duyệt yêu cầu hủy"), ct);
+    }
+
+    public Task<SupplyContractDetail> CancelByAdminAsync(
+        int adminAccountId, long id, CancellationToken ct)
+    {
+        ValidateAccountAndId(adminAccountId, id);
+        return repository.CancelByAdminAsync(adminAccountId, id, ct);
     }
 
     public Task<SupplyContractDetail> RejectBySupplierAsync(

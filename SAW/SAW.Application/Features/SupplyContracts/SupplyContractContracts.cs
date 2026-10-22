@@ -55,7 +55,8 @@ public sealed record SupplyContractPage(
     int Page,
     int PageSize);
 
-public sealed record SupplyContractSupplierOption(int Id, string Code, string Name);
+public sealed record SupplyContractSupplierOption(
+    int Id, string Code, string Name, IReadOnlyList<int> CropTypeIds);
 public sealed record SupplyContractCropTypeOption(int Id, string Code, string Name, string CategoryName);
 public sealed record SupplyContractOptions(
     IReadOnlyList<SupplyContractSupplierOption> Suppliers,
@@ -119,6 +120,10 @@ public interface ISupplyContractRepository
         int supplierAccountId, long id, string reason, CancellationToken ct);
     Task<SupplyContractDetail> CancelByWarehouseAsync(
         int warehouseManagerAccountId, long id, string reason, CancellationToken ct);
+    Task<SupplyContractDetail> RejectCancellationByWarehouseAsync(
+        int warehouseManagerAccountId, long id, string reason, CancellationToken ct);
+    Task<SupplyContractDetail> CancelByAdminAsync(
+        int adminAccountId, long id, CancellationToken ct);
     Task<SupplyContractDetail> ConfirmBySupplierAsync(
         int supplierAccountId, long id, CancellationToken ct);
     Task<SupplyContractDetail> RejectBySupplierAsync(
@@ -146,6 +151,10 @@ public interface ISupplyContractService
         int supplierAccountId, long id, SupplyContractReasonRequest request, CancellationToken ct);
     Task<SupplyContractDetail> CancelByWarehouseAsync(
         int warehouseManagerAccountId, long id, SupplyContractReasonRequest request, CancellationToken ct);
+    Task<SupplyContractDetail> RejectCancellationByWarehouseAsync(
+        int warehouseManagerAccountId, long id, SupplyContractReasonRequest request, CancellationToken ct);
+    Task<SupplyContractDetail> CancelByAdminAsync(
+        int adminAccountId, long id, CancellationToken ct);
     Task<SupplyContractDetail> ConfirmBySupplierAsync(
         int supplierAccountId, long id, CancellationToken ct);
     Task<SupplyContractDetail> RejectBySupplierAsync(

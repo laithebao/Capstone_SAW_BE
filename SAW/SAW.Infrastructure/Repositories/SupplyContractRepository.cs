@@ -87,7 +87,10 @@ public sealed class SupplyContractRepository(AppDbContext db) : ISupplyContractR
         var suppliers = await db.Suppliers.AsNoTracking()
             .Where(x => x.ProfileStatus == "ACTIVE" && x.Account.AccountStatus == "ACTIVE")
             .OrderBy(x => x.SupplierName)
-            .Select(x => new SupplyContractSupplierOption(x.SupplierId, x.SupplierCode, x.SupplierName))
+            .Select(x => new SupplyContractSupplierOption(
+                x.SupplierId, x.SupplierCode, x.SupplierName,
+                x.SupplierCropTypes.Where(link => link.IsActive && link.CropType.IsActive)
+                    .Select(link => link.CropTypeId).ToList()))
             .ToListAsync(ct);
         var crops = await db.CropTypes.AsNoTracking()
             .Where(x => x.IsActive)
@@ -172,6 +175,10 @@ public sealed class SupplyContractRepository(AppDbContext db) : ISupplyContractR
             && x.ProfileStatus == "ACTIVE"
             && x.Account.AccountStatus == "ACTIVE", ct);
         if (!supplierExists) throw new NotFoundException("Nhà cung cấp không tồn tại hoặc chưa hoạt động.");
+        if (!await db.SupplierCropTypes.AsNoTracking().AnyAsync(x =>
+                x.SupplierId == request.SupplierId && x.CropTypeId == request.CropTypeId
+                && x.IsActive && x.CropType.IsActive, ct))
+            throw new ConflictException("Nhà cung cấp chưa khai báo loại nông sản này trong hồ sơ.");
         if (!await db.CropTypes.AsNoTracking().AnyAsync(x => x.CropTypeId == request.CropTypeId && x.IsActive, ct))
             throw new NotFoundException("Loại nông sản không tồn tại hoặc đã ngừng hoạt động.");
 
@@ -210,8 +217,8 @@ public sealed class SupplyContractRepository(AppDbContext db) : ISupplyContractR
                 ?? throw new NotFoundException("Không tìm thấy hợp đồng hoặc bạn không có quyền cập nhật hợp đồng này.");
             if (contract.WarehouseManagerAccountId != warehouseManagerAccountId)
                 throw new NotFoundException("Không tìm thấy hợp đồng hoặc bạn không có quyền cập nhật hợp đồng này.");
-            if (contract.ContractStatus == "CANCELLED")
-                throw new ConflictException("Hợp đồng đã hủy nên không thể cập nhật.");
+            if (contract.ContractStatus is "APPROVED" or "CANCELLATION_REQUESTED" or "CANCELLED")
+                throw new ConflictException("Hợp đồng đã được Admin duyệt hoặc đang xử lý hủy nên không thể cập nhật.");
 
             var batches = await db.ProductBatches.AsNoTracking()
                 .Where(x => x.SupplyContractId == id
@@ -284,12 +291,13 @@ public sealed class SupplyContractRepository(AppDbContext db) : ISupplyContractR
                 ?? throw new NotFoundException("Không tìm thấy hợp đồng hoặc bạn không có quyền yêu cầu hủy.");
             if (contract.Supplier.AccountId != supplierAccountId)
                 throw new NotFoundException("Không tìm thấy hợp đồng hoặc bạn không có quyền yêu cầu hủy.");
-            if (contract.ContractStatus is not ("APPROVED" or "PENDING_ADMIN"))
+            if (contract.ContractStatus is not ("APPROVED" or "PENDING_ADMIN" or "CANCELLATION_REJECTED"))
                 throw new ConflictException("Chỉ có thể yêu cầu hủy hợp đồng đã xác nhận hoặc đã được duyệt.");
 
             contract.ContractStatus = "CANCELLATION_REQUESTED";
             contract.CancellationRequestedAt = DateTime.UtcNow;
             contract.CancellationRequestReason = reason;
+            contract.CancellationReason = null;
             contract.UpdatedAt = DateTime.UtcNow;
             await db.SaveChangesAsync(ct);
             await transaction.CommitAsync(ct);
@@ -310,17 +318,59 @@ public sealed class SupplyContractRepository(AppDbContext db) : ISupplyContractR
                 ?? throw new NotFoundException("Không tìm thấy hợp đồng hoặc bạn không có quyền hủy hợp đồng này.");
             if (contract.WarehouseManagerAccountId != warehouseManagerAccountId)
                 throw new NotFoundException("Không tìm thấy hợp đồng hoặc bạn không có quyền hủy hợp đồng này.");
-            if (contract.ContractStatus == "CANCELLED")
-                throw new ConflictException("Hợp đồng đã được hủy trước đó.");
+            if (contract.ContractStatus != "CANCELLATION_REQUESTED")
+                throw new ConflictException("Chỉ được hủy hợp đồng sau khi nhà cung cấp gửi yêu cầu hủy.");
 
-            contract.ContractStatus = "CANCELLED";
-            contract.CancelledAt = DateTime.UtcNow;
+            contract.ContractStatus = "PENDING_ADMIN_CANCELLATION";
             contract.CancellationReason = reason;
             contract.UpdatedAt = DateTime.UtcNow;
             await db.SaveChangesAsync(ct);
             await transaction.CommitAsync(ct);
             return await GetAsync(warehouseManagerAccountId, "WAREHOUSE_MANAGER", id, ct);
         });
+    }
+
+    public async Task<SupplyContractDetail> RejectCancellationByWarehouseAsync(
+        int warehouseManagerAccountId, long id, string reason, CancellationToken ct)
+    {
+        var strategy = db.Database.CreateExecutionStrategy();
+        return await strategy.ExecuteAsync(async () =>
+        {
+            await using var transaction = await db.Database.BeginTransactionAsync(IsolationLevel.Serializable, ct);
+            var contract = await db.SupplyContracts
+                .FromSqlInterpolated($"SELECT * FROM dbo.SUPPLY_CONTRACT WITH (UPDLOCK, HOLDLOCK) WHERE SupplyContractID = {id}")
+                .SingleOrDefaultAsync(ct)
+                ?? throw new NotFoundException("Không tìm thấy hợp đồng hoặc bạn không có quyền xử lý yêu cầu hủy.");
+            if (contract.WarehouseManagerAccountId != warehouseManagerAccountId)
+                throw new NotFoundException("Không tìm thấy hợp đồng hoặc bạn không có quyền xử lý yêu cầu hủy.");
+            if (contract.ContractStatus != "CANCELLATION_REQUESTED")
+                throw new ConflictException("Hợp đồng không còn yêu cầu hủy cần xử lý.");
+
+            contract.ContractStatus = "CANCELLATION_REJECTED";
+            contract.CancellationReason = reason;
+            contract.CancellationRequestedAt = null;
+            contract.CancellationRequestReason = null;
+            contract.UpdatedAt = DateTime.UtcNow;
+            await db.SaveChangesAsync(ct);
+            await transaction.CommitAsync(ct);
+            return await GetAsync(warehouseManagerAccountId, "WAREHOUSE_MANAGER", id, ct);
+        });
+    }
+
+    public async Task<SupplyContractDetail> CancelByAdminAsync(
+        int adminAccountId, long id, CancellationToken ct)
+    {
+        var contract = await db.SupplyContracts.SingleOrDefaultAsync(x => x.SupplyContractId == id, ct)
+            ?? throw new NotFoundException("Không tìm thấy hợp đồng.");
+        if (contract.ContractStatus != "PENDING_ADMIN_CANCELLATION")
+            throw new ConflictException("Hợp đồng chưa được quản lý kho duyệt yêu cầu hủy.");
+        contract.ContractStatus = "CANCELLED";
+        contract.AdminAccountId = adminAccountId;
+        contract.AdminReviewedAt = DateTime.UtcNow;
+        contract.CancelledAt = DateTime.UtcNow;
+        contract.UpdatedAt = DateTime.UtcNow;
+        await db.SaveChangesAsync(ct);
+        return await GetAsync(adminAccountId, "ADMINISTRATOR", id, ct);
     }
 
     public Task<SupplyContractDetail> ConfirmBySupplierAsync(

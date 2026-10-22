@@ -21,7 +21,7 @@ public sealed class SupplyContractConfiguration : IEntityTypeConfiguration<Suppl
             table.HasCheckConstraint("CK_SUPPLY_CONTRACT_DateRange",
                 "[EndDate] >= [StartDate]");
             table.HasCheckConstraint("CK_SUPPLY_CONTRACT_Status",
-                "[ContractStatus] IN ('PENDING_SUPPLIER','SUPPLIER_REJECTED','PENDING_ADMIN','ADMIN_REJECTED','APPROVED','CANCELLATION_REQUESTED','CANCELLED')");
+                "[ContractStatus] IN ('PENDING_SUPPLIER','SUPPLIER_REJECTED','PENDING_ADMIN','ADMIN_REJECTED','APPROVED','CANCELLATION_REQUESTED','PENDING_ADMIN_CANCELLATION','CANCELLATION_REJECTED','CANCELLED')");
         });
 
         builder.HasKey(x => x.SupplyContractId);
