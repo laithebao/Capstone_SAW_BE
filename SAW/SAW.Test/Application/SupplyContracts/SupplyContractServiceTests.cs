@@ -14,7 +14,7 @@ public sealed class SupplyContractServiceTests
     {
         var today = DateOnly.FromDateTime(DateTime.UtcNow.AddHours(7));
         var request = new UpdateSupplyContractRequest(
-            " b ", 100, " week ", 25_000, today, today.AddMonths(3), "  Giao buổi sáng  ");
+            100, " week ", 25_000, today, today.AddMonths(3), "  Giao buổi sáng  ");
         _repository.Setup(x => x.UpdateByWarehouseAsync(
                 7, 11, It.IsAny<UpdateSupplyContractRequest>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync((SupplyContractDetail)null!);
@@ -25,8 +25,7 @@ public sealed class SupplyContractServiceTests
             7,
             11,
             It.Is<UpdateSupplyContractRequest>(value =>
-                value.QualityGrade == "B"
-                && value.DeliveryPeriod == "WEEK"
+                value.DeliveryPeriod == "WEEK"
                 && value.Terms == "Giao buổi sáng"),
             It.IsAny<CancellationToken>()), Times.Once);
     }
@@ -45,6 +44,18 @@ public sealed class SupplyContractServiceTests
             5, 9, "Không thể tiếp tục cung ứng", It.IsAny<CancellationToken>()), Times.Once);
     }
 
+    [Theory]
+    [InlineData("APPROVED", true)]
+    [InlineData("CANCELLATION_REJECTED", true)]
+    [InlineData("PENDING_ADMIN", false)]
+    [InlineData("PENDING_SUPPLIER", false)]
+    [InlineData("PENDING_ADMIN_CANCELLATION", false)]
+    [InlineData("CANCELLED", false)]
+    public void SupplierCancellationIsAvailableOnlyAfterAdminApproval(string status, bool expected)
+    {
+        Assert.Equal(expected, SupplyContractCancellationPolicy.CanSupplierRequestCancellation(status));
+    }
+
     [Fact]
     public async Task WarehouseCancellationRejectsShortReason()
     {
@@ -60,7 +71,7 @@ public sealed class SupplyContractServiceTests
     {
         var yesterday = DateOnly.FromDateTime(DateTime.UtcNow.AddHours(7)).AddDays(-1);
         var request = new UpdateSupplyContractRequest(
-            "A", 100, "WEEK", 25_000, yesterday.AddDays(-7), yesterday, null);
+            100, "WEEK", 25_000, yesterday.AddDays(-7), yesterday, null);
 
         await Assert.ThrowsAsync<BadRequestException>(() =>
             Service.UpdateByWarehouseAsync(7, 11, request, CancellationToken.None));

@@ -1,17 +1,24 @@
 namespace SAW.Application.Features.SupplyContracts;
 
+public static class SupplyContractCancellationPolicy
+{
+    public static bool CanSupplierRequestCancellation(string? contractStatus) =>
+        contractStatus is "APPROVED" or "CANCELLATION_REJECTED";
+}
+
 public sealed record SupplyContractQuery(
     string? Search = null,
     string? Status = null,
     int Page = 1,
-    int PageSize = 20);
+    int PageSize = 20,
+    string? SortBy = "createdAt",
+    string? SortDirection = "desc");
 
 public sealed record SupplyContractSummary(
     long Id,
     string ContractCode,
     string SupplierName,
     string CropTypeName,
-    string QualityGrade,
     decimal DeliveryQuantityKg,
     string DeliveryPeriod,
     decimal UnitPriceVndPerKg,
@@ -19,7 +26,8 @@ public sealed record SupplyContractSummary(
     DateOnly EndDate,
     string Status,
     int Revision,
-    DateTime CreatedAt);
+    DateTime CreatedAt,
+    bool IsEffective);
 
 public sealed record SupplyContractDetail(
     long Id,
@@ -28,7 +36,6 @@ public sealed record SupplyContractDetail(
     string SupplierName,
     int CropTypeId,
     string CropTypeName,
-    string QualityGrade,
     decimal DeliveryQuantityKg,
     string DeliveryPeriod,
     decimal UnitPriceVndPerKg,
@@ -47,7 +54,12 @@ public sealed record SupplyContractDetail(
     DateTime? CancellationRequestedAt,
     string? CancellationRequestReason,
     DateTime? CancelledAt,
-    string? CancellationReason);
+    string? CancellationReason,
+    string? AttachmentFileName,
+    string? AttachmentContentType,
+    DateTime? AttachmentUploadedAt,
+    bool HasOverdueDelivery,
+    DateOnly? OverdueDeliveryDueDate);
 
 public sealed record SupplyContractPage(
     IReadOnlyList<SupplyContractSummary> Items,
@@ -60,8 +72,7 @@ public sealed record SupplyContractSupplierOption(
 public sealed record SupplyContractCropTypeOption(int Id, string Code, string Name, string CategoryName);
 public sealed record SupplyContractOptions(
     IReadOnlyList<SupplyContractSupplierOption> Suppliers,
-    IReadOnlyList<SupplyContractCropTypeOption> CropTypes,
-    IReadOnlyList<string> QualityGrades);
+    IReadOnlyList<SupplyContractCropTypeOption> CropTypes);
 
 public sealed record SupplyContractBatchOption(
     long Id,
@@ -69,7 +80,6 @@ public sealed record SupplyContractBatchOption(
     int CropTypeId,
     string CropTypeName,
     string CategoryName,
-    string QualityGrade,
     decimal DeliveryQuantityKg,
     decimal UsedQuantityKg,
     decimal RemainingQuantityKg,
@@ -83,7 +93,6 @@ public sealed record SupplyContractBatchOption(
 public sealed record CreateSupplyContractRequest(
     int SupplierId,
     int CropTypeId,
-    string QualityGrade,
     decimal DeliveryQuantityKg,
     string DeliveryPeriod,
     decimal UnitPriceVndPerKg,
@@ -92,7 +101,6 @@ public sealed record CreateSupplyContractRequest(
     string? Terms);
 
 public sealed record UpdateSupplyContractRequest(
-    string QualityGrade,
     decimal DeliveryQuantityKg,
     string DeliveryPeriod,
     decimal UnitPriceVndPerKg,
@@ -102,6 +110,7 @@ public sealed record UpdateSupplyContractRequest(
 
 public sealed record RejectSupplyContractRequest(string Reason);
 public sealed record SupplyContractReasonRequest(string Reason);
+public sealed record SupplyContractAttachment(string FileName, string ContentType, byte[] Content);
 
 public interface ISupplyContractRepository
 {
@@ -132,6 +141,8 @@ public interface ISupplyContractRepository
         int adminAccountId, long id, CancellationToken ct);
     Task<SupplyContractDetail> RejectByAdminAsync(
         int adminAccountId, long id, string reason, CancellationToken ct);
+    Task<SupplyContractDetail> AttachFileAsync(int warehouseManagerAccountId, long id, SupplyContractAttachment attachment, CancellationToken ct);
+    Task<(byte[] Content, string ContentType, string FileName)> DownloadAttachmentAsync(int actorAccountId, string actorRole, long id, CancellationToken ct);
 }
 
 public interface ISupplyContractService
@@ -163,4 +174,6 @@ public interface ISupplyContractService
         int adminAccountId, long id, CancellationToken ct);
     Task<SupplyContractDetail> RejectByAdminAsync(
         int adminAccountId, long id, RejectSupplyContractRequest request, CancellationToken ct);
+    Task<SupplyContractDetail> AttachFileAsync(int warehouseManagerAccountId, long id, SupplyContractAttachment attachment, CancellationToken ct);
+    Task<(byte[] Content, string ContentType, string FileName)> DownloadAttachmentAsync(int actorAccountId, string actorRole, long id, CancellationToken ct);
 }

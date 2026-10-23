@@ -18,6 +18,7 @@ using SAW.Application.Features.QrCodes.Interfaces;
 using SAW.Application.Features.WarehouseInventory;
 using SAW.Infrastructure.QrCodes;
 using SAW.Application.Features.SupplyContracts;
+using SAW.Infrastructure.Notifications;
 
 namespace SAW.Infrastructure.Extensions;
 
@@ -79,6 +80,7 @@ public static class ServiceCollectionExtensions
         services.AddSingleton<IQrCodeRenderer, PngQrCodeRenderer>();
         services.AddHttpClient<IQrImageStorage, CloudinaryQrImageStorage>(client => client.Timeout = TimeSpan.FromSeconds(30));
         services.AddHostedService<QrCodeGenerationWorker>();
+        services.AddHostedService<SupplyContractDeliveryReminderWorker>();
 
         return services;
     }

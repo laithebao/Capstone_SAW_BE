@@ -8,9 +8,9 @@ public sealed class SupplyContractService(ISupplyContractRepository repository) 
     private static readonly string[] Statuses =
     [
         "PENDING_SUPPLIER", "SUPPLIER_REJECTED", "PENDING_ADMIN", "ADMIN_REJECTED", "APPROVED",
-        "CANCELLATION_REQUESTED", "PENDING_ADMIN_CANCELLATION", "CANCELLED"
+        "CANCELLATION_REQUESTED", "PENDING_ADMIN_CANCELLATION", "CANCELLATION_REJECTED", "CANCELLED"
     ];
-    private static readonly string[] Grades = ["A", "B", "C", "D", "E"];
+    private static readonly string[] SortFields = ["createdat", "enddate", "unitprice", "deliveryquantity"];
     private static readonly string[] DeliveryPeriods = ["WEEK", "MONTH"];
 
     public Task<SupplyContractPage> ListAsync(
@@ -22,8 +22,12 @@ public sealed class SupplyContractService(ISupplyContractRepository repository) 
         var status = Clean(query.Status)?.ToUpperInvariant();
         if (status is not null && !Statuses.Contains(status))
             throw new BadRequestException("Trạng thái hợp đồng không hợp lệ.");
+        var sortBy = Clean(query.SortBy)?.ToLowerInvariant() ?? "createdat";
+        var sortDirection = Clean(query.SortDirection)?.ToLowerInvariant() ?? "desc";
+        if (!SortFields.Contains(sortBy) || sortDirection is not ("asc" or "desc"))
+            throw new BadRequestException("Cách sắp xếp hợp đồng không hợp lệ.");
         return repository.ListAsync(actorAccountId, actorRole,
-            query with { Search = Clean(query.Search), Status = status }, ct);
+            query with { Search = Clean(query.Search), Status = status, SortBy = sortBy, SortDirection = sortDirection }, ct);
     }
 
     public Task<SupplyContractDetail> GetAsync(
@@ -50,9 +54,6 @@ public sealed class SupplyContractService(ISupplyContractRepository repository) 
     {
         if (warehouseManagerAccountId <= 0 || request.SupplierId <= 0 || request.CropTypeId <= 0)
             throw new BadRequestException("Nhà cung cấp hoặc loại nông sản không hợp lệ.");
-        var grade = Clean(request.QualityGrade)?.ToUpperInvariant();
-        if (grade is null || !Grades.Contains(grade))
-            throw new BadRequestException("Hạng chất lượng phải từ A đến E.");
         if (request.DeliveryQuantityKg <= 0)
             throw new BadRequestException("Sản lượng giao theo chu kỳ phải lớn hơn 0 kg.");
         var deliveryPeriod = Clean(request.DeliveryPeriod)?.ToUpperInvariant();
@@ -69,7 +70,6 @@ public sealed class SupplyContractService(ISupplyContractRepository repository) 
         return repository.CreateAsync(warehouseManagerAccountId,
             request with
             {
-                QualityGrade = grade,
                 DeliveryPeriod = deliveryPeriod,
                 Terms = terms
             }, ct);
@@ -86,9 +86,6 @@ public sealed class SupplyContractService(ISupplyContractRepository repository) 
         int warehouseManagerAccountId, long id, UpdateSupplyContractRequest request, CancellationToken ct)
     {
         ValidateAccountAndId(warehouseManagerAccountId, id);
-        var grade = Clean(request.QualityGrade)?.ToUpperInvariant();
-        if (grade is null || !Grades.Contains(grade))
-            throw new BadRequestException("Hạng chất lượng phải từ A đến E.");
         if (request.DeliveryQuantityKg <= 0)
             throw new BadRequestException("Sản lượng giao theo chu kỳ phải lớn hơn 0 kg.");
         var deliveryPeriod = Clean(request.DeliveryPeriod)?.ToUpperInvariant();
@@ -105,7 +102,6 @@ public sealed class SupplyContractService(ISupplyContractRepository repository) 
         return repository.UpdateByWarehouseAsync(warehouseManagerAccountId, id,
             request with
             {
-                QualityGrade = grade,
                 DeliveryPeriod = deliveryPeriod,
                 Terms = terms
             }, ct);
@@ -140,6 +136,18 @@ public sealed class SupplyContractService(ISupplyContractRepository repository) 
     {
         ValidateAccountAndId(adminAccountId, id);
         return repository.CancelByAdminAsync(adminAccountId, id, ct);
+    }
+
+    public Task<SupplyContractDetail> AttachFileAsync(int warehouseManagerAccountId, long id, SupplyContractAttachment attachment, CancellationToken ct)
+    {
+        ValidateAccountAndId(warehouseManagerAccountId, id);
+        return repository.AttachFileAsync(warehouseManagerAccountId, id, attachment, ct);
+    }
+
+    public Task<(byte[] Content, string ContentType, string FileName)> DownloadAttachmentAsync(int actorAccountId, string actorRole, long id, CancellationToken ct)
+    {
+        ValidateAccountAndId(actorAccountId, id);
+        return repository.DownloadAttachmentAsync(actorAccountId, actorRole, id, ct);
     }
 
     public Task<SupplyContractDetail> RejectBySupplierAsync(
@@ -193,4 +201,5 @@ public sealed class SupplyContractService(ISupplyContractRepository repository) 
 
     private static string? Clean(string? value) =>
         string.IsNullOrWhiteSpace(value) ? null : value.Trim();
+
 }

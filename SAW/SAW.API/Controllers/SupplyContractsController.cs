@@ -11,6 +11,7 @@ namespace SAW.API.Controllers;
 [Authorize(Roles = "WAREHOUSE_MANAGER,SUPPLIER,ADMINISTRATOR")]
 public sealed class SupplyContractsController(ISupplyContractService service) : ControllerBase
 {
+    private const long MaxAttachmentBytes = 10 * 1024 * 1024;
     [HttpGet]
     public async Task<ActionResult<ApiResponse<SupplyContractPage>>> List(
         [FromQuery] SupplyContractQuery query, CancellationToken ct) =>
@@ -56,6 +57,33 @@ public sealed class SupplyContractsController(ISupplyContractService service) : 
         Ok(ApiResponse<SupplyContractDetail>.Success(
             await service.RequestCancellationBySupplierAsync(ActorId(), id, request, ct),
             "Đã gửi yêu cầu hủy hợp đồng đến quản lý kho."));
+
+    [HttpPost("{id:long}/attachment")]
+    [Authorize(Roles = "WAREHOUSE_MANAGER")]
+    [RequestSizeLimit(MaxAttachmentBytes)]
+    public async Task<ActionResult<ApiResponse<SupplyContractDetail>>> UploadAttachment(long id, IFormFile file, CancellationToken ct)
+    {
+        if (file is null || file.Length <= 0 || file.Length > MaxAttachmentBytes)
+            return BadRequest(new { message = "File phải có dữ liệu và không vượt quá 10 MB." });
+        var extension = Path.GetExtension(file.FileName).ToLowerInvariant();
+        if (extension is not (".pdf" or ".doc" or ".docx"))
+            return BadRequest(new { message = "Hệ thống chỉ hỗ trợ file PDF và Word (.doc, .docx)." });
+        await using var stream = file.OpenReadStream();
+        using var memory = new MemoryStream();
+        await stream.CopyToAsync(memory, ct);
+        var contentType = extension == ".pdf" ? "application/pdf" : "application/vnd.openxmlformats-officedocument.wordprocessingml.document";
+        var result = await service.AttachFileAsync(ActorId(), id,
+            new SupplyContractAttachment(Path.GetFileName(file.FileName), contentType, memory.ToArray()), ct);
+        return Ok(ApiResponse<SupplyContractDetail>.Success(result, "Đã tải file hợp đồng."));
+    }
+
+    [HttpGet("{id:long}/attachment")]
+    [Authorize(Roles = "WAREHOUSE_MANAGER,SUPPLIER,ADMINISTRATOR")]
+    public async Task<IActionResult> DownloadAttachment(long id, CancellationToken ct)
+    {
+        var file = await service.DownloadAttachmentAsync(ActorId(), ActorRole(), id, ct);
+        return File(file.Content, file.ContentType, file.FileName);
+    }
 
     [HttpPost("{id:long}/warehouse-cancel")]
     [Authorize(Roles = "WAREHOUSE_MANAGER")]

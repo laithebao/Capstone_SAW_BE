@@ -30,13 +30,16 @@ public sealed class SupplyContractConfiguration : IEntityTypeConfiguration<Suppl
         builder.Property(x => x.WarehouseManagerAccountId).HasColumnName("WarehouseManagerAccountID").IsRequired();
         builder.Property(x => x.SupplierId).HasColumnName("SupplierID").IsRequired();
         builder.Property(x => x.CropTypeId).HasColumnName("CropTypeID").IsRequired();
-        builder.Property(x => x.QualityGrade).HasMaxLength(5).IsRequired();
+        builder.Property(x => x.QualityGrade).HasMaxLength(5);
         builder.Property(x => x.DeliveryQuantityKg).HasPrecision(18, 2).IsRequired();
         builder.Property(x => x.DeliveryPeriod).HasMaxLength(10).IsRequired();
         builder.Property(x => x.UnitPriceVndPerKg).HasPrecision(18, 2).IsRequired();
         builder.Property(x => x.StartDate).IsRequired();
         builder.Property(x => x.EndDate).IsRequired();
         builder.Property(x => x.Terms).HasMaxLength(2000);
+        builder.Property(x => x.AttachmentFileName).HasMaxLength(255);
+        builder.Property(x => x.AttachmentStorageName).HasMaxLength(100);
+        builder.Property(x => x.AttachmentContentType).HasMaxLength(100);
         builder.Property(x => x.ContractStatus).HasMaxLength(30).HasDefaultValue("PENDING_SUPPLIER");
         builder.Property(x => x.Revision).HasDefaultValue(1);
         builder.Property(x => x.SupplierRejectionReason).HasMaxLength(1000);

@@ -97,7 +97,16 @@ public class ProductBatchRepository(AppDbContext db, TimeProvider? timeProvider 
             && contract.StartDate <= today
             && contract.EndDate >= today
             && contract.StartDate <= expectedDeliveryDate
-            && contract.EndDate >= expectedDeliveryDate, ct);
+            && contract.EndDate >= expectedDeliveryDate
+            && !db.SupplyContracts.Any(newer =>
+                newer.SupplierId == contract.SupplierId
+                && newer.CropTypeId == contract.CropTypeId
+                && newer.ContractStatus == "APPROVED"
+                && newer.StartDate <= today
+                && newer.EndDate >= today
+                && (newer.CreatedAt > contract.CreatedAt
+                    || (newer.CreatedAt == contract.CreatedAt
+                        && newer.SupplyContractId > contract.SupplyContractId))), ct);
     public Task<string> GenerateBatchCodeAsync(CancellationToken ct = default)
     {
         var localDate = DateOnly.FromDateTime((timeProvider ?? TimeProvider.System)
@@ -223,6 +232,17 @@ public class ProductBatchRepository(AppDbContext db, TimeProvider? timeProvider 
             || deliveryDate > contract.EndDate)
             throw new ArgumentException(
                 "Hợp đồng không hợp lệ, chưa được duyệt, không đúng loại nông sản hoặc ngày giao nằm ngoài thời hạn hợp đồng.");
+
+        if (!excludedBatchId.HasValue && await db.SupplyContracts.AnyAsync(newer =>
+                newer.SupplierId == contract.SupplierId
+                && newer.CropTypeId == contract.CropTypeId
+                && newer.ContractStatus == "APPROVED"
+                && newer.StartDate <= today
+                && newer.EndDate >= today
+                && (newer.CreatedAt > contract.CreatedAt
+                    || (newer.CreatedAt == contract.CreatedAt
+                        && newer.SupplyContractId > contract.SupplyContractId)), ct))
+            throw new ConflictException("Hợp đồng đã được thay thế. Vui lòng chọn hợp đồng mới nhất đang có hiệu lực cho loại nông sản này.");
 
         var (periodStart, periodEnd) = SupplyContractQuotaPeriod.GetBounds(
             contract.StartDate, contract.EndDate, contract.DeliveryPeriod, deliveryDate);

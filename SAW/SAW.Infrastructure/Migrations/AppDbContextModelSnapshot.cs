@@ -3365,6 +3365,21 @@ namespace SAW.Infrastructure.Migrations
                     b.Property<DateTime?>("AdminReviewedAt")
                         .HasColumnType("datetime2");
 
+                    b.Property<string>("AttachmentContentType")
+                        .HasMaxLength(100)
+                        .HasColumnType("nvarchar(100)");
+
+                    b.Property<string>("AttachmentFileName")
+                        .HasMaxLength(255)
+                        .HasColumnType("nvarchar(255)");
+
+                    b.Property<string>("AttachmentStorageName")
+                        .HasMaxLength(100)
+                        .HasColumnType("nvarchar(100)");
+
+                    b.Property<DateTime?>("AttachmentUploadedAt")
+                        .HasColumnType("datetime2");
+
                     b.Property<string>("CancellationReason")
                         .HasMaxLength(1000)
                         .HasColumnType("nvarchar(1000)");
@@ -3413,7 +3428,6 @@ namespace SAW.Infrastructure.Migrations
                         .HasColumnType("date");
 
                     b.Property<string>("QualityGrade")
-                        .IsRequired()
                         .HasMaxLength(5)
                         .HasColumnType("nvarchar(5)");
 
@@ -3477,7 +3491,7 @@ namespace SAW.Infrastructure.Migrations
 
                             t.HasCheckConstraint("CK_SUPPLY_CONTRACT_QualityGrade", "[QualityGrade] IN ('A','B','C','D','E')");
 
-                            t.HasCheckConstraint("CK_SUPPLY_CONTRACT_Status", "[ContractStatus] IN ('PENDING_SUPPLIER','SUPPLIER_REJECTED','PENDING_ADMIN','ADMIN_REJECTED','APPROVED','CANCELLATION_REQUESTED','CANCELLED')");
+                            t.HasCheckConstraint("CK_SUPPLY_CONTRACT_Status", "[ContractStatus] IN ('PENDING_SUPPLIER','SUPPLIER_REJECTED','PENDING_ADMIN','ADMIN_REJECTED','APPROVED','CANCELLATION_REQUESTED','PENDING_ADMIN_CANCELLATION','CANCELLATION_REJECTED','CANCELLED')");
 
                             t.HasCheckConstraint("CK_SUPPLY_CONTRACT_UnitPrice", "[UnitPriceVndPerKg] > 0");
                         });

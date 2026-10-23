@@ -9,9 +9,40 @@ namespace SAW.Infrastructure.Repositories;
 
 public sealed class SupplyContractRepository(AppDbContext db) : ISupplyContractRepository
 {
+    private static readonly string AttachmentRoot = Path.Combine(AppContext.BaseDirectory, "App_Data", "ContractFiles");
+
+    public async Task<SupplyContractDetail> AttachFileAsync(int warehouseManagerAccountId, long id, SupplyContractAttachment attachment, CancellationToken ct)
+    {
+        var contract = await db.SupplyContracts.SingleOrDefaultAsync(x => x.SupplyContractId == id && x.WarehouseManagerAccountId == warehouseManagerAccountId, ct)
+            ?? throw new NotFoundException("Không tìm thấy hợp đồng hoặc bạn không có quyền đính kèm file.");
+        Directory.CreateDirectory(AttachmentRoot);
+        var storageName = $"{Guid.NewGuid():N}{Path.GetExtension(attachment.FileName).ToLowerInvariant()}";
+        await File.WriteAllBytesAsync(Path.Combine(AttachmentRoot, storageName), attachment.Content, ct);
+        if (!string.IsNullOrWhiteSpace(contract.AttachmentStorageName))
+            File.Delete(Path.Combine(AttachmentRoot, contract.AttachmentStorageName));
+        contract.AttachmentFileName = attachment.FileName;
+        contract.AttachmentStorageName = storageName;
+        contract.AttachmentContentType = attachment.ContentType;
+        contract.AttachmentUploadedAt = DateTime.UtcNow;
+        await db.SaveChangesAsync(ct);
+        return await GetAsync(warehouseManagerAccountId, "WAREHOUSE_MANAGER", id, ct);
+    }
+
+    public async Task<(byte[] Content, string ContentType, string FileName)> DownloadAttachmentAsync(int actorAccountId, string actorRole, long id, CancellationToken ct)
+    {
+        var contract = await VisibleContracts(actorAccountId, actorRole).AsNoTracking().SingleOrDefaultAsync(x => x.SupplyContractId == id, ct)
+            ?? throw new NotFoundException("Không tìm thấy hợp đồng hoặc bạn không có quyền xem file.");
+        if (string.IsNullOrWhiteSpace(contract.AttachmentStorageName) || string.IsNullOrWhiteSpace(contract.AttachmentFileName))
+            throw new NotFoundException("Hợp đồng chưa có file đính kèm.");
+        var path = Path.Combine(AttachmentRoot, contract.AttachmentStorageName);
+        if (!File.Exists(path)) throw new NotFoundException("File đính kèm không còn trên hệ thống.");
+        return (await File.ReadAllBytesAsync(path, ct), contract.AttachmentContentType ?? "application/octet-stream", contract.AttachmentFileName);
+    }
+
     public async Task<SupplyContractPage> ListAsync(
         int actorAccountId, string actorRole, SupplyContractQuery query, CancellationToken ct)
     {
+        var today = DateOnly.FromDateTime(DateTime.UtcNow.AddHours(7));
         var contracts = VisibleContracts(actorAccountId, actorRole).AsNoTracking();
         if (!string.IsNullOrWhiteSpace(query.Search))
         {
@@ -24,8 +55,23 @@ public sealed class SupplyContractRepository(AppDbContext db) : ISupplyContractR
             contracts = contracts.Where(x => x.ContractStatus == query.Status);
 
         var total = await contracts.CountAsync(ct);
-        var items = await contracts
-            .OrderByDescending(x => x.CreatedAt)
+        var descending = query.SortDirection != "asc";
+        var orderedContracts = query.SortBy switch
+        {
+            "enddate" => descending
+                ? contracts.OrderByDescending(x => x.EndDate)
+                : contracts.OrderBy(x => x.EndDate),
+            "unitprice" => descending
+                ? contracts.OrderByDescending(x => x.UnitPriceVndPerKg)
+                : contracts.OrderBy(x => x.UnitPriceVndPerKg),
+            "deliveryquantity" => descending
+                ? contracts.OrderByDescending(x => x.DeliveryQuantityKg)
+                : contracts.OrderBy(x => x.DeliveryQuantityKg),
+            _ => descending
+                ? contracts.OrderByDescending(x => x.CreatedAt)
+                : contracts.OrderBy(x => x.CreatedAt)
+        };
+        var items = await orderedContracts
             .ThenByDescending(x => x.SupplyContractId)
             .Skip((query.Page - 1) * query.PageSize)
             .Take(query.PageSize)
@@ -34,7 +80,6 @@ public sealed class SupplyContractRepository(AppDbContext db) : ISupplyContractR
                 x.ContractCode,
                 x.Supplier.SupplierName,
                 x.CropType.CropName,
-                x.QualityGrade,
                 x.DeliveryQuantityKg,
                 x.DeliveryPeriod,
                 x.UnitPriceVndPerKg,
@@ -42,14 +87,27 @@ public sealed class SupplyContractRepository(AppDbContext db) : ISupplyContractR
                 x.EndDate,
                 x.ContractStatus,
                 x.Revision,
-                x.CreatedAt))
+                x.CreatedAt,
+                x.ContractStatus == "APPROVED"
+                    && x.StartDate <= today
+                    && x.EndDate >= today
+                    && !db.SupplyContracts.Any(newer =>
+                        newer.SupplierId == x.SupplierId
+                        && newer.CropTypeId == x.CropTypeId
+                        && newer.ContractStatus == "APPROVED"
+                        && newer.StartDate <= today
+                        && newer.EndDate >= today
+                        && (newer.CreatedAt > x.CreatedAt
+                            || (newer.CreatedAt == x.CreatedAt
+                                && newer.SupplyContractId > x.SupplyContractId)))))
             .ToListAsync(ct);
         return new SupplyContractPage(items, total, query.Page, query.PageSize);
     }
 
     public async Task<SupplyContractDetail> GetAsync(
-        int actorAccountId, string actorRole, long id, CancellationToken ct) =>
-        await VisibleContracts(actorAccountId, actorRole)
+        int actorAccountId, string actorRole, long id, CancellationToken ct)
+    {
+        var detail = await VisibleContracts(actorAccountId, actorRole)
             .AsNoTracking()
             .Where(x => x.SupplyContractId == id)
             .Select(x => new SupplyContractDetail(
@@ -59,7 +117,6 @@ public sealed class SupplyContractRepository(AppDbContext db) : ISupplyContractR
                 x.Supplier.SupplierName,
                 x.CropTypeId,
                 x.CropType.CropName,
-                x.QualityGrade,
                 x.DeliveryQuantityKg,
                 x.DeliveryPeriod,
                 x.UnitPriceVndPerKg,
@@ -78,9 +135,23 @@ public sealed class SupplyContractRepository(AppDbContext db) : ISupplyContractR
                 x.CancellationRequestedAt,
                 x.CancellationRequestReason,
                 x.CancelledAt,
-                x.CancellationReason))
+                x.CancellationReason,
+                x.AttachmentFileName,
+                x.AttachmentContentType,
+                x.AttachmentUploadedAt,
+                false,
+                null))
             .SingleOrDefaultAsync(ct)
             ?? throw new NotFoundException("Không tìm thấy hợp đồng hoặc bạn không có quyền xem hợp đồng này.");
+
+        var missedDueDate = await FindLatestMissedDeliveryDueDateAsync(id, detail.Status,
+            detail.DeliveryQuantityKg, detail.StartDate, detail.EndDate, detail.DeliveryPeriod, ct);
+        return detail with
+        {
+            HasOverdueDelivery = missedDueDate is not null,
+            OverdueDeliveryDueDate = missedDueDate
+        };
+    }
 
     public async Task<SupplyContractOptions> GetOptionsAsync(CancellationToken ct)
     {
@@ -98,7 +169,7 @@ public sealed class SupplyContractRepository(AppDbContext db) : ISupplyContractR
             .Select(x => new SupplyContractCropTypeOption(
                 x.CropTypeId, x.CropCode, x.CropName, x.CategoryName))
             .ToListAsync(ct);
-        return new SupplyContractOptions(suppliers, crops, ["A", "B", "C", "D", "E"]);
+        return new SupplyContractOptions(suppliers, crops);
     }
 
     public async Task<IReadOnlyList<SupplyContractBatchOption>> GetEligibleForBatchAsync(
@@ -110,8 +181,6 @@ public sealed class SupplyContractRepository(AppDbContext db) : ISupplyContractR
                 && x.ContractStatus == "APPROVED"
                 && x.StartDate <= today
                 && x.EndDate >= today
-                && x.StartDate <= expectedDeliveryDate
-                && x.EndDate >= expectedDeliveryDate
                 && db.SupplierCropTypes.Any(supplierCrop =>
                     supplierCrop.SupplierId == x.SupplierId
                     && supplierCrop.CropTypeId == x.CropTypeId
@@ -126,14 +195,24 @@ public sealed class SupplyContractRepository(AppDbContext db) : ISupplyContractR
                 x.CropTypeId,
                 CropTypeName = x.CropType.CropName,
                 x.CropType.CategoryName,
-                x.QualityGrade,
                 x.DeliveryQuantityKg,
                 x.DeliveryPeriod,
                 x.UnitPriceVndPerKg,
                 x.StartDate,
-                x.EndDate
+                x.EndDate,
+                x.CreatedAt
             })
             .ToListAsync(ct);
+
+        contracts = contracts
+            .GroupBy(contract => contract.CropTypeId)
+            .Select(group => group
+                .OrderByDescending(contract => contract.CreatedAt)
+                .ThenByDescending(contract => contract.SupplyContractId)
+                .First())
+            .Where(contract => contract.StartDate <= expectedDeliveryDate
+                && contract.EndDate >= expectedDeliveryDate)
+            .ToList();
 
         var result = new List<SupplyContractBatchOption>(contracts.Count);
         foreach (var contract in contracts)
@@ -153,7 +232,6 @@ public sealed class SupplyContractRepository(AppDbContext db) : ISupplyContractR
                 contract.CropTypeId,
                 contract.CropTypeName,
                 contract.CategoryName,
-                contract.QualityGrade,
                 contract.DeliveryQuantityKg,
                 used,
                 Math.Max(0m, contract.DeliveryQuantityKg - used),
@@ -188,7 +266,6 @@ public sealed class SupplyContractRepository(AppDbContext db) : ISupplyContractR
             WarehouseManagerAccountId = warehouseManagerAccountId,
             SupplierId = request.SupplierId,
             CropTypeId = request.CropTypeId,
-            QualityGrade = request.QualityGrade,
             DeliveryQuantityKg = request.DeliveryQuantityKg,
             DeliveryPeriod = request.DeliveryPeriod,
             UnitPriceVndPerKg = request.UnitPriceVndPerKg,
@@ -230,7 +307,7 @@ public sealed class SupplyContractRepository(AppDbContext db) : ISupplyContractR
             {
                 if (request.StartDate != contract.StartDate || request.DeliveryPeriod != contract.DeliveryPeriod)
                     throw new ConflictException(
-                        "Hợp đồng đã có lô hàng nên không thể đổi ngày bắt đầu hoặc chu kỳ giao. Bạn vẫn có thể sửa sản lượng, đơn giá, hạng, ngày hết hạn và điều khoản.");
+                        "Hợp đồng đã có lô hàng nên không thể đổi ngày bắt đầu hoặc chu kỳ giao. Bạn vẫn có thể sửa sản lượng, đơn giá, ngày hết hạn và điều khoản.");
                 if (batches.Any(x => x.ExpectedDeliveryDate is null
                     || x.ExpectedDeliveryDate < request.StartDate
                     || x.ExpectedDeliveryDate > request.EndDate))
@@ -251,7 +328,6 @@ public sealed class SupplyContractRepository(AppDbContext db) : ISupplyContractR
                         $"Không thể giảm sản lượng xuống {request.DeliveryQuantityKg:N2} kg vì kỳ {usedByPeriod.Start:dd/MM/yyyy} - {usedByPeriod.End:dd/MM/yyyy} đã tạo {usedByPeriod.UsedQuantityKg:N2} kg.");
             }
 
-            contract.QualityGrade = request.QualityGrade;
             contract.DeliveryQuantityKg = request.DeliveryQuantityKg;
             contract.DeliveryPeriod = request.DeliveryPeriod;
             contract.UnitPriceVndPerKg = request.UnitPriceVndPerKg;
@@ -291,8 +367,8 @@ public sealed class SupplyContractRepository(AppDbContext db) : ISupplyContractR
                 ?? throw new NotFoundException("Không tìm thấy hợp đồng hoặc bạn không có quyền yêu cầu hủy.");
             if (contract.Supplier.AccountId != supplierAccountId)
                 throw new NotFoundException("Không tìm thấy hợp đồng hoặc bạn không có quyền yêu cầu hủy.");
-            if (contract.ContractStatus is not ("APPROVED" or "PENDING_ADMIN" or "CANCELLATION_REJECTED"))
-                throw new ConflictException("Chỉ có thể yêu cầu hủy hợp đồng đã xác nhận hoặc đã được duyệt.");
+            if (!SupplyContractCancellationPolicy.CanSupplierRequestCancellation(contract.ContractStatus))
+                throw new ConflictException("Chỉ có thể yêu cầu hủy hợp đồng sau khi Admin đã duyệt.");
 
             contract.ContractStatus = "CANCELLATION_REQUESTED";
             contract.CancellationRequestedAt = DateTime.UtcNow;
@@ -318,8 +394,25 @@ public sealed class SupplyContractRepository(AppDbContext db) : ISupplyContractR
                 ?? throw new NotFoundException("Không tìm thấy hợp đồng hoặc bạn không có quyền hủy hợp đồng này.");
             if (contract.WarehouseManagerAccountId != warehouseManagerAccountId)
                 throw new NotFoundException("Không tìm thấy hợp đồng hoặc bạn không có quyền hủy hợp đồng này.");
+            if (contract.ContractStatus is "APPROVED" or "CANCELLATION_REJECTED")
+            {
+                var missedDueDate = await FindLatestMissedDeliveryDueDateAsync(
+                    id, contract.ContractStatus, contract.DeliveryQuantityKg, contract.StartDate, contract.EndDate,
+                    contract.DeliveryPeriod, ct);
+                if (missedDueDate is null)
+                    throw new ConflictException("Chỉ có thể hủy hợp đồng khi đã quá hạn và chưa hoàn thành sản lượng cam kết trong kỳ.");
+
+                contract.ContractStatus = "CANCELLED";
+                contract.CancelledAt = DateTime.UtcNow;
+                contract.CancellationReason = reason;
+                contract.UpdatedAt = DateTime.UtcNow;
+                await db.SaveChangesAsync(ct);
+                await transaction.CommitAsync(ct);
+                return await GetAsync(warehouseManagerAccountId, "WAREHOUSE_MANAGER", id, ct);
+            }
+
             if (contract.ContractStatus != "CANCELLATION_REQUESTED")
-                throw new ConflictException("Chỉ được hủy hợp đồng sau khi nhà cung cấp gửi yêu cầu hủy.");
+                throw new ConflictException("Chỉ có thể xử lý yêu cầu hủy của Nhà cung cấp hoặc hủy hợp đồng đã quá hạn giao.");
 
             contract.ContractStatus = "PENDING_ADMIN_CANCELLATION";
             contract.CancellationReason = reason;
@@ -438,4 +531,35 @@ public sealed class SupplyContractRepository(AppDbContext db) : ISupplyContractR
         "ADMINISTRATOR" => db.SupplyContracts,
         _ => throw new ForbiddenException()
     };
+
+    private async Task<DateOnly?> FindLatestMissedDeliveryDueDateAsync(
+        long id, string status, decimal deliveryQuantityKg, DateOnly startDate, DateOnly endDate,
+        string deliveryPeriod, CancellationToken ct)
+    {
+        var today = DateOnly.FromDateTime(DateTime.UtcNow.AddHours(7));
+        if (status is not ("APPROVED" or "CANCELLATION_REJECTED")
+            || startDate >= today)
+            return null;
+
+        DateOnly? latestMissedDueDate = null;
+        var periodStart = startDate;
+        while (periodStart <= endDate && periodStart < today)
+        {
+            var periodEnd = SupplyContractQuotaPeriod.GetBounds(
+                startDate, endDate, deliveryPeriod, periodStart).End;
+            var deliveredKg = await db.GoodsReceipts.AsNoTracking()
+                .Where(receipt => receipt.ReceiptStatus == "COMMITTED"
+                    && receipt.ProductBatch.SupplyContractId == id
+                    && receipt.ProductBatch.ExpectedDeliveryDate >= periodStart
+                    && receipt.ProductBatch.ExpectedDeliveryDate <= periodEnd)
+                .SumAsync(receipt => (decimal?)receipt.WeightInKg, ct) ?? 0m;
+            if (periodEnd < today && deliveredKg < deliveryQuantityKg)
+                latestMissedDueDate = periodEnd;
+
+            if (periodEnd >= endDate) break;
+            periodStart = periodEnd.AddDays(1);
+        }
+
+        return latestMissedDueDate;
+    }
 }
