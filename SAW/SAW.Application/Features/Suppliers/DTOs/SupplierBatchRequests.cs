@@ -26,6 +26,9 @@ public class GetSupplierBatchesQueryRequest
 
 public class DeclareProductBatchRequest
 {
+    [Range(1, long.MaxValue)]
+    public long? SupplyContractId { get; set; }
+
     [Required(ErrorMessage = "Please fill in all required fields.")]
     [Range(1, int.MaxValue)]
     public int CropTypeId { get; set; }

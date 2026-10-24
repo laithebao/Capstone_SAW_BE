@@ -21,6 +21,7 @@ public class ProductBatchConfiguration : IEntityTypeConfiguration<ProductBatch>
         builder.Property(x => x.ProductBatchId).HasColumnName("ProductBatchID").UseIdentityColumn();
         builder.Property(x => x.BatchCode).HasColumnName("BatchCode").HasMaxLength(50).IsRequired();
         builder.Property(x => x.SupplierId).HasColumnName("SupplierID").IsRequired();
+        builder.Property(x => x.SupplyContractId).HasColumnName("SupplyContractID");
         builder.Property(x => x.CropTypeId).HasColumnName("CropTypeID").IsRequired();
         builder.Property(x => x.ProductName).HasColumnName("ProductName").HasMaxLength(200).IsRequired();
         builder.Property(x => x.GrowingAreaId).HasColumnName("GrowingAreaID").IsRequired();
@@ -52,6 +53,7 @@ public class ProductBatchConfiguration : IEntityTypeConfiguration<ProductBatch>
         builder.Property(x => x.UpdatedAt).HasColumnName("UpdatedAt");
 
         builder.HasIndex(x => x.BatchCode).IsUnique().HasDatabaseName("UQ_PRODUCT_BATCH_Code");
+        builder.HasIndex(x => x.SupplyContractId).HasDatabaseName("IX_PRODUCT_BATCH_SupplyContractID");
 
         builder.HasOne(x => x.Supplier)
                .WithMany(s => s.ProductBatches)
@@ -62,6 +64,12 @@ public class ProductBatchConfiguration : IEntityTypeConfiguration<ProductBatch>
                .WithMany(c => c.ProductBatches)
                .HasForeignKey(x => x.CropTypeId)
                .HasConstraintName("FK_PRODUCT_BATCH_CROP");
+
+        builder.HasOne(x => x.SupplyContract)
+               .WithMany(contract => contract.ProductBatches)
+               .HasForeignKey(x => x.SupplyContractId)
+               .OnDelete(DeleteBehavior.Restrict)
+               .HasConstraintName("FK_PRODUCT_BATCH_SUPPLY_CONTRACT");
 
         builder.HasOne(x => x.GrowingArea)
                .WithMany(g => g.ProductBatches)

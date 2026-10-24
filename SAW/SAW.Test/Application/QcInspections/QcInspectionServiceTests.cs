@@ -1226,7 +1226,13 @@ public sealed class QcInspectionAuthorizationTests
         QcAccountId = 5,             // owner
         InspectionStatus = "IN_PROGRESS",
         StartedAt = DateTime.UtcNow.AddHours(-1),
-        ProductBatch = new ProductBatch { ProductBatchId = 1, WeightInKg = 500m, CropTypeId = 1 },
+        ProductBatch = new ProductBatch
+        {
+            ProductBatchId = 1,
+            WeightInKg = 500m,
+            VerifiedWeightInKg = 500m,
+            CropTypeId = 1
+        },
         InspectionStandardVersion = new InspectionStandardVersion
         {
             InspectionStandardVersionId = 10,

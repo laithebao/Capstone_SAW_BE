@@ -37,6 +37,7 @@ public class SupplierSqlIntegrationTests : IAsyncLifetime
     private DbContextOptions<AppDbContext> _options = null!;
     private AppDbContext _db = null!;
     private int _accountId, _supplierId, _cropId, _areaId;
+    private long _contractId;
     private readonly string _storage = Path.Combine(Path.GetTempPath(), "saw-supplier-files-" + Guid.NewGuid().ToString("N"));
     private ProductBatchRepository Repository(AppDbContext? db = null) => new(db ?? _db);
     private SupplierBatchCommandService Service(AppDbContext? db = null) => new(Repository(db), new SupplierRepository(db ?? _db));
@@ -75,7 +76,17 @@ public class SupplierSqlIntegrationTests : IAsyncLifetime
         _accountId = account.AccountId; _supplierId = supplier.SupplierId; _cropId = crop.CropTypeId; _areaId = area.GrowingAreaId;
         _db.SupplierCropTypes.Add(new() { SupplierId = _supplierId, CropTypeId = _cropId, IsActive = true });
         _db.SupplierGrowingAreas.Add(new() { SupplierId = _supplierId, GrowingAreaId = _areaId });
+        var contract = new SupplyContract
+        {
+            ContractCode = "HD-TEST-" + key[..12], WarehouseManagerAccountId = _accountId,
+            SupplierId = _supplierId, CropTypeId = _cropId, QualityGrade = "A",
+            DeliveryQuantityKg = 100000, DeliveryPeriod = "WEEK", UnitPriceVndPerKg = 20000,
+            StartDate = new DateOnly(2020, 1, 1), EndDate = new DateOnly(2099, 12, 31),
+            ContractStatus = "APPROVED", CreatedAt = DateTime.UtcNow
+        };
+        _db.SupplyContracts.Add(contract);
         await _db.SaveChangesAsync();
+        _contractId = contract.SupplyContractId;
         await _db.Database.ExecuteSqlRawAsync("DROP TRIGGER IF EXISTS dbo.TR_SUPPLIER_TEST_HISTORY");
         _db.ChangeTracker.Clear();
     }
@@ -89,15 +100,49 @@ public class SupplierSqlIntegrationTests : IAsyncLifetime
 
     private DeclareProductBatchRequest Declaration(List<string>? documents = null) => new()
     {
-        CropTypeId = _cropId, GrowingAreaId = _areaId, ProductName = "Cam", HarvestDate = new(2026, 1, 1),
-        Unit = "Thùng", DeclaredQuantity = 10, PackageCount = 10, PackageUnitWeightKg = 10, EvidenceDocumentUrls = documents
+        SupplyContractId = _contractId, CropTypeId = _cropId, GrowingAreaId = _areaId, ProductName = "Cam", HarvestDate = new(2026, 1, 1),
+        Unit = "Thùng", DeclaredQuantity = 10, PackageCount = 10, PackageUnitWeightKg = 10,
+        ExpectedDeliveryDate = new DateOnly(2026, 1, 8), EvidenceDocumentUrls = documents
     };
     private UpdateProductBatchRequest Update(SupplierBatchStatusResponse detail, List<string>? documents = null) => new()
     {
         CropTypeId = _cropId, GrowingAreaId = _areaId, ProductName = "Cam mới", HarvestDate = new(2026, 1, 1),
         Unit = "Kg", DeclaredQuantity = 250, ExpectedCreatedAt = detail.CreatedAt,
-        ExpectedUpdatedAt = detail.UpdatedAt, EvidenceDocumentUrls = documents
+        ExpectedUpdatedAt = detail.UpdatedAt, ExpectedDeliveryDate = new DateOnly(2026, 1, 8),
+        EvidenceDocumentUrls = documents
     };
+
+    [SupplierSqlFact]
+    public async Task ContractQuotaLimitsCumulativeWeightAndCancellationReleasesCapacity()
+    {
+        await _db.SupplyContracts.Where(x => x.SupplyContractId == _contractId)
+            .ExecuteUpdateAsync(setters => setters.SetProperty(x => x.DeliveryQuantityKg, 100m));
+
+        var firstRequest = Declaration();
+        firstRequest.Unit = "Kg"; firstRequest.DeclaredQuantity = 40;
+        firstRequest.PackageCount = null; firstRequest.PackageUnitWeightKg = null;
+        var first = await Service().DeclareBatchAsync(_accountId, firstRequest);
+
+        var secondRequest = Declaration();
+        secondRequest.Unit = "Kg"; secondRequest.DeclaredQuantity = 60;
+        secondRequest.PackageCount = null; secondRequest.PackageUnitWeightKg = null;
+        await Service().DeclareBatchAsync(_accountId, secondRequest);
+
+        var exceeded = Declaration();
+        exceeded.Unit = "Kg"; exceeded.DeclaredQuantity = 1;
+        exceeded.PackageCount = null; exceeded.PackageUnitWeightKg = null;
+        var error = await Assert.ThrowsAsync<ConflictException>(() =>
+            Service().DeclareBatchAsync(_accountId, exceeded));
+        Assert.Contains("0 kg còn lại", error.Message);
+
+        var detail = await Service().GetBatchStatusDetailAsync(first.BatchId, _accountId);
+        await Service().CancelBatchAsync(first.BatchId, _accountId, new()
+        {
+            ExpectedCreatedAt = detail.CreatedAt,
+            ExpectedUpdatedAt = detail.UpdatedAt
+        });
+        await Service().DeclareBatchAsync(_accountId, firstRequest);
+    }
 
     private async Task<string> Upload(bool avatar = false)
     {

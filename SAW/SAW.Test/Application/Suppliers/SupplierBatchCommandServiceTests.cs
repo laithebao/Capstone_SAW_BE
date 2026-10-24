@@ -20,6 +20,9 @@ public class SupplierBatchCommandServiceTests
             .ReturnsAsync(new Supplier { SupplierId = 2, AccountId = 1, ProfileStatus = "ACTIVE" });
         _batches.Setup(r => r.IsCropTypeRegisteredForSupplierAsync(2, 3, It.IsAny<CancellationToken>())).ReturnsAsync(true);
         _batches.Setup(r => r.IsGrowingAreaRegisteredForSupplierAsync(2, 4, It.IsAny<CancellationToken>())).ReturnsAsync(true);
+        _batches.Setup(r => r.IsSupplyContractEligibleForBatchAsync(
+            2, 9, 3, It.IsAny<DateOnly>(), It.IsAny<DateOnly>(), It.IsAny<CancellationToken>())).ReturnsAsync(true);
+        _batches.Setup(r => r.GenerateBatchCodeAsync(It.IsAny<CancellationToken>())).ReturnsAsync("LH-TEST-0001");
         _batches.Setup(r => r.GetBatchByIdAsync(5, It.IsAny<CancellationToken>())).ReturnsAsync(Batch());
     }
     private ProductBatch Batch(string status = "SUBMITTED", int supplierId = 2) => new()
@@ -32,6 +35,46 @@ public class SupplierBatchCommandServiceTests
         CropTypeId = 3, GrowingAreaId = 4, ProductName = "Cam", HarvestDate = new(2026, 1, 1),
         Unit = "Kg", DeclaredQuantity = 250, ExpectedCreatedAt = _created
     };
+    private DeclareProductBatchRequest Declaration(long? contractId = 9) => new()
+    {
+        SupplyContractId = contractId, CropTypeId = 3, GrowingAreaId = 4,
+        ProductName = "Cam", HarvestDate = new(2026, 1, 1), Unit = "Kg", DeclaredQuantity = 250,
+        ExpectedDeliveryDate = new(2026, 1, 8)
+    };
+
+    [Fact]
+    public async Task DeclareRequiresAContract()
+    {
+        var error = await Assert.ThrowsAsync<ArgumentException>(() =>
+            Service.DeclareBatchAsync(1, Declaration(null)));
+        Assert.Contains("chọn hợp đồng", error.Message);
+        _batches.Verify(r => r.AddProductBatchAsync(
+            It.IsAny<ProductBatch>(), It.IsAny<BatchStatusHistory>(), It.IsAny<List<string>?>(),
+            It.IsAny<CancellationToken>()), Times.Never);
+    }
+
+    [Fact]
+    public async Task DeclareLinksTheEligibleContractToTheBatch()
+    {
+        await Service.DeclareBatchAsync(1, Declaration());
+        _batches.Verify(r => r.AddProductBatchAsync(
+            It.Is<ProductBatch>(batch => batch.SupplyContractId == 9 && batch.CropTypeId == 3),
+            It.IsAny<BatchStatusHistory>(), It.IsAny<List<string>?>(), It.IsAny<CancellationToken>()),
+            Times.Once);
+    }
+
+    [Fact]
+    public async Task DeclareRequiresExpectedDeliveryDateForContractQuota()
+    {
+        var request = Declaration();
+        request.ExpectedDeliveryDate = null;
+        var error = await Assert.ThrowsAsync<ArgumentException>(() =>
+            Service.DeclareBatchAsync(1, request));
+        Assert.Contains("ngày giao hàng dự kiến", error.Message);
+        _batches.Verify(r => r.AddProductBatchAsync(
+            It.IsAny<ProductBatch>(), It.IsAny<BatchStatusHistory>(), It.IsAny<List<string>?>(),
+            It.IsAny<CancellationToken>()), Times.Never);
+    }
 
     [Theory]
     [InlineData("PENDING_QC")]

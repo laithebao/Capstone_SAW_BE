@@ -18,6 +18,7 @@ using SAW.Application.Features.Traceability.Services;
 using SAW.Application.Features.GoodsReceipts.Interfaces;
 using SAW.Application.Features.GoodsReceipts.Services;
 using SAW.Application.Features.WarehouseInventory;
+using SAW.Application.Features.SupplyContracts;
 
 namespace SAW.Application.Extensions;
 
@@ -51,6 +52,7 @@ public static class ServiceCollectionExtensions
         services.AddScoped<SAW.Application.Features.GoodsIssues.GoodsIssueService>();
         services.AddScoped<SAW.Application.Features.StockAdjustments.StockAdjustmentService>();
         services.AddScoped<SAW.Application.Features.StockAdjustments.StockAdjustmentReviewService>();
+        services.AddScoped<ISupplyContractService, SupplyContractService>();
 
         return services;
     }
