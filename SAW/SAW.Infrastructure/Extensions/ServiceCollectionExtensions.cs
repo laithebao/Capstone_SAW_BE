@@ -119,6 +119,10 @@ public static class ServiceCollectionExtensions
         services.AddScoped<AiToolExecutor>();
         services.AddScoped<IAiChatService, AiChatService>();
 
+        // ── AI Spoilage Forecast ───────────────────────────────────────────
+        services.AddScoped<SAW.Infrastructure.AiForecast.ForecastInputCollector>();
+        services.AddScoped<SAW.Application.Features.SpoilageForecast.ISpoilageForecastService, SAW.Infrastructure.AiForecast.SpoilageForecastGeminiService>();
+
         return services;
     }
 }

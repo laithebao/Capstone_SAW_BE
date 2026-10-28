@@ -102,6 +102,72 @@ public sealed class GeminiApiClient(HttpClient http, GeminiOptions options, ILog
         }
     }
 
+    /// <summary>
+    /// Gửi một prompt đơn lẻ tới Gemini API với cấu hình responseMimeType: "application/json"
+    /// để nhận về chuỗi JSON thuần túy (không gọi tool).
+    /// </summary>
+    public async Task<string> GenerateStructuredJsonAsync(string systemPrompt, string userPrompt, CancellationToken ct)
+    {
+        try
+        {
+            var generationConfig = new JsonObject
+            {
+                ["maxOutputTokens"] = options.MaxOutputTokens,
+                ["temperature"] = 0.2,
+                ["responseMimeType"] = "application/json"
+            };
+
+            if (options.Model.Contains("3.5") || options.Model.Contains("3.8") || options.Model.Contains("2.5"))
+            {
+                generationConfig["thinkingConfig"] = new JsonObject
+                {
+                    ["thinkingBudget"] = 256
+                };
+            }
+
+            var requestBody = new JsonObject
+            {
+                ["systemInstruction"] = new JsonObject
+                {
+                    ["parts"] = new JsonArray { new JsonObject { ["text"] = systemPrompt } }
+                },
+                ["contents"] = new JsonArray
+                {
+                    new JsonObject
+                    {
+                        ["role"] = "user",
+                        ["parts"] = new JsonArray { new JsonObject { ["text"] = userPrompt } }
+                    }
+                },
+                ["generationConfig"] = generationConfig
+            };
+
+            var url = $"https://generativelanguage.googleapis.com/v1beta/models/{options.Model}:generateContent?key={options.ApiKey}";
+
+            using var httpResponse = await http.PostAsJsonAsync(url, requestBody, JsonOpts, ct);
+            var responseBody = await httpResponse.Content.ReadAsStringAsync(ct);
+
+            if (!httpResponse.IsSuccessStatusCode)
+            {
+                logger.LogWarning("Gemini API lỗi HTTP {Status}: {Body}", (int)httpResponse.StatusCode, responseBody);
+                throw new HttpRequestException($"Gemini API HTTP {(int)httpResponse.StatusCode}: {responseBody}");
+            }
+
+            var responseJson = JsonNode.Parse(responseBody);
+            var textParts = responseJson?["candidates"]?[0]?["content"]?["parts"]?
+                .AsArray()
+                .Where(p => p?["text"] != null)
+                .Select(p => p!["text"]!.GetValue<string>());
+
+            return textParts != null ? string.Join("", textParts).Trim() : string.Empty;
+        }
+        catch (TaskCanceledException)
+        {
+            logger.LogWarning("Gemini API forecast bị timeout (model: {Model})", options.Model);
+            throw;
+        }
+    }
+
     private async Task<string> ChatInternalAsync(
         string systemPrompt,
         IReadOnlyList<(string Role, string Content)> history,
