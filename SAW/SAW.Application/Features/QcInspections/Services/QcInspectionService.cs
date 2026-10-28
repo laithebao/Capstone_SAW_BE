@@ -396,8 +396,31 @@ public sealed class QcInspectionService(IQcInspectionRepository repository) : IQ
             (request.HumidityPct < 0 || request.HumidityPct > 100))
             throw new BadRequestException("Độ ẩm phải trong khoảng [0, 100]%.");
 
-        if (request.RecordedAt > DateTime.UtcNow.AddMinutes(5))
-            throw new BadRequestException("Thời điểm đo không được là thời gian trong tương lai.");
+        // Chuẩn hóa thời gian đo về UTC (múi giờ Việt Nam UTC+7)
+        var vietnamOffset = TimeSpan.FromHours(7);
+        DateTime recordedAtUtc;
+        if (request.RecordedAt.Kind == DateTimeKind.Utc)
+        {
+            recordedAtUtc = request.RecordedAt;
+        }
+        else if (request.RecordedAt.Kind == DateTimeKind.Local)
+        {
+            recordedAtUtc = request.RecordedAt.ToUniversalTime();
+        }
+        else
+        {
+            // Kind == Unspecified: Client gửi giờ địa phương Việt Nam (UTC+7), quy đổi về UTC
+            recordedAtUtc = DateTime.SpecifyKind(request.RecordedAt - vietnamOffset, DateTimeKind.Utc);
+        }
+
+        var nowUtc = DateTime.UtcNow;
+        // Cho phép dung sai 2 phút để tránh sai lệch microsecond/clock drift
+        if (recordedAtUtc > nowUtc.AddMinutes(2))
+        {
+            var vietnamNow = (nowUtc + vietnamOffset).ToString("HH:mm dd/MM/yyyy");
+            throw new BadRequestException(
+                $"Thời điểm đo không được là thời gian trong tương lai. (Thời gian hiện tại ở Việt Nam: {vietnamNow}).");
+        }
 
         // Validate location — chỉ bắt buộc khi lô đã nhập kho (không trong phiên QC)
         if (request.WarehouseLocationId.HasValue &&
@@ -409,17 +432,25 @@ public sealed class QcInspectionService(IQcInspectionRepository repository) : IQ
         var batch = await repository.GetBatchAsync(request.ProductBatchId, ct)
             ?? throw new NotFoundException($"Không tìm thấy lô hàng ID {request.ProductBatchId}.");
 
+        // Tự động gán vị trí kho hiện tại của lô nếu request không truyền
+        var effectiveLocationId = request.WarehouseLocationId;
+        if (!effectiveLocationId.HasValue)
+        {
+            var autoLoc = await repository.GetBatchCurrentLocationAsync(request.ProductBatchId, ct);
+            effectiveLocationId = autoLoc?.WarehouseLocationId;
+        }
+
         var log = new EnvironmentLog
         {
             ProductBatchId       = request.ProductBatchId,
-            WarehouseLocationId  = request.WarehouseLocationId,
+            WarehouseLocationId  = effectiveLocationId,
             QcInspectionId       = request.QcInspectionId,
             RecordedByAccountId  = actorAccountId,
             TemperatureC         = request.TemperatureC,
             HumidityPct          = request.HumidityPct,
             SourceType           = request.SourceType.ToUpperInvariant(),
             SensorIdentifier     = request.SensorIdentifier?.Trim(),
-            RecordedAt           = request.RecordedAt,
+            RecordedAt           = recordedAtUtc,
             Note                 = request.Note?.Trim()
         };
 
@@ -1057,5 +1088,126 @@ public sealed class QcInspectionService(IQcInspectionRepository repository) : IQ
             images,
             criteriaResults,
             envLogs);
+    }
+
+    // ═══════════════════════════════════════════════════════════════════════════
+    // In-Storage Cold Chain Monitoring
+    // ═══════════════════════════════════════════════════════════════════════════
+
+    public async Task<PagedResult<InStorageBatchEnvDto>> GetInStorageBatchesWithEnvAsync(
+        InStorageBatchEnvQuery query,
+        CancellationToken ct)
+    {
+        var (batches, total) = await repository.ListInStorageBatchesAsync(
+            query.Search,
+            query.ZoneName,
+            query.Page,
+            query.PageSize,
+            ct);
+
+        var now = DateTime.UtcNow;
+        var list = new List<InStorageBatchEnvDto>();
+
+        foreach (var b in batches)
+        {
+            var loc = b.Inventories
+                .Where(i => i.QuantityOnHand > 0 && i.WarehouseLocation != null)
+                .OrderByDescending(i => i.QuantityOnHand)
+                .Select(i => i.WarehouseLocation)
+                .FirstOrDefault();
+
+            var minTemp = b.ExpectedMinTempC ?? b.CropType?.ExpectedMinTempC;
+            var maxTemp = b.ExpectedMaxTempC ?? b.CropType?.ExpectedMaxTempC;
+            var minHum = b.ExpectedMinHumidityPct ?? b.CropType?.ExpectedMinHumidityPct;
+            var maxHum = b.ExpectedMaxHumidityPct ?? b.CropType?.ExpectedMaxHumidityPct;
+
+            var lastLog = b.EnvironmentLogs
+                .OrderByDescending(e => e.RecordedAt)
+                .FirstOrDefault();
+
+            bool? isOutOfRange = null;
+            double? hoursSinceLastLog = null;
+
+            if (lastLog != null)
+            {
+                hoursSinceLastLog = Math.Round((now - lastLog.RecordedAt).TotalHours, 1);
+                isOutOfRange =
+                    (minTemp.HasValue && lastLog.TemperatureC < minTemp.Value) ||
+                    (maxTemp.HasValue && lastLog.TemperatureC > maxTemp.Value) ||
+                    (minHum.HasValue && lastLog.HumidityPct.HasValue && lastLog.HumidityPct.Value < minHum.Value) ||
+                    (maxHum.HasValue && lastLog.HumidityPct.HasValue && lastLog.HumidityPct.Value > maxHum.Value);
+            }
+
+            var dto = new InStorageBatchEnvDto(
+                b.ProductBatchId,
+                b.BatchCode,
+                b.ProductName,
+                b.QualityGrade,
+                b.WeightInKg,
+                b.BatchStatus,
+                loc?.WarehouseLocationId,
+                loc?.LocationCode,
+                loc?.ZoneName,
+                minTemp,
+                maxTemp,
+                minHum,
+                maxHum,
+                lastLog?.RecordedAt,
+                lastLog?.TemperatureC,
+                lastLog?.HumidityPct,
+                lastLog?.RecordedByAccount?.FullName,
+                isOutOfRange,
+                hoursSinceLastLog,
+                b.EnvironmentLogs.Count
+            );
+
+            if (query.IsOutOfRange == true && isOutOfRange != true)
+                continue;
+
+            if (query.IsOverdue == true && hoursSinceLastLog.HasValue && hoursSinceLastLog.Value < 24)
+                continue;
+
+            list.Add(dto);
+        }
+
+        return new PagedResult<InStorageBatchEnvDto>(list, total, query.Page, query.PageSize);
+    }
+
+    public async Task<IReadOnlyList<EnvironmentLogDto>> GetBatchEnvironmentLogsAsync(
+        long productBatchId,
+        CancellationToken ct)
+    {
+        var batch = await repository.GetBatchAsync(productBatchId, ct)
+            ?? throw new NotFoundException($"Không tìm thấy lô hàng ID {productBatchId}.");
+
+        var logs = await repository.GetBatchEnvironmentLogsAsync(productBatchId, ct);
+
+        var minTemp = batch.ExpectedMinTempC ?? batch.CropType?.ExpectedMinTempC;
+        var maxTemp = batch.ExpectedMaxTempC ?? batch.CropType?.ExpectedMaxTempC;
+
+        return logs.Select(log =>
+        {
+            bool? isOutOfRange = null;
+            if (minTemp.HasValue || maxTemp.HasValue)
+            {
+                isOutOfRange =
+                    (minTemp.HasValue && log.TemperatureC < minTemp.Value) ||
+                    (maxTemp.HasValue && log.TemperatureC > maxTemp.Value);
+            }
+
+            return new EnvironmentLogDto(
+                log.EnvironmentLogId,
+                log.ProductBatchId,
+                log.WarehouseLocationId,
+                log.WarehouseLocation?.LocationCode ?? string.Empty,
+                log.TemperatureC,
+                log.HumidityPct,
+                log.SourceType,
+                log.SensorIdentifier,
+                log.RecordedAt,
+                log.Note,
+                isOutOfRange
+            );
+        }).ToList();
     }
 }

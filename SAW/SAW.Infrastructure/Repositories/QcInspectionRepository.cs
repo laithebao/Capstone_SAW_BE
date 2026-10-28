@@ -133,6 +133,74 @@ public sealed class QcInspectionRepository(AppDbContext db) : IQcInspectionRepos
         return (items, total);
     }
 
+    // ── In-Storage Environment Monitoring ────────────────────────────────────
+
+    private static readonly string[] InStorageStatuses =
+    [
+        "IN_STOCK", "RESERVED", "APPROVED_FOR_STORAGE", "PARTIALLY_ISSUED", "PARTIALLY_RELEASED"
+    ];
+
+    public async Task<WarehouseLocation?> GetBatchCurrentLocationAsync(long batchId, CancellationToken ct)
+    {
+        return await db.Inventories
+            .AsNoTracking()
+            .Include(i => i.WarehouseLocation)
+            .Where(i => i.ProductBatchId == batchId && i.QuantityOnHand > 0 && i.WarehouseLocation != null)
+            .OrderByDescending(i => i.QuantityOnHand)
+            .Select(i => i.WarehouseLocation)
+            .FirstOrDefaultAsync(ct);
+    }
+
+    public async Task<(IReadOnlyList<ProductBatch> Batches, int TotalCount)> ListInStorageBatchesAsync(
+        string? search,
+        string? zoneName,
+        int page,
+        int pageSize,
+        CancellationToken ct)
+    {
+        var query = db.ProductBatches
+            .AsNoTracking()
+            .Include(b => b.CropType)
+            .Include(b => b.Inventories)
+                .ThenInclude(i => i.WarehouseLocation)
+            .Include(b => b.EnvironmentLogs)
+                .ThenInclude(e => e.RecordedByAccount)
+            .Where(b => InStorageStatuses.Contains(b.BatchStatus));
+
+        if (!string.IsNullOrWhiteSpace(search))
+        {
+            var s = search.Trim();
+            query = query.Where(b => b.BatchCode.Contains(s) || b.ProductName.Contains(s));
+        }
+
+        if (!string.IsNullOrWhiteSpace(zoneName))
+        {
+            var z = zoneName.Trim();
+            query = query.Where(b => b.Inventories.Any(i => i.WarehouseLocation != null && i.WarehouseLocation.ZoneName == z));
+        }
+
+        var total = await query.CountAsync(ct);
+
+        var items = await query
+            .OrderByDescending(b => b.ProductBatchId)
+            .Skip((page - 1) * pageSize)
+            .Take(pageSize)
+            .ToListAsync(ct);
+
+        return (items, total);
+    }
+
+    public async Task<IReadOnlyList<EnvironmentLog>> GetBatchEnvironmentLogsAsync(long batchId, CancellationToken ct)
+    {
+        return await db.EnvironmentLogs
+            .AsNoTracking()
+            .Include(e => e.RecordedByAccount)
+            .Include(e => e.WarehouseLocation)
+            .Where(e => e.ProductBatchId == batchId)
+            .OrderByDescending(e => e.RecordedAt)
+            .ToListAsync(ct);
+    }
+
     // ── Save ──────────────────────────────────────────────────────────────────
 
     public Task SaveChangesAsync(CancellationToken ct)

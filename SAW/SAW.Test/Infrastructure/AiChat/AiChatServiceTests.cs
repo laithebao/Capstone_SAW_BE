@@ -99,4 +99,58 @@ public sealed class AiChatServiceTests
         throttledResponse.Reply.Should().Contain("quá");
         throttledResponse.Reply.Should().Contain("tin nhắn");
     }
+
+    [Fact]
+    public async Task SendMessageAsync_WithBatchContextCode_InjectsBatchContextIntoPrompt()
+    {
+        // Arrange
+        string? capturedBody = null;
+        var mockHttp = new HttpClient(new MockHttpMessageHandler(req =>
+        {
+            capturedBody = req.Content?.ReadAsStringAsync().GetAwaiter().GetResult();
+            var json = """
+            {
+              "candidates": [
+                {
+                  "content": {
+                    "parts": [
+                      { "text": "Dạ chào bạn, tôi đã thấy lô hàng LH-TEST-99." }
+                    ]
+                  }
+                }
+              ]
+            }
+            """;
+            return new HttpResponseMessage(System.Net.HttpStatusCode.OK)
+            {
+                Content = new StringContent(json, System.Text.Encoding.UTF8, "application/json")
+            };
+        }));
+
+        var geminiClient = new GeminiApiClient(mockHttp, _options, NullLogger<GeminiApiClient>.Instance);
+        var db = new AppDbContext(new DbContextOptionsBuilder<AppDbContext>().Options);
+        var httpFactoryMock = new Moq.Mock<IHttpClientFactory>();
+        var embedder = new GeminiEmbeddingService(httpFactoryMock.Object, _options, NullLogger<GeminiEmbeddingService>.Instance);
+        var kb = new KnowledgeBaseService(embedder, Array.Empty<IDocumentLoader>(), _options, NullLogger<KnowledgeBaseService>.Instance);
+        var toolExecutor = new AiToolExecutor(db, NullLogger<AiToolExecutor>.Instance, kb);
+        var service = new AiChatService(geminiClient, toolExecutor, _options);
+
+        var request = new AiChatRequest("Lô này bảo quản thế nào?", BatchContextCode: "LH-TEST-99");
+
+        // Act
+        var response = await service.SendMessageAsync(accountId: 8888, request, CancellationToken.None);
+
+        // Assert
+        response.IsError.Should().BeFalse();
+        response.Reply.Should().Be("Dạ chào bạn, tôi đã thấy lô hàng LH-TEST-99.");
+        capturedBody.Should().NotBeNull();
+        capturedBody.Should().Contain("LH-TEST-99");
+        capturedBody.Should().Contain("BatchCode");
+    }
+
+    private sealed class MockHttpMessageHandler(Func<HttpRequestMessage, HttpResponseMessage> handler) : HttpMessageHandler
+    {
+        protected override Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken cancellationToken)
+            => Task.FromResult(handler(request));
+    }
 }
