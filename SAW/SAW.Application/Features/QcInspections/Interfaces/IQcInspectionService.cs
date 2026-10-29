@@ -89,4 +89,14 @@ public interface IQcInspectionService
         int actorAccountId,
         string actorRole,
         CancellationToken ct);
+
+    // In-Storage Cold Chain Monitoring
+    Task<PagedResult<InStorageBatchEnvDto>> GetInStorageBatchesWithEnvAsync(
+        InStorageBatchEnvQuery query,
+        CancellationToken ct);
+
+    Task<IReadOnlyList<EnvironmentLogDto>> GetBatchEnvironmentLogsAsync(
+        long productBatchId,
+        CancellationToken ct);
 }
+

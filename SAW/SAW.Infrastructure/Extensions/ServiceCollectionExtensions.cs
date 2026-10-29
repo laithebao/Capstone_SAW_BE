@@ -1,6 +1,8 @@
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
+using SAW.Infrastructure.AiChat.Rag;
+using SAW.Infrastructure.AiChat.Rag.Loaders;
 using SAW.Infrastructure.Persistence;
 using SAW.Application.Features.Authentication.Commands;
 using SAW.Application.Repositories;
@@ -19,6 +21,8 @@ using SAW.Application.Features.WarehouseInventory;
 using SAW.Infrastructure.QrCodes;
 using SAW.Application.Features.SupplyContracts;
 using SAW.Infrastructure.Notifications;
+using SAW.Infrastructure.AiChat;
+using SAW.Application.Features.AiChat;
 
 namespace SAW.Infrastructure.Extensions;
 
@@ -81,6 +85,43 @@ public static class ServiceCollectionExtensions
         services.AddHttpClient<IQrImageStorage, CloudinaryQrImageStorage>(client => client.Timeout = TimeSpan.FromSeconds(30));
         services.AddHostedService<QrCodeGenerationWorker>();
         services.AddHostedService<SupplyContractDeliveryReminderWorker>();
+
+        // ── AI Chat (Gemini) ───────────────────────────────────────────────
+        var geminiOptions = configuration.GetSection("GeminiAI").Get<GeminiOptions>() ?? new GeminiOptions();
+        services.AddSingleton(geminiOptions);
+
+        // Chat API client (HttpClient typed)
+        services.AddHttpClient<GeminiApiClient>(client =>
+        {
+            // 120s: đủ cho Gemini Flash cả khi mạng chậm hoặc tải cao
+            client.Timeout = TimeSpan.FromSeconds(120);
+        });
+
+        // Embedding API client (named, dùng bởi GeminiEmbeddingService — Singleton)
+        services.AddHttpClient(GeminiEmbeddingService.HttpClientName, client =>
+        {
+            client.Timeout = TimeSpan.FromSeconds(30);
+        });
+
+        // Document loaders — mỗi loader hỗ trợ một định dạng file
+        services.AddSingleton<IDocumentLoader, MarkdownTextLoader>();
+        services.AddSingleton<IDocumentLoader, PlainTextLoader>();
+        services.AddSingleton<IDocumentLoader, PdfDocumentLoader>();
+        services.AddSingleton<IDocumentLoader, WordDocumentLoader>();
+
+        // RAG core services
+        services.AddSingleton<GeminiEmbeddingService>();
+        services.AddSingleton<KnowledgeBaseService>();
+
+        // Background service: xây dựng vector index sau khi server khởi động
+        services.AddHostedService<KnowledgeBaseIndexingService>();
+
+        services.AddScoped<AiToolExecutor>();
+        services.AddScoped<IAiChatService, AiChatService>();
+
+        // ── AI Spoilage Forecast ───────────────────────────────────────────
+        services.AddScoped<SAW.Infrastructure.AiForecast.ForecastInputCollector>();
+        services.AddScoped<SAW.Application.Features.SpoilageForecast.ISpoilageForecastService, SAW.Infrastructure.AiForecast.SpoilageForecastGeminiService>();
 
         return services;
     }

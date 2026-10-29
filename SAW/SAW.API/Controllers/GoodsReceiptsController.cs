@@ -9,7 +9,7 @@ namespace SAW.API.Controllers;
 
 [ApiController]
 [Route("api/operation/goods-receipts")]
-[Authorize(Roles = "OPERATION_STAFF")]
+[Authorize(Roles = "OPERATION_STAFF,WAREHOUSE_MANAGER,ADMINISTRATOR")]
 public sealed class GoodsReceiptsController(IGoodsReceiptService service) : ControllerBase
 {
     [HttpGet]
@@ -28,14 +28,17 @@ public sealed class GoodsReceiptsController(IGoodsReceiptService service) : Cont
     public async Task<IActionResult> Get(long id, CancellationToken ct) => Ok(ApiResponse<GoodsReceiptDetail>.Success(await service.GetAsync(id, ct)));
 
     [HttpPost]
+    [Authorize(Roles = "OPERATION_STAFF")]
     public async Task<IActionResult> Create(CreateGoodsReceiptRequest request, CancellationToken ct) =>
         Ok(ApiResponse<GoodsReceiptDetail>.Success(await service.CreateAsync(request, ActorId(), ct), "Đã lưu phiếu nhập nháp"));
 
     [HttpPut("{id:long}/confirm")]
+    [Authorize(Roles = "OPERATION_STAFF")]
     public async Task<IActionResult> Confirm(long id, ConfirmGoodsReceiptRequest request, CancellationToken ct) =>
         Ok(ApiResponse<GoodsReceiptDetail>.Success(await service.ConfirmAsync(id, request, ActorId(), ct), "Phiếu đã xác nhận nhập kho"));
 
     [HttpPut("{id:long}/draft")]
+    [Authorize(Roles = "OPERATION_STAFF")]
     public async Task<IActionResult> UpdateDraft(long id, UpdateGoodsReceiptDraftRequest request, CancellationToken ct) =>
         Ok(ApiResponse<GoodsReceiptDetail>.Success(await service.UpdateDraftAsync(id, request, ActorId(), ct), "Đã lưu thay đổi phiếu nháp"));
 

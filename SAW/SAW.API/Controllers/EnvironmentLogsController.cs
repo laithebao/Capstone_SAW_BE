@@ -42,4 +42,33 @@ public sealed class EnvironmentLogsController(IQcInspectionService service) : Co
             $"api/environment-logs/{result.Id}",
             ApiResponse<EnvironmentLogDto>.Created(result, "Ghi nhận nhiệt độ bảo quản thành công."));
     }
+
+    // =========================================================================
+    // In-Storage Cold Chain Monitoring
+    // GET /api/environment-logs/in-storage-batches
+    // =========================================================================
+
+    [HttpGet("in-storage-batches")]
+    [Authorize(Roles = "QC_STAFF,WAREHOUSE_MANAGER,ADMINISTRATOR")]
+    public async Task<ActionResult<ApiResponse<PagedResult<InStorageBatchEnvDto>>>> GetInStorageBatches(
+        [FromQuery] InStorageBatchEnvQuery query,
+        CancellationToken ct)
+    {
+        var result = await service.GetInStorageBatchesWithEnvAsync(query, ct);
+        return Ok(ApiResponse<PagedResult<InStorageBatchEnvDto>>.Success(result));
+    }
+
+    // =========================================================================
+    // GET /api/environment-logs/batches/{batchId}
+    // =========================================================================
+
+    [HttpGet("batches/{batchId:long}")]
+    [Authorize(Roles = "QC_STAFF,WAREHOUSE_MANAGER,ADMINISTRATOR")]
+    public async Task<ActionResult<ApiResponse<IReadOnlyList<EnvironmentLogDto>>>> GetBatchLogs(
+        long batchId,
+        CancellationToken ct)
+    {
+        var result = await service.GetBatchEnvironmentLogsAsync(batchId, ct);
+        return Ok(ApiResponse<IReadOnlyList<EnvironmentLogDto>>.Success(result));
+    }
 }

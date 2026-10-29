@@ -53,7 +53,21 @@ public interface IQcInspectionRepository
         int pageSize,
         CancellationToken ct);
 
+    // ── In-Storage Environment Monitoring ────────────────────────────────────
+
+    Task<WarehouseLocation?> GetBatchCurrentLocationAsync(long batchId, CancellationToken ct);
+
+    Task<(IReadOnlyList<ProductBatch> Batches, int TotalCount)> ListInStorageBatchesAsync(
+        string? search,
+        string? zoneName,
+        int page,
+        int pageSize,
+        CancellationToken ct);
+
+    Task<IReadOnlyList<EnvironmentLog>> GetBatchEnvironmentLogsAsync(long batchId, CancellationToken ct);
+
     // ── Save ──────────────────────────────────────────────────────────────────
 
     Task SaveChangesAsync(CancellationToken ct);
 }
+

@@ -283,3 +283,40 @@ public sealed record FinalizeQcResultDto(
     string NewBatchStatus,
     string Summary         // Mô tả kết quả
 );
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// In-Storage Cold Chain Monitoring DTOs
+// ═══════════════════════════════════════════════════════════════════════════════
+
+public sealed record InStorageBatchEnvQuery(
+    string? Search = null,
+    string? ZoneName = null,
+    bool? IsOutOfRange = null,
+    bool? IsOverdue = null,
+    int Page = 1,
+    int PageSize = 20
+);
+
+public sealed record InStorageBatchEnvDto(
+    long ProductBatchId,
+    string BatchCode,
+    string ProductName,
+    string? QualityGrade,
+    decimal WeightInKg,
+    string BatchStatus,
+    int? WarehouseLocationId,
+    string? LocationCode,
+    string? ZoneName,
+    decimal? ExpectedMinTempC,
+    decimal? ExpectedMaxTempC,
+    decimal? ExpectedMinHumidityPct,
+    decimal? ExpectedMaxHumidityPct,
+    DateTime? LastRecordedAt,
+    decimal? LastTemperatureC,
+    decimal? LastHumidityPct,
+    string? LastRecordedByName,
+    bool? IsLastOutOfRange,
+    double? HoursSinceLastLog,
+    int TotalLogsCount
+);
+
