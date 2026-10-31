@@ -51,7 +51,7 @@ public sealed class AuthCommandServiceTests
     }
 
     [Fact]
-    public async Task GoogleLoginAsync_WithNewSupplier_CreatesAccountAndSession()
+    public async Task GoogleLoginAsync_WithNewSupplier_SendsVerificationWithoutSession()
     {
         var role = new Role { RoleId = 5, RoleCode = "SUPPLIER", RoleName = "Supplier", IsActive = true };
         _googleIdentityService.Setup(x => x.VerifyAsync("google-token", It.IsAny<CancellationToken>()))
@@ -67,22 +67,50 @@ public sealed class AuthCommandServiceTests
         _passwordHasher.Setup(x => x.Hash(It.IsAny<string>())).Returns("password-hash");
         ConfigureTokenService();
 
-        var result = await CreateService().GoogleLoginAsync(
-            new GoogleLoginRequest("google-token", 5), "127.0.0.1", CancellationToken.None);
-
-        Assert.False(result.RequiresRole);
-        Assert.NotNull(result.Session);
-        Assert.Equal("SUPPLIER", result.Session.User.Role);
+        var error = await Assert.ThrowsAsync<SAW.Application.Exceptions.ForbiddenException>(() => CreateService().GoogleLoginAsync(
+            new GoogleLoginRequest("google-token", 5), "127.0.0.1", CancellationToken.None));
+        Assert.Contains("xác nhận email", error.Message);
         _repository.Verify(x => x.CreateRegistrationAsync(
-            It.Is<Account>(account => account.AccountStatus == "ACTIVE" && account.Role == role),
+            It.Is<Account>(account => account.AccountStatus == "PENDING" && account.Role == role),
             It.Is<Supplier>(supplier => supplier.ProfileStatus == "PENDING_REVIEW"),
             null,
             It.IsAny<CancellationToken>()), Times.Once);
+        _emailSender.Verify(x => x.SendEmailVerificationAsync("supplier@saw.local", "refresh-token", It.IsAny<CancellationToken>()), Times.Once);
+        _repository.Verify(x => x.AddRefreshToken(It.IsAny<RefreshToken>()), Times.Never);
+    }
+
+    [Fact]
+    public async Task GoogleLoginAsync_PendingAccount_DoesNotBypassEmailVerification()
+    {
+        var account = CreateAccount(); account.AccountStatus = "PENDING";
+        _googleIdentityService.Setup(x => x.VerifyAsync("token", It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new GoogleIdentity("subject", account.Email, account.FullName));
+        _repository.Setup(x => x.GetAccountByEmailAsync(account.Email, It.IsAny<CancellationToken>())).ReturnsAsync(account);
+        var error = await Assert.ThrowsAsync<SAW.Application.Exceptions.ForbiddenException>(() => CreateService().GoogleLoginAsync(
+            new GoogleLoginRequest("token", null), null, default));
+        Assert.Contains("xác nhận email", error.Message);
+        Assert.Equal("PENDING", account.AccountStatus);
+        _repository.Verify(x => x.AddRefreshToken(It.IsAny<RefreshToken>()), Times.Never);
     }
 
     private AuthCommandService CreateService() => new(
         _repository.Object, _passwordHasher.Object, _tokenService.Object,
         _emailSender.Object, _googleIdentityService.Object);
+
+    [Fact]
+    public async Task GoogleLoginAsync_VerifiedGeneratedDistributorProfile_DoesNotRequireAdminApproval()
+    {
+        var account = CreateAccount(); account.Username = "google_existing";
+        account.Role = new Role { RoleId = 6, RoleCode = "DISTRIBUTOR", RoleName = "Distributor" }; account.RoleId = 6;
+        account.Distributor = new Distributor { TaxCode = "GOOGLE-existing", ProfileStatus = "PENDING_REVIEW" };
+        _googleIdentityService.Setup(x => x.VerifyAsync("token", It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new GoogleIdentity("existing", account.Email, account.FullName));
+        _repository.Setup(x => x.GetAccountByEmailAsync(account.Email, It.IsAny<CancellationToken>())).ReturnsAsync(account);
+        ConfigureTokenService();
+        var response = await CreateService().GoogleLoginAsync(new GoogleLoginRequest("token", null), null, default);
+        Assert.NotNull(response.Session);
+        Assert.Equal("ACTIVE", account.Distributor.ProfileStatus);
+    }
 
     private void ConfigureTokenService()
     {

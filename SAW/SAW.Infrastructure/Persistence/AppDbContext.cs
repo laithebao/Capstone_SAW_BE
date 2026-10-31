@@ -7,12 +7,12 @@ using SAW.Domain.Entities;
 
 namespace SAW.Infrastructure.Persistence;
 
-public class AppDbContext : DbContext
+public partial class AppDbContext : DbContext
 {
     private static readonly HashSet<Type> ExcludedEntityTypes =
     [
         typeof(AuditLog), typeof(RefreshToken), typeof(PasswordResetToken),
-        typeof(EmailVerificationToken),
+        typeof(EmailVerificationToken), typeof(Notification),
         // These workflow records have semantic audit receipts after generated keys are saved.
         typeof(StockAdjustmentResolution), typeof(StockAdjustmentProposal), typeof(OrderAmendment), typeof(GoodsIssueInvalidation)
     ];
@@ -79,6 +79,7 @@ public class AppDbContext : DbContext
 
     // 09. Orders & Picking
     public DbSet<PurchaseOrder> PurchaseOrders => Set<PurchaseOrder>();
+    public DbSet<OrderReturn> OrderReturns => Set<OrderReturn>();
     public DbSet<BatchSaleOffer> BatchSaleOffers => Set<BatchSaleOffer>();
     public DbSet<PurchaseOrderDailyCounter> PurchaseOrderDailyCounters => Set<PurchaseOrderDailyCounter>();
     public DbSet<OrderDetail> OrderDetails => Set<OrderDetail>();
@@ -113,15 +114,17 @@ public class AppDbContext : DbContext
 
     public override int SaveChanges(bool acceptAllChangesOnSuccess)
     {
+        AppendWorkflowNotificationsAsync(CancellationToken.None).GetAwaiter().GetResult();
         AppendAuditLogs();
         return base.SaveChanges(acceptAllChangesOnSuccess);
     }
 
-    public override Task<int> SaveChangesAsync(
+    public override async Task<int> SaveChangesAsync(
         bool acceptAllChangesOnSuccess, CancellationToken cancellationToken = default)
     {
+        await AppendWorkflowNotificationsAsync(cancellationToken);
         AppendAuditLogs();
-        return base.SaveChangesAsync(acceptAllChangesOnSuccess, cancellationToken);
+        return await base.SaveChangesAsync(acceptAllChangesOnSuccess, cancellationToken);
     }
 
     private void AppendAuditLogs()

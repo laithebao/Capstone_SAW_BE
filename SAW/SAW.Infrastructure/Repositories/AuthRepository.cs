@@ -12,7 +12,7 @@ public sealed class AuthRepository(AppDbContext dbContext) : IAuthRepository
             .SingleOrDefaultAsync(x => x.Username == identifier || x.Email == identifier, cancellationToken);
 
     public Task<Account?> GetAccountByEmailAsync(string email, CancellationToken cancellationToken) =>
-        dbContext.Accounts.Include(x => x.Role)
+        dbContext.Accounts.Include(x => x.Role).Include(x => x.Distributor)
             .SingleOrDefaultAsync(x => x.Email == email, cancellationToken);
 
     public Task<Account?> GetAccountByIdAsync(int accountId, CancellationToken cancellationToken) =>

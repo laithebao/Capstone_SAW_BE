@@ -1664,6 +1664,70 @@ namespace SAW.Infrastructure.Migrations
                     b.ToTable("ORDER_DETAIL", (string)null);
                 });
 
+            modelBuilder.Entity("SAW.Domain.Entities.OrderReturn", b =>
+                {
+                    b.Property<long>("OrderReturnId")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("bigint");
+
+                    SqlServerPropertyBuilderExtensions.UseIdentityColumn(b.Property<long>("OrderReturnId"));
+
+                    b.Property<long>("PurchaseOrderId")
+                        .HasColumnType("bigint");
+
+                    b.Property<string>("Reason")
+                        .IsRequired()
+                        .HasMaxLength(1000)
+                        .HasColumnType("nvarchar(1000)");
+
+                    b.Property<string>("ReceiptNote")
+                        .HasMaxLength(1000)
+                        .HasColumnType("nvarchar(1000)");
+
+                    b.Property<DateTime?>("ReceivedAt")
+                        .HasColumnType("datetime2");
+
+                    b.Property<int?>("ReceivedByAccountId")
+                        .HasColumnType("int");
+
+                    b.Property<DateTime>("RequestedAt")
+                        .HasColumnType("datetime2");
+
+                    b.Property<int>("RequestedByAccountId")
+                        .HasColumnType("int");
+
+                    b.Property<string>("ReviewNote")
+                        .HasMaxLength(1000)
+                        .HasColumnType("nvarchar(1000)");
+
+                    b.Property<DateTime?>("ReviewedAt")
+                        .HasColumnType("datetime2");
+
+                    b.Property<int?>("ReviewedByAccountId")
+                        .HasColumnType("int");
+
+                    b.Property<string>("Status")
+                        .IsRequired()
+                        .HasMaxLength(20)
+                        .HasColumnType("nvarchar(20)");
+
+                    b.HasKey("OrderReturnId");
+
+                    b.HasIndex("PurchaseOrderId")
+                        .IsUnique();
+
+                    b.HasIndex("ReceivedByAccountId");
+
+                    b.HasIndex("RequestedByAccountId");
+
+                    b.HasIndex("ReviewedByAccountId");
+
+                    b.ToTable("ORDER_RETURN", null, t =>
+                        {
+                            t.HasCheckConstraint("CK_ORDER_RETURN_Status", "[Status] IN ('REQUESTED','APPROVED','REJECTED','RECEIVED')");
+                        });
+                });
+
             modelBuilder.Entity("SAW.Domain.Entities.OrderStatusHistory", b =>
                 {
                     b.Property<long>("OrderStatusHistoryId")
@@ -4071,6 +4135,33 @@ namespace SAW.Infrastructure.Migrations
                     b.Navigation("PurchaseOrder");
 
                     b.Navigation("RequestedProductBatch");
+                });
+
+            modelBuilder.Entity("SAW.Domain.Entities.OrderReturn", b =>
+                {
+                    b.HasOne("SAW.Domain.Entities.PurchaseOrder", "PurchaseOrder")
+                        .WithMany()
+                        .HasForeignKey("PurchaseOrderId")
+                        .OnDelete(DeleteBehavior.Restrict)
+                        .IsRequired();
+
+                    b.HasOne("SAW.Domain.Entities.Account", null)
+                        .WithMany()
+                        .HasForeignKey("ReceivedByAccountId")
+                        .OnDelete(DeleteBehavior.Restrict);
+
+                    b.HasOne("SAW.Domain.Entities.Account", null)
+                        .WithMany()
+                        .HasForeignKey("RequestedByAccountId")
+                        .OnDelete(DeleteBehavior.Restrict)
+                        .IsRequired();
+
+                    b.HasOne("SAW.Domain.Entities.Account", null)
+                        .WithMany()
+                        .HasForeignKey("ReviewedByAccountId")
+                        .OnDelete(DeleteBehavior.Restrict);
+
+                    b.Navigation("PurchaseOrder");
                 });
 
             modelBuilder.Entity("SAW.Domain.Entities.OrderStatusHistory", b =>

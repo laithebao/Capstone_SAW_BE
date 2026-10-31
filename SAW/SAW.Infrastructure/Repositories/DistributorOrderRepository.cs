@@ -251,6 +251,7 @@ public sealed class DistributorOrderRepository(DbContextOptions<AppDbContext> op
     private static async Task<bool> CanReceiveAsync(AppDbContext db, PurchaseOrder order, CancellationToken ct)
     {
         if (order.OrderStatus is not ("ISSUED" or "DISPATCHED") || order.ReceivedAt is not null) return false;
+        if (await db.OrderReturns.AnyAsync(r => r.PurchaseOrderId == order.PurchaseOrderId && (r.Status == "REQUESTED" || r.Status == "APPROVED" || r.Status == "RECEIVED"), ct)) return false;
         var lines = db.OrderDetails.Where(l => l.PurchaseOrderId == order.PurchaseOrderId);
         return await lines.AnyAsync(ct) && !await lines.AnyAsync(l => l.ApprovedWeightKg <= 0
             || l.ApprovedWeightKg != l.RequestedWeightKg && !db.OrderAmendments.Any(a => a.OrderDetailId == l.OrderDetailId && a.EffectiveWeightKg == l.ApprovedWeightKg && a.EffectiveWholeLotPrice == l.UnitPrice)

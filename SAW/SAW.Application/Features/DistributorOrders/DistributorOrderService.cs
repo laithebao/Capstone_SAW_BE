@@ -6,7 +6,7 @@ public sealed class DistributorOrderService(IDistributorOrderRepository reposito
 {
     public Task<DistributorDashboard> DashboardAsync(int accountId, CancellationToken ct) => repository.DashboardAsync(accountId, ct);
     public static readonly string[] Statuses = ["PENDING", "APPROVED", "RESERVED", "PARTIALLY_PICKED",
-        "PICKED", "PREPARED", "PARTIALLY_ISSUED", "ISSUED", "DISPATCHED", "DELIVERED", "REJECTED", "CANCELLED"];
+        "PICKED", "PREPARED", "PARTIALLY_ISSUED", "ISSUED", "DISPATCHED", "DELIVERED", "REJECTED", "CANCELLED", "RETURNED"];
 
     public static void ValidateQuery(DistributorQuery query)
     {

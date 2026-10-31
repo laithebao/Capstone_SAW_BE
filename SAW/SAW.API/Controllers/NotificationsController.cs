@@ -14,12 +14,13 @@ namespace SAW.API.Controllers;
 public sealed class NotificationsController(AppDbContext db) : ControllerBase
 {
     [HttpGet]
-    public async Task<ActionResult<ApiResponse<NotificationList>>> List(CancellationToken ct)
+    public async Task<ActionResult<ApiResponse<NotificationList>>> List(CancellationToken ct, [FromQuery] long? beforeId = null)
     {
         var accountId = ActorId();
         var items = await db.Notifications.AsNoTracking()
             .Where(notification => notification.AccountId == accountId)
-            .OrderByDescending(notification => notification.CreatedAt)
+            .Where(notification => beforeId == null || notification.NotificationId < beforeId)
+            .OrderByDescending(notification => notification.NotificationId)
             .Take(20)
             .Select(notification => new NotificationItem(
                 notification.NotificationId,
@@ -61,6 +62,20 @@ public sealed class NotificationsController(AppDbContext db) : ControllerBase
             notification.CreatedAt)));
     }
 
+    [HttpPost("read-all")]
+    public async Task<IActionResult> MarkAllRead(CancellationToken ct)
+    {
+        var accountId = ActorId();
+        // A notification arriving after this snapshot stays new for the next opening.
+        var readThroughId = await db.Notifications.Where(n => n.AccountId == accountId)
+            .MaxAsync(n => (long?)n.NotificationId, ct) ?? 0;
+        var now = DateTime.UtcNow;
+        await db.Notifications.Where(n => n.AccountId == accountId && !n.IsRead && n.NotificationId <= readThroughId)
+            .ExecuteUpdateAsync(update => update.SetProperty(n => n.IsRead, true).SetProperty(n => n.ReadAt, now), ct);
+        var unreadCount = await db.Notifications.CountAsync(n => n.AccountId == accountId && !n.IsRead, ct);
+        return Ok(ApiResponse<NotificationReadReceipt>.Success(new NotificationReadReceipt(readThroughId, unreadCount)));
+    }
+
     private int ActorId()
     {
         var value = User.FindFirstValue("account_id") ?? User.FindFirstValue(ClaimTypes.NameIdentifier);
@@ -79,3 +94,4 @@ public sealed record NotificationItem(
     DateTime CreatedAt);
 
 public sealed record NotificationList(IReadOnlyList<NotificationItem> Items, int UnreadCount);
+public sealed record NotificationReadReceipt(long ReadThroughId, int UnreadCount);
