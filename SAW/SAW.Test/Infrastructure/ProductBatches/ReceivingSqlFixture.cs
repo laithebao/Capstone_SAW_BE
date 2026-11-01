@@ -30,6 +30,7 @@ public sealed class ReceivingSqlFixture : IAsyncLifetime
     public ReceivingSqlFixture() { }
     internal ReceivingSqlFixture(bool useMigrationBaseline) => this.useMigrationBaseline = useMigrationBaseline;
     private readonly string _database = "SAW_UC28_Test_" + Guid.NewGuid().ToString("N");
+    public string DeliveryRefusalStoragePath => Path.Combine(Path.GetTempPath(), _database + "-DeliveryRefusals");
     private string _master = "";
     private bool _created;
     private Process? _api;
@@ -189,6 +190,7 @@ public sealed class ReceivingSqlFixture : IAsyncLifetime
         start.Environment["ASPNETCORE_ENVIRONMENT"] = "Development";
         start.Environment["ConnectionStrings__DefaultConnection"] = ConnectionString;
         start.Environment["QrCode__Enabled"] = "false"; // HTTP read tests must never upload real assets.
+        start.Environment["DeliveryRefusalFiles__StoragePath"] = DeliveryRefusalStoragePath;
         start.Environment["Jwt__Key"] = JwtKey;
         start.Environment["Jwt__Issuer"] = "uc28-test";
         start.Environment["Jwt__Audience"] = "uc28-test";
@@ -212,6 +214,10 @@ public sealed class ReceivingSqlFixture : IAsyncLifetime
         if (!_created) return;
         // Only this fixture's GUID-named database is eligible for cleanup.
         if (!Regex.IsMatch(_database, "^SAW_UC28_Test_[a-f0-9]{32}$")) throw new InvalidOperationException();
+        var evidenceRoot = Path.GetFullPath(DeliveryRefusalStoragePath);
+        var expectedRoot = Path.GetFullPath(Path.Combine(Path.GetTempPath(), _database + "-DeliveryRefusals"));
+        if (evidenceRoot != expectedRoot) throw new InvalidOperationException("Unexpected test evidence path.");
+        if (Directory.Exists(evidenceRoot)) Directory.Delete(evidenceRoot, recursive: true);
         SqlConnection.ClearAllPools();
         await using var master = new SqlConnection(_master);
         await master.OpenAsync();

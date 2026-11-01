@@ -40,12 +40,11 @@ public sealed class OrderReturnSqlTests : IClassFixture<DistributorSqlFixture>
     }
 
     [ReceivingSqlFact]
-    public async Task WholeOrderReturn_IsOwned_Idempotent_AndStopsAtRequestWithoutChangingOrderOrStock()
+    public async Task LegacyReturnWrite_IsRetired_WithoutChangingOrdersOrStock()
     {
         await using var setup = fixture.Context();
         var buyer = await AccountAsync(setup, "DISTRIBUTOR");
         var other = await AccountAsync(setup, "DISTRIBUTOR");
-        var manager = await AccountAsync(setup, "WAREHOUSE_MANAGER");
         var staff = await AccountAsync(setup, "OPERATION_STAFF");
         var order = new PurchaseOrder { Distributor = new Distributor { AccountId = buyer.AccountId, DistributorCode = buyer.Username[..20], DistributorName = "Buyer", TaxCode = buyer.Username, ProfileStatus = "ACTIVE" },
             OrderCode = "RETURN-" + Guid.NewGuid().ToString("N"), OrderStatus = "ISSUED", DeliveryAddress = "Test", CreatedAt = DateTime.UtcNow };
@@ -53,31 +52,19 @@ public sealed class OrderReturnSqlTests : IClassFixture<DistributorSqlFixture>
         setup.PurchaseOrders.Add(order); await setup.SaveChangesAsync();
         var id = order.PurchaseOrderId;
         var inventoryBefore = await setup.Inventories.SumAsync(i => (decimal?)i.QuantityOnHand) ?? 0;
-        await using (var db = fixture.Context())
-            await Assert.ThrowsAsync<NotFoundException>(() => Controller(db, other.AccountId, "DISTRIBUTOR").RequestReturn(id, new ReturnNote("Hư hỏng"), default));
-        await using (var db = fixture.Context())
-            await Controller(db, buyer.AccountId, "DISTRIBUTOR").RequestReturn(id, new ReturnNote("Hư hỏng"), default);
         var notesAfterFirstRequest = await setup.Notifications.CountAsync();
         await using (var db = fixture.Context())
-            await Controller(db, buyer.AccountId, "DISTRIBUTOR").RequestReturn(id, new ReturnNote("Hư hỏng"), default);
-        Assert.Equal(1, await setup.OrderReturns.CountAsync(r => r.PurchaseOrderId == id));
+            Assert.Equal(410, Assert.IsType<ObjectResult>(Controller(db, buyer.AccountId, "DISTRIBUTOR").RequestReturn()).StatusCode);
+        Assert.Equal(0, await setup.OrderReturns.CountAsync(r => r.PurchaseOrderId == id));
         Assert.Equal(notesAfterFirstRequest, await setup.Notifications.CountAsync());
-        Assert.True(await setup.Notifications.AnyAsync(n => n.AccountId == buyer.AccountId && n.NotificationType == "ORDER_RETURN"));
-        Assert.True(await setup.Notifications.AnyAsync(n => n.AccountId == manager.AccountId && n.NotificationType == "ORDER_RETURN"));
         await using (var db = fixture.Context())
         {
             Assert.IsType<OkObjectResult>(await Controller(db, buyer.AccountId, "DISTRIBUTOR").Get(id, default));
             Assert.IsType<OkObjectResult>(await Controller(db, buyer.AccountId, "DISTRIBUTOR").List(default));
             await Assert.ThrowsAsync<NotFoundException>(() => Controller(db, other.AccountId, "DISTRIBUTOR").Get(id, default));
         }
-        await using (var db = fixture.Context())
-            await Assert.ThrowsAsync<ConflictException>(() => Controller(db, buyer.AccountId, "DISTRIBUTOR").RequestReturn(id, new ReturnNote("Lý do khác"), default));
         await setup.Entry(order).ReloadAsync();
         Assert.Equal("ISSUED", order.OrderStatus);
-        var request = await setup.OrderReturns.SingleAsync(r => r.PurchaseOrderId == id);
-        Assert.Equal("REQUESTED", request.Status);
-        Assert.Equal(buyer.AccountId, request.RequestedByAccountId);
-        Assert.Null(request.ReviewedAt); Assert.Null(request.ReceivedAt);
         Assert.Equal(inventoryBefore, await setup.Inventories.SumAsync(i => (decimal?)i.QuantityOnHand) ?? 0);
         Assert.False(await setup.OrderStatusHistories.AnyAsync(h => h.PurchaseOrderId == id && h.NewStatus == "RETURNED"));
     }

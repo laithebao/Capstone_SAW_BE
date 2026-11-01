@@ -12,7 +12,7 @@ public partial class AppDbContext
         ChangeTracker.DetectChanges();
         var entries = ChangeTracker.Entries().Where(e => e.State is EntityState.Added or EntityState.Modified or EntityState.Deleted)
             .Where(e => e.Entity is ProductBatch or PurchaseOrder or SupplyContract or StockAdjustment
-                or StockAdjustmentResolution or StockAdjustmentProposal or OrderReturn or BatchSaleOffer).ToList();
+                or StockAdjustmentResolution or StockAdjustmentProposal or OrderReturn or OrderDeliveryRefusal or BatchSaleOffer).ToList();
         if (entries.Count == 0) return;
         var users = await Accounts.AsNoTracking().Where(a => a.AccountStatus == "ACTIVE")
             .Select(a => new { a.AccountId, a.Role.RoleCode }).ToListAsync(ct);
@@ -23,12 +23,7 @@ public partial class AppDbContext
             {
                 var key = $"{account}:{type}:{entity}:{id}:{message}";
                 if (!emitted.Add(key)) continue;
-                if (Notifications.Local.Any(n => Entry(n).State == EntityState.Added && n.AccountId == account && n.NotificationType == type
-                    && n.RelatedEntityType == entity && n.RelatedEntityId == (id > 0 ? id.ToString() : null) && n.Message == message)) continue;
-                Notifications.Add(new Notification { AccountId = account, NotificationType = type,
-                    Title = title, Message = message.Length > 1500 ? message[..1500] : message,
-                    RelatedEntityType = entity, RelatedEntityId = id > 0 ? id.ToString() : null,
-                    CreatedAt = DateTime.UtcNow });
+                QueueWorkflowNotification(account, type, title, message, entity, id);
             }
         }
         int[] Roles(params string[] roles) => users.Where(a => roles.Contains(a.RoleCode)).Select(a => a.AccountId).ToArray();
@@ -42,24 +37,26 @@ public partial class AppDbContext
             {
                 case ProductBatch b when e.State == EntityState.Deleted || Changed(nameof(ProductBatch.BatchStatus)):
                     var state = e.State == EntityState.Deleted ? "DELETED" : b.BatchStatus;
-                    var label = state switch { "PENDING_QC" => "Chờ kiểm định", "APPROVED_FOR_STORAGE" => "Đạt QC, chờ nhập kho",
-                        "IN_STOCK" => "Đã nhập kho", "REJECTED" => "Bị từ chối", "SUBMITTED" => "Chờ kiểm nhận", "PENDING_PREDECLARATION" => "Chờ kiểm nhận",
-                        "QUARANTINE" => "Tạm giữ, chờ xử lý", "CANCELLED" => "Đã hủy", "ISSUED" => "Đã xuất kho", "PARTIALLY_ISSUED" => "Đã xuất một phần",
-                        "DELETED" => "Đã xóa", "DISPOSED" => "Đã xử lý loại bỏ", _ => state };
-                    var supplier = await Suppliers.Where(s => s.SupplierId == b.SupplierId).Select(s => s.AccountId).ToArrayAsync(ct);
-                    Send(supplier, "BATCH_STATUS", $"Lô {b.BatchCode}: {label}", $"Lô {b.BatchCode} – {b.ProductName}: {label}. {b.RejectionReason}", "PRODUCT_BATCH", b.ProductBatchId);
-                    if (state == "PENDING_QC") Send(Roles("QC_STAFF"), "QC_REQUIRED", "Có lô chờ kiểm định", $"Lô {b.BatchCode} đang chờ QC.", "QC_QUEUE", b.ProductBatchId);
-                    if (state is "APPROVED_FOR_STORAGE" or "SUBMITTED" or "PENDING_PREDECLARATION" or "QUARANTINE") Send(Roles("OPERATION_STAFF"), "BATCH_ACTION", "Có lô cần xử lý", $"Lô {b.BatchCode}: {label}.", "PRODUCT_BATCH", b.ProductBatchId);
-                    if (state == "IN_STOCK") Send(Roles("WAREHOUSE_MANAGER"), "LOT_PRICING", "Có lô nhập kho cần kiểm tra giá bán", $"Lô {b.BatchCode} đã nhập kho. Kiểm tra điều kiện bán và công bố giá nguyên lô.", "SALE_OFFER", b.ProductBatchId);
+                    await QueueBatchStatusNotificationsAsync(b, state, ct);
+                    break;
+                case BatchSaleOffer pricedOffer when pricedOffer.ProductBatchId > 0 && pricedOffer.WholeLotPrice > 0
+                    && Changed(nameof(BatchSaleOffer.WholeLotPrice)):
+                    var pricedBatchCode = await ProductBatches.Where(b => b.ProductBatchId == pricedOffer.ProductBatchId)
+                        .Select(b => b.BatchCode).SingleAsync(ct);
+                    var salePrice = pricedOffer.WholeLotPrice.ToString("#,0.##", System.Globalization.CultureInfo.GetCultureInfo("vi-VN"));
+                    Send(Roles("WAREHOUSE_MANAGER"), "SALE_PRICE_UPDATED", "Đã cập nhật giá bán nguyên lô",
+                        $"Lô {pricedBatchCode}: giá bán nguyên lô {salePrice} đ. {(pricedOffer.IsPublished ? "Đang công bố bán." : "Chưa công bố bán.")}",
+                        "SALE_OFFER", pricedOffer.ProductBatchId);
                     break;
                 case BatchSaleOffer offer when !offer.IsPublished && (Changed(nameof(BatchSaleOffer.IsPublished)) || Changed(nameof(BatchSaleOffer.SourceStockAdjustmentId))):
                     Send(Roles("WAREHOUSE_MANAGER"), "LOT_PRICING", "Lô cần kiểm tra và công bố lại giá",
                         $"Lô #{offer.ProductBatchId} đã dừng bán. Kiểm tra phiếu xử lý và khối lượng trước khi định giá lại.", "SALE_OFFER", offer.ProductBatchId);
                     break;
-                case PurchaseOrder o when Changed(nameof(PurchaseOrder.OrderStatus)):
+                case PurchaseOrder o when Changed(nameof(PurchaseOrder.OrderStatus)) && o.OrderStatus is not ("DELIVERY_REFUSED" or "PARTIALLY_REFUSED")
+                    || o.OrderStatus == "PARTIALLY_REFUSED" && Changed(nameof(PurchaseOrder.ReceivedAt)):
                     var orderLabel = o.OrderStatus switch { "PENDING" => "Chờ duyệt", "CANCELLED" => "Đã hủy", "APPROVED" => "Đã duyệt", "RESERVED" => "Đã giữ hàng",
                         "PARTIALLY_PICKED" => "Đang soạn hàng", "PICKED" => "Đã soạn đủ hàng", "PREPARED" => "Sẵn sàng giao", "PARTIALLY_ISSUED" => "Đã xuất một phần",
-                        "ISSUED" => "Đã xuất kho", "DISPATCHED" => "Đang giao", "DELIVERED" => "Khách đã nhận hàng", "REJECTED" => "Bị từ chối", "RETURNED" => "Đã nhận hàng trả", _ => o.OrderStatus };
+                        "ISSUED" => "Đã xuất kho", "DISPATCHED" => "Đang giao", "DELIVERED" => "Khách đã nhận hàng", "PARTIALLY_REFUSED" => "Khách đã nhận các lô còn lại; có lô bị từ chối", "REJECTED" => "Bị từ chối", "RETURNED" => "Đã nhận hàng trả", _ => o.OrderStatus };
                     var customer = await Distributors.Where(d => d.DistributorId == o.DistributorId).Select(d => d.AccountId).ToArrayAsync(ct);
                     Send(customer, "ORDER_STATUS", $"Đơn {o.OrderCode}: {orderLabel}", $"Đơn {o.OrderCode}: {orderLabel}. {o.RejectionReason ?? o.CancellationReason}", "PURCHASE_ORDER", o.PurchaseOrderId);
                     Send(Roles("WAREHOUSE_MANAGER"), "ORDER_STATUS", $"Đơn {o.OrderCode}: {orderLabel}", $"Đơn {o.OrderCode}: {orderLabel}.", "PURCHASE_ORDER", o.PurchaseOrderId);
@@ -95,6 +92,12 @@ public partial class AppDbContext
                     if (resolution?.PurchaseOrderId is long proposedOrder)
                         Send((await Customer(proposedOrder)).Concat(Roles("WAREHOUSE_MANAGER")), "ORDER_PROPOSAL", "Đề xuất xử lý đơn hàng", $"Trạng thái đề xuất: {proposalLabel}. {p.CustomerMessage}", "PURCHASE_ORDER", proposedOrder);
                     break;
+                case OrderDeliveryRefusal refusal when e.State == EntityState.Added:
+                    Send((await Customer(refusal.PurchaseOrderId)).Concat(Roles("WAREHOUSE_MANAGER")), "DELIVERY_REFUSAL",
+                        $"Từ chối lô trong đơn {refusal.PurchaseOrder.OrderCode}",
+                        $"Lô bị từ chối: {string.Join(", ", refusal.Lots.Select(l => l.OrderDetail.RequestedProductBatch?.BatchCode ?? l.OrderDetailId.ToString()))}. Lý do: {refusal.Reason}. Có {refusal.Images.Count} ảnh bằng chứng. Các bên xử lý bên ngoài, không nhập hàng lại kho.",
+                        "PURCHASE_ORDER", refusal.PurchaseOrderId);
+                    break;
                 case OrderReturn r when Changed(nameof(OrderReturn.Status)):
                     var recipients = (await Customer(r.PurchaseOrderId)).Concat(Roles("WAREHOUSE_MANAGER"));
                     if (r.Status is "APPROVED" or "RECEIVED") recipients = recipients.Concat(Roles("OPERATION_STAFF"));
@@ -103,5 +106,84 @@ public partial class AppDbContext
                     break;
             }
         }
+    }
+
+    // ExecuteUpdate bypasses the change tracker. Its caller queues the same notifications
+    // inside the existing transaction, then persists them with its history/audit receipt.
+    internal async Task QueueBatchStatusNotificationsAsync(ProductBatch batch, string status, CancellationToken ct)
+    {
+        var label = status switch { "PENDING_QC" => "Chờ kiểm định", "APPROVED_FOR_STORAGE" => "Đạt QC, chờ nhập kho",
+            "IN_STOCK" => "Đã nhập kho", "REJECTED" => "Bị từ chối", "SUBMITTED" => "Chờ kiểm nhận", "PENDING_PREDECLARATION" => "Chờ kiểm nhận",
+            "QUARANTINE" => "Tạm giữ, chờ xử lý", "CANCELLED" => "Đã hủy", "ISSUED" => "Đã xuất kho", "PARTIALLY_ISSUED" => "Đã xuất một phần",
+            "DELETED" => "Đã xóa", "DISPOSED" => "Đã xử lý loại bỏ", _ => status };
+        var recipientRole = status switch
+        {
+            "PENDING_QC" => "QC_STAFF",
+            "APPROVED_FOR_STORAGE" or "SUBMITTED" or "PENDING_PREDECLARATION" or "QUARANTINE" => "OPERATION_STAFF",
+            "IN_STOCK" => "WAREHOUSE_MANAGER",
+            _ => null
+        };
+        var supplierAccountId = await Suppliers.Where(s => s.SupplierId == batch.SupplierId)
+            .Select(s => (int?)s.AccountId).SingleOrDefaultAsync(ct);
+        var recipients = await Accounts.AsNoTracking().Where(a => a.AccountStatus == "ACTIVE"
+            && (a.AccountId == supplierAccountId || recipientRole != null && a.Role.RoleCode == recipientRole))
+            .Select(a => new { a.AccountId, a.Role.RoleCode }).ToListAsync(ct);
+        foreach (var recipient in recipients)
+        {
+            if (recipient.AccountId == supplierAccountId)
+                QueueWorkflowNotification(recipient.AccountId, "BATCH_STATUS", $"Lô {batch.BatchCode}: {label}",
+                    $"Lô {batch.BatchCode} – {batch.ProductName}: {label}. {batch.RejectionReason}", "PRODUCT_BATCH", batch.ProductBatchId);
+            if (recipient.RoleCode != recipientRole) continue;
+            if (status == "PENDING_QC")
+                QueueWorkflowNotification(recipient.AccountId, "QC_REQUIRED", "Có lô chờ kiểm định", $"Lô {batch.BatchCode} đang chờ QC.", "QC_QUEUE", batch.ProductBatchId);
+            else if (recipientRole == "OPERATION_STAFF")
+                QueueWorkflowNotification(recipient.AccountId, "BATCH_ACTION", "Có lô cần xử lý", $"Lô {batch.BatchCode}: {label}.", "PRODUCT_BATCH", batch.ProductBatchId);
+            else if (status == "IN_STOCK")
+                QueueWorkflowNotification(recipient.AccountId, "LOT_PRICING", "Có lô nhập kho cần kiểm tra giá bán",
+                    $"Lô {batch.BatchCode} đã nhập kho. Kiểm tra điều kiện bán và công bố giá nguyên lô.", "SALE_OFFER", batch.ProductBatchId);
+        }
+    }
+
+    internal async Task QueueGoodsReceiptNotificationAsync(GoodsReceipt receipt, int actorId, CancellationToken ct)
+    {
+        if (receipt.ReceiptStatus != "COMMITTED") return;
+        var batchCode = await ProductBatches.Where(b => b.ProductBatchId == receipt.ProductBatchId)
+            .Select(b => b.BatchCode).SingleAsync(ct);
+        var weight = receipt.WeightInKg.ToString("0.###", System.Globalization.CultureInfo.GetCultureInfo("vi-VN"));
+        await QueueWarehouseDocumentNotificationAsync("GOODS_RECEIPT", receipt.GoodsReceiptId, receipt.OperationAccountId, actorId,
+            "GOODS_RECEIPT_COMMITTED", "Đã xác nhận nhập kho",
+            $"Phiếu {receipt.ReceiptCode}, lô {batchCode}: đã xác nhận nhập {weight} kg vào kho.", ct);
+    }
+
+    internal async Task QueueGoodsIssueNotificationAsync(GoodsIssue issue, int actorId, CancellationToken ct)
+    {
+        if (issue.IssueStatus != "COMMITTED") return;
+        var orderCode = await PurchaseOrders.Where(o => o.PurchaseOrderId == issue.PurchaseOrderId)
+            .Select(o => o.OrderCode).SingleAsync(ct);
+        await QueueWarehouseDocumentNotificationAsync("GOODS_ISSUE", issue.GoodsIssueId, issue.OperationAccountId, actorId,
+            "GOODS_ISSUE_COMMITTED", "Đã xác nhận xuất kho",
+            $"Phiếu {issue.IssueCode}, đơn {orderCode}: đã xác nhận xuất kho theo phiếu.", ct);
+    }
+
+    private async Task QueueWarehouseDocumentNotificationAsync(string entity, long id, int creatorId, int actorId,
+        string type, string title, string message, CancellationToken ct)
+    {
+        // Called only after the document has an ID, inside the operation's transaction.
+        // Drafts notify warehouse participants, never suppliers/distributors as if stock had moved.
+        var recipients = await Accounts.AsNoTracking().Where(a => a.AccountStatus == "ACTIVE"
+            && (a.AccountId == creatorId || a.AccountId == actorId || a.Role.RoleCode == "WAREHOUSE_MANAGER"))
+            .Select(a => a.AccountId).ToArrayAsync(ct);
+        foreach (var recipient in recipients) QueueWorkflowNotification(recipient, type, title, message, entity, id);
+    }
+
+    private void QueueWorkflowNotification(int accountId, string type, string title, string message, string entity, long id)
+    {
+        var entityId = id > 0 ? id.ToString() : null;
+        message = message.Length > 1500 ? message[..1500] : message;
+        if (Notifications.Local.Any(n => Entry(n).State == EntityState.Added && n.AccountId == accountId
+            && n.NotificationType == type && n.RelatedEntityType == entity && n.RelatedEntityId == entityId && n.Message == message)) return;
+        Notifications.Add(new Notification { AccountId = accountId, NotificationType = type,
+            Title = title, Message = message, RelatedEntityType = entity, RelatedEntityId = entityId,
+            IsRead = false, CreatedAt = DateTime.UtcNow });
     }
 }

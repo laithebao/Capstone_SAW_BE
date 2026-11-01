@@ -4,8 +4,10 @@ using System.Net.Http.Headers;
 using System.Security.Claims;
 using System.Text;
 using System.Text.Json;
+using System.Data.Common;
 using Microsoft.AspNetCore.Http;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.EntityFrameworkCore.Diagnostics;
 using Microsoft.IdentityModel.Tokens;
 using SAW.Application.Features.ProductBatches.Dtos;
 using SAW.Application.Features.ProductBatches.Services;
@@ -37,6 +39,86 @@ public sealed class ProductBatchManagementSqlTests(GoodsReceiptSqlFixture fixtur
         ChangedByAccountId = F.ActorId, ChangeReason = "Receiving test decision"
     };
     private ProductBatchVerificationRepository Repository(SAW.Infrastructure.Persistence.AppDbContext db) => new(db, new HttpContextAccessor());
+
+    private static async Task<Account[]> NotificationAccountsAsync(SAW.Infrastructure.Persistence.AppDbContext db)
+    {
+        var role = await db.Roles.SingleOrDefaultAsync(r => r.RoleCode == "QC_STAFF")
+            ?? new Role { RoleCode = "QC_STAFF", RoleName = "QC", IsActive = true };
+        var accounts = new[] { "ACTIVE", "ACTIVE", "LOCKED" }.Select(status =>
+        {
+            var key = Guid.NewGuid().ToString("N");
+            return new Account { Role = role, Username = key, Email = key + "@test.invalid",
+                FullName = "Notification QC", PasswordHash = "test", AccountStatus = status };
+        }).ToArray();
+        db.Accounts.AddRange(accounts);
+        await db.SaveChangesAsync();
+        return accounts;
+    }
+
+    [ReceivingSqlFact]
+    public async Task ReceivingSqlTransition_NotifiesActiveQcAndSupplierOnce_EvenWithHistoryTrigger()
+    {
+        var batch = await SubmittedAsync();
+        await using var db = F.Context();
+        var qc = await NotificationAccountsAsync(db);
+        var firstNotificationId = await db.Notifications.MaxAsync(n => (long?)n.NotificationId) ?? 0;
+        Assert.True(await Repository(db).ConfirmAsync(batch.ProductBatchId, F.SupplierId,
+            new(12, 125, "Crate", 12, 10, "Checked"), History(batch.ProductBatchId, "PENDING_QC"), default));
+        foreach (var account in qc.Take(2))
+        {
+            var note = Assert.Single(await db.Notifications.AsNoTracking().Where(n => n.AccountId == account.AccountId
+                && n.NotificationType == "QC_REQUIRED" && n.RelatedEntityId == batch.ProductBatchId.ToString()).ToListAsync());
+            Assert.False(note.IsRead); Assert.Null(note.ReadAt); Assert.Equal("QC_QUEUE", note.RelatedEntityType);
+        }
+        Assert.False(await db.Notifications.AnyAsync(n => n.AccountId == qc[2].AccountId));
+        Assert.True(await db.Notifications.AnyAsync(n => n.AccountId == F.ActorId && n.NotificationId > firstNotificationId
+            && n.NotificationType == "BATCH_STATUS" && n.RelatedEntityId == batch.ProductBatchId.ToString()));
+        var count = await db.Notifications.CountAsync();
+        Assert.False(await Repository(db).ConfirmAsync(batch.ProductBatchId, F.SupplierId,
+            new(12, 125, "Crate", 12, 10, "Duplicate"), History(batch.ProductBatchId, "PENDING_QC"), default));
+        Assert.Equal(count, await db.Notifications.CountAsync());
+
+        var rejected = await SubmittedAsync();
+        var beforeReject = await db.Notifications.MaxAsync(n => n.NotificationId);
+        Assert.True(await Repository(db).RejectAsync(rejected.ProductBatchId, F.SupplierId, "Damaged receiving test",
+            History(rejected.ProductBatchId, "REJECTED"), default));
+        var rejection = Assert.Single(await db.Notifications.Where(n => n.NotificationId > beforeReject
+            && n.AccountId == F.ActorId && n.RelatedEntityId == rejected.ProductBatchId.ToString()).ToListAsync());
+        Assert.Contains("Damaged receiving test", rejection.Message);
+        Assert.False(await db.Notifications.AnyAsync(n => n.NotificationId > beforeReject && n.NotificationType == "QC_REQUIRED"));
+    }
+
+    private sealed class FailNotificationInsert : DbCommandInterceptor
+    {
+        public override ValueTask<InterceptionResult<DbDataReader>> ReaderExecutingAsync(DbCommand command,
+            CommandEventData eventData, InterceptionResult<DbDataReader> result, CancellationToken cancellationToken = default)
+        {
+            if (command.CommandText.Contains("[NOTIFICATION]", StringComparison.Ordinal)
+                && (command.CommandText.Contains("INSERT", StringComparison.Ordinal) || command.CommandText.Contains("MERGE", StringComparison.Ordinal)))
+                throw new InvalidOperationException("Test notification insert failure");
+            return ValueTask.FromResult(result);
+        }
+    }
+
+    [ReceivingSqlFact]
+    public async Task ReceivingNotificationFailure_RollsBackBatchHistoryAuditAndNotifications()
+    {
+        var batch = await SubmittedAsync();
+        await using var setup = F.Context();
+        var qc = await NotificationAccountsAsync(setup);
+        var historyCount = await setup.BatchStatusHistories.CountAsync(h => h.ProductBatchId == batch.ProductBatchId);
+        var auditCount = await setup.AuditLogs.CountAsync();
+        await using (var failing = F.Context(new FailNotificationInsert(), retry: false))
+        {
+            var error = await Assert.ThrowsAnyAsync<Exception>(() => Repository(failing).ConfirmAsync(batch.ProductBatchId, F.SupplierId,
+                new(12, 125, "Crate", 12, 10, "Checked"), History(batch.ProductBatchId, "PENDING_QC"), default));
+            Assert.Contains("Test notification insert failure", error.ToString());
+        }
+        Assert.Equal("SUBMITTED", (await setup.ProductBatches.AsNoTracking().SingleAsync(b => b.ProductBatchId == batch.ProductBatchId)).BatchStatus);
+        Assert.Equal(historyCount, await setup.BatchStatusHistories.CountAsync(h => h.ProductBatchId == batch.ProductBatchId));
+        Assert.Equal(auditCount, await setup.AuditLogs.CountAsync());
+        Assert.False(await setup.Notifications.AnyAsync(n => n.AccountId == qc[0].AccountId || n.AccountId == qc[1].AccountId));
+    }
 
     [ReceivingSqlFact]
     public async Task Confirm_preserves_supplier_fields_and_records_six_inputs_history_audit_once()

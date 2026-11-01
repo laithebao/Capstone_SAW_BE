@@ -21,14 +21,19 @@ public sealed class DistributorOrderRepository(DbContextOptions<AppDbContext> op
         var totals = await rows.GroupBy(o => o.DistributorId).Select(g => new
         {
             Pending = g.Count(o => o.OrderStatus == "PENDING"),
-            Successful = g.Count(o => o.OrderStatus == "DELIVERED"),
+            Successful = g.Count(o => o.OrderStatus == "DELIVERED"
+                || o.OrderStatus == DeliveryRefusalRules.PartialStatus && o.ReceivedAt != null),
             Cancelled = g.Count(o => o.OrderStatus == "CANCELLED"),
             Spent = g.Sum(o => o.OrderStatus == "DELIVERED" ? o.TotalAmount : 0m)
         }).SingleOrDefaultAsync(ct);
+        var acceptedPartialValue = await db.OrderDetails.Where(l => l.PurchaseOrder.DistributorId == owner.DistributorId
+            && l.PurchaseOrder.OrderStatus == DeliveryRefusalRules.PartialStatus && l.PurchaseOrder.ReceivedAt != null
+            && !db.OrderDeliveryRefusalLots.Any(r => r.OrderDetailId == l.OrderDetailId))
+            .SumAsync(l => (decimal?)(l.UnitPrice + l.TaxAmount), ct) ?? 0m;
         var recent = await rows.OrderByDescending(o => o.CreatedAt).ThenByDescending(o => o.PurchaseOrderId).Take(4)
             .Select(o => new DistributorOrderSummary(o.PurchaseOrderId, o.OrderCode, o.OrderStatus,
                 o.OrderDetails.Count, o.TotalAmount, o.CreatedAt, o.ExpectedDeliveryDate, db.StockAdjustmentResolutions.Where(r => r.PurchaseOrderId == o.PurchaseOrderId && r.State != "RESOLVED" && r.State != "CLEARED" && r.State != "REPLACED").OrderByDescending(r => r.StockAdjustmentId).Select(r => r.State).FirstOrDefault())).ToListAsync(ct);
-        return new(totals?.Pending ?? 0, totals?.Successful ?? 0, totals?.Cancelled ?? 0, totals?.Spent ?? 0m, recent);
+        return new(totals?.Pending ?? 0, totals?.Successful ?? 0, totals?.Cancelled ?? 0, (totals?.Spent ?? 0m) + acceptedPartialValue, recent);
     }
     private static async Task<Distributor> OwnerAsync(AppDbContext db, int accountId, CancellationToken ct) =>
         await db.Distributors.AsNoTracking().SingleOrDefaultAsync(d => d.AccountId == accountId
@@ -137,6 +142,8 @@ public sealed class DistributorOrderRepository(DbContextOptions<AppDbContext> op
             .Include(o => o.StatusHistories).AsSplitQuery()
             .SingleOrDefaultAsync(o => o.PurchaseOrderId == id && o.DistributorId == owner.DistributorId, ct)
             ?? throw new NotFoundException("Không tìm thấy đơn hàng của bạn.");
+        var refusedLines = (await db.OrderDeliveryRefusalLots.Where(r => r.OrderDetail.PurchaseOrderId == id)
+            .Select(r => r.OrderDetailId).ToListAsync(ct)).ToHashSet();
         var cancel = order.OrderStatus == "PENDING" && !await HasProcessingAsync(db, id, ct) && !await BatchHandlingEligibility.OrderHeldAsync(db, id, ct);
         var receipt = await CanReceiveAsync(db, order, ct);
         return new(order.PurchaseOrderId, order.OrderCode, order.OrderStatus, order.DeliveryAddress, order.ContactPhone,
@@ -146,7 +153,8 @@ public sealed class DistributorOrderRepository(DbContextOptions<AppDbContext> op
             order.OrderDetails.OrderBy(l => l.OrderDetailId).Select(l => new DistributorOrderLine(
                 l.RequestedProductBatchId ?? 0, l.RequestedProductBatch?.BatchCode ?? "", l.RequestedProductBatch?.ProductName ?? "",
                 l.ApprovedWeightKg > 0 ? l.ApprovedWeightKg : l.RequestedWeightKg, l.UnitPrice, l.RequestedWeightKg,
-                db.OrderAmendments.Where(a => a.OrderDetailId == l.OrderDetailId).OrderBy(a => a.OrderAmendmentId).Select(a => (decimal?)a.PreviousWholeLotPrice).FirstOrDefault() ?? l.UnitPrice)).ToList(),
+                db.OrderAmendments.Where(a => a.OrderDetailId == l.OrderDetailId).OrderBy(a => a.OrderAmendmentId).Select(a => (decimal?)a.PreviousWholeLotPrice).FirstOrDefault() ?? l.UnitPrice,
+                refusedLines.Contains(l.OrderDetailId))).ToList(),
             order.StatusHistories.OrderBy(h => h.ChangedAt).ThenBy(h => h.OrderStatusHistoryId)
                 .Select(h => new DistributorOrderEvent(h.OldStatus, h.NewStatus, Utc(h.ChangedAt), h.ChangeReason)).ToList());
     }
@@ -231,14 +239,21 @@ public sealed class DistributorOrderRepository(DbContextOptions<AppDbContext> op
         await TransactionAsync(accountId, async db =>
         {
             var order = await LockOwnedAsync(db, accountId, id, ct);
-            if (order.OrderStatus == "DELIVERED" && order.ReceivedAt is not null) return true;
+            if ((order.OrderStatus is "DELIVERED" or DeliveryRefusalRules.PartialStatus) && order.ReceivedAt is not null) return true;
             if (!await CanReceiveAsync(db, order, ct))
                 throw new ConflictException("Chỉ được xác nhận nhận hàng khi đơn đã xuất đủ hàng hoặc đang giao.");
             var old = order.OrderStatus;
-            order.OrderStatus = "DELIVERED"; order.ReceivedAt = DateTime.UtcNow;
+            order.OrderStatus = old == DeliveryRefusalRules.PartialStatus ? DeliveryRefusalRules.PartialStatus : "DELIVERED";
+            order.ReceivedAt = DateTime.UtcNow;
             order.ReceivedByAccountId = accountId; order.UpdatedAt = order.ReceivedAt;
             await db.SaveChangesAsync(ct);
-            await EnsureHistoryAsync(db, id, old, "DELIVERED", accountId, "Nhà phân phối xác nhận đã nhận đủ hàng.", ct);
+            if (old == DeliveryRefusalRules.PartialStatus)
+            {
+                db.OrderStatusHistories.Add(new OrderStatusHistory { PurchaseOrderId = id, OldStatus = old, NewStatus = order.OrderStatus,
+                    ChangedByAccountId = accountId, ChangedAt = order.ReceivedAt.Value, ChangeReason = "Nhà phân phối xác nhận nhận các lô còn lại; các lô đã từ chối giữ nguyên." });
+                await db.SaveChangesAsync(ct);
+            }
+            else await EnsureHistoryAsync(db, id, old, "DELIVERED", accountId, "Nhà phân phối xác nhận đã nhận đủ hàng.", ct);
             return true;
         }, ct);
         return await GetAsync(accountId, id, ct);
@@ -250,9 +265,9 @@ public sealed class DistributorOrderRepository(DbContextOptions<AppDbContext> op
 
     private static async Task<bool> CanReceiveAsync(AppDbContext db, PurchaseOrder order, CancellationToken ct)
     {
-        if (order.OrderStatus is not ("ISSUED" or "DISPATCHED") || order.ReceivedAt is not null) return false;
-        if (await db.OrderReturns.AnyAsync(r => r.PurchaseOrderId == order.PurchaseOrderId && (r.Status == "REQUESTED" || r.Status == "APPROVED" || r.Status == "RECEIVED"), ct)) return false;
-        var lines = db.OrderDetails.Where(l => l.PurchaseOrderId == order.PurchaseOrderId);
+        if (order.OrderStatus is not ("ISSUED" or "DISPATCHED" or DeliveryRefusalRules.PartialStatus) || order.ReceivedAt is not null) return false;
+        var lines = db.OrderDetails.Where(l => l.PurchaseOrderId == order.PurchaseOrderId
+            && !db.OrderDeliveryRefusalLots.Any(r => r.OrderDetailId == l.OrderDetailId));
         return await lines.AnyAsync(ct) && !await lines.AnyAsync(l => l.ApprovedWeightKg <= 0
             || l.ApprovedWeightKg != l.RequestedWeightKg && !db.OrderAmendments.Any(a => a.OrderDetailId == l.OrderDetailId && a.EffectiveWeightKg == l.ApprovedWeightKg && a.EffectiveWholeLotPrice == l.UnitPrice)
             || (l.GoodsIssueDetails.Where(i => i.GoodsIssue.IssueStatus == "COMMITTED").Sum(i => (decimal?)i.WeightInKg) ?? 0) != l.ApprovedWeightKg, ct);

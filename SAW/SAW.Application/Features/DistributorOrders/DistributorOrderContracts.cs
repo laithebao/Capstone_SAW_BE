@@ -16,7 +16,7 @@ public sealed record SelectedLot(long BatchId, decimal ExpectedPrice, decimal Ex
 public sealed record CreateDistributorOrderRequest(Guid RequestId, List<SelectedLot> Lots,
     string DeliveryAddress, string ContactPhone, DateOnly? ExpectedDeliveryDate, string? Note);
 public sealed record DistributorOrderLine(long BatchId, string BatchCode, string ProductName,
-    decimal WeightKg, decimal WholeLotPrice, decimal? OriginalWeightKg = null, decimal? OriginalWholeLotPrice = null);
+    decimal WeightKg, decimal WholeLotPrice, decimal? OriginalWeightKg = null, decimal? OriginalWholeLotPrice = null, bool IsDeliveryRefused = false);
 public sealed record DistributorOrderEvent(string? OldStatus, string NewStatus, DateTime ChangedAt, string? Reason);
 public sealed record DistributorOrderSummary(long Id, string OrderCode, string Status, int LotCount,
     decimal TotalAmount, DateTime CreatedAt, DateOnly? ExpectedDeliveryDate, string? WorkState = null);

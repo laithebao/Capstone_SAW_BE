@@ -4,7 +4,6 @@ using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
 using SAW.Application.Exceptions;
-using SAW.Application.Features.DistributorOrders;
 using SAW.Domain.Common;
 using SAW.Domain.Entities;
 using SAW.Infrastructure.Persistence;
@@ -41,46 +40,10 @@ public sealed class OrderReturnsController(AppDbContext db) : ControllerBase
             .Select(View).SingleOrDefaultAsync(ct)));
     }
 
-    [HttpPost("{orderId:long}"), Authorize(Roles = "DISTRIBUTOR")]
-    public Task<IActionResult> RequestReturn(long orderId, ReturnNote request, CancellationToken ct) => Mutate(orderId, async order =>
-    {
-        if (order.Distributor.AccountId != Actor) throw new NotFoundException("Không tìm thấy đơn hàng của bạn.");
-        var reason = OrderReturnRules.RequiredNote(request.Note);
-        var existing = await db.OrderReturns.SingleOrDefaultAsync(r => r.PurchaseOrderId == orderId, ct);
-        if (existing != null)
-        {
-            if (existing.RequestedByAccountId == Actor && existing.Reason == reason) return;
-            throw new ConflictException("Đơn đã có yêu cầu trả hàng. Vui lòng xem kết quả xử lý.");
-        }
-        OrderReturnRules.EnsureRequestable(order.OrderStatus);
-        if (!await db.GoodsIssues.AnyAsync(i => i.PurchaseOrderId == orderId && i.IssueStatus == "COMMITTED", ct))
-            throw new ConflictException("Đơn chưa có phiếu xuất kho hoàn tất.");
-        db.OrderReturns.Add(new OrderReturn { PurchaseOrderId = orderId, PurchaseOrder = order, Reason = reason,
-            RequestedByAccountId = Actor, RequestedAt = DateTime.UtcNow });
-    }, ct);
-
-    private async Task<IActionResult> Mutate(long id, Func<PurchaseOrder, Task> action, CancellationToken ct)
-    {
-        if (id <= 0) throw new BadRequestException("Mã đơn không hợp lệ.");
-        await EnsureReadyAsync(ct);
-        return await db.Database.CreateExecutionStrategy().ExecuteAsync(async () =>
-        {
-            db.ChangeTracker.Clear();
-            await using var tx = await db.Database.BeginTransactionAsync(ct);
-            var order = await db.PurchaseOrders.FromSqlInterpolated($"SELECT * FROM PURCHASE_ORDER WITH (UPDLOCK,HOLDLOCK) WHERE PurchaseOrderID={id}")
-                .SingleOrDefaultAsync(ct) ?? throw new NotFoundException("Không tìm thấy đơn hàng.");
-            await db.Entry(order).Reference(o => o.Distributor).LoadAsync(ct);
-            await action(order);
-            await db.Database.ExecuteSqlInterpolatedAsync($"EXEC sys.sp_set_session_context @key=N'AccountID', @value={Actor}", ct);
-            try
-            {
-                await db.SaveChangesAsync(ct);
-            }
-            finally { await db.Database.ExecuteSqlRawAsync("EXEC sys.sp_set_session_context @key=N'AccountID', @value=NULL", CancellationToken.None); }
-            await tx.CommitAsync(ct);
-            return (IActionResult)Ok(ApiResponse<object>.Success(new { order.PurchaseOrderId }, "Đã gửi yêu cầu trả hàng. Vui lòng chờ kho xử lý."));
-        });
-    }
+    // Historical records remain readable; fresh produce is never returned to stock.
+    [HttpPost("{orderId:long}")]
+    public IActionResult RequestReturn() => StatusCode(StatusCodes.Status410Gone,
+        ApiResponse<object>.Failure(StatusCodes.Status410Gone, "Luồng trả hàng đã dừng. Vui lòng dùng chức năng từ chối nhận hàng và đính kèm ảnh bằng chứng."));
 
     private async Task EnsureReadyAsync(CancellationToken ct)
     {
@@ -89,7 +52,6 @@ public sealed class OrderReturnsController(AppDbContext db) : ControllerBase
     }
 }
 
-public sealed record ReturnNote(string? Note);
 public sealed record ReturnLot(string? BatchCode, string? ProductName, decimal WeightKg, decimal WholeLotPrice);
 public sealed record OrderReturnView(long PurchaseOrderId, string OrderCode, string Status, string Reason,
     string? ReviewNote, string? ReceiptNote, DateTime RequestedAt, DateTime? ReviewedAt, DateTime? ReceivedAt, List<ReturnLot> Lots);

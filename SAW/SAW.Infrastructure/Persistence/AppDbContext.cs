@@ -80,6 +80,9 @@ public partial class AppDbContext : DbContext
     // 09. Orders & Picking
     public DbSet<PurchaseOrder> PurchaseOrders => Set<PurchaseOrder>();
     public DbSet<OrderReturn> OrderReturns => Set<OrderReturn>();
+    public DbSet<OrderDeliveryRefusal> OrderDeliveryRefusals => Set<OrderDeliveryRefusal>();
+    public DbSet<OrderDeliveryRefusalImage> OrderDeliveryRefusalImages => Set<OrderDeliveryRefusalImage>();
+    public DbSet<OrderDeliveryRefusalLot> OrderDeliveryRefusalLots => Set<OrderDeliveryRefusalLot>();
     public DbSet<BatchSaleOffer> BatchSaleOffers => Set<BatchSaleOffer>();
     public DbSet<PurchaseOrderDailyCounter> PurchaseOrderDailyCounters => Set<PurchaseOrderDailyCounter>();
     public DbSet<OrderDetail> OrderDetails => Set<OrderDetail>();

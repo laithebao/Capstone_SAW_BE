@@ -104,6 +104,7 @@ public sealed class GoodsReceiptRepository(DbContextOptions<AppDbContext> option
             var previousHistoryId = await db.BatchStatusHistories.Where(h => h.ProductBatchId == batch.ProductBatchId)
                 .MaxAsync(h => (long?)h.BatchStatusHistoryId, ct) ?? 0;
             batch.BatchStatus = "IN_STOCK"; batch.UpdatedAt = now;
+            await db.QueueGoodsReceiptNotificationAsync(receipt, actorId, ct);
             await db.SaveChangesAsync(ct);
             // Existing history trigger is immutable; never edit its result or insert a duplicate.
             if (!await db.BatchStatusHistories.AnyAsync(h => h.ProductBatchId == batch.ProductBatchId

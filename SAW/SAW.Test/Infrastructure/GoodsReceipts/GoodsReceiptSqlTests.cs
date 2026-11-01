@@ -115,6 +115,49 @@ public sealed class GoodsReceiptSqlTests(GoodsReceiptSqlFixture fixture) : IClas
         return new(r.WarehouseLocationId, r.ReceivedAt, r.Note);
     }
 
+    [ReceivingSqlFact]
+    public async Task Receipt_notifications_skip_drafts_and_reach_warehouse_participants_on_commit_only()
+    {
+        var (batch, location) = await EligibleAsync();
+        await using var db = F.Context();
+        async Task<Account> Account(string roleCode)
+        {
+            var role = await db.Roles.SingleOrDefaultAsync(r => r.RoleCode == roleCode)
+                ?? new Role { RoleCode = roleCode, RoleName = roleCode, IsActive = true };
+            var key = Guid.NewGuid().ToString("N");
+            var account = new Account { Role = role, Username = key, Email = key + "@test.invalid",
+                FullName = roleCode, PasswordHash = "test", AccountStatus = "ACTIVE" };
+            db.Accounts.Add(account); await db.SaveChangesAsync(); return account;
+        }
+        var staff = await Account("OPERATION_STAFF"); var manager = await Account("WAREHOUSE_MANAGER");
+        var accessor = new HttpContextAccessor { HttpContext = new DefaultHttpContext { User = new ClaimsPrincipal(new ClaimsIdentity(
+            [new Claim("account_id", staff.AccountId.ToString()), new Claim(ClaimTypes.Role, "OPERATION_STAFF")], "test")) } };
+        var repo = new GoodsReceiptRepository(new DbContextOptionsBuilder<AppDbContext>().UseSqlServer(F.ConnectionString).Options, accessor);
+        var request = new CreateGoodsReceiptRequest(batch.ProductBatchId, location.WarehouseLocationId, Today, "Notification test");
+        var beforeDraft = await db.Notifications.CountAsync();
+        var id = await repo.CreateAsync(request, staff.AccountId, default);
+        async Task<List<Notification>> Notes(string type) => await db.Notifications.AsNoTracking()
+            .Where(n => n.RelatedEntityType == "GOODS_RECEIPT" && n.RelatedEntityId == id.ToString() && n.NotificationType == type).ToListAsync();
+        var drafts = await Notes("GOODS_RECEIPT_CREATED");
+        Assert.Empty(drafts);
+        Assert.Equal(beforeDraft, await db.Notifications.CountAsync());
+        Assert.Empty(await db.Inventories.Where(i => i.ProductBatchId == batch.ProductBatchId).ToListAsync());
+        var beforeDuplicate = await db.Notifications.CountAsync();
+        await Assert.ThrowsAsync<ConflictException>(() => repo.CreateAsync(request, staff.AccountId, default));
+        Assert.Equal(beforeDuplicate, await db.Notifications.CountAsync());
+        var snapshot = await SnapshotAsync(id);
+        await repo.ConfirmAsync(id, snapshot, staff.AccountId, default);
+        var committed = await Notes("GOODS_RECEIPT_COMMITTED");
+        foreach (var accountId in new[] { staff.AccountId, manager.AccountId })
+            Assert.Single(committed, n => n.AccountId == accountId);
+        Assert.True(await db.Notifications.AnyAsync(n => n.AccountId == F.ActorId && n.NotificationType == "BATCH_STATUS"
+            && n.RelatedEntityId == batch.ProductBatchId.ToString() && n.Message.Contains("Đã nhập kho")));
+        var afterConfirm = await db.Notifications.CountAsync();
+        await repo.ConfirmAsync(id, snapshot, staff.AccountId, default);
+        Assert.Equal(afterConfirm, await db.Notifications.CountAsync());
+        Assert.Equal(1000, await db.Inventories.Where(i => i.ProductBatchId == batch.ProductBatchId).SumAsync(i => i.QuantityOnHand));
+    }
+
     private static ProductBatchQrCodeService QrService(AppDbContext db, IQrImageStorage storage) => new(
         new QrCodeRepository(db), new PngQrCodeRenderer(), storage,
         new QrCodeOptions { PublicFrontendBaseUrl = "https://saw.test.invalid" },
@@ -438,6 +481,10 @@ public sealed class GoodsReceiptSqlTests(GoodsReceiptSqlFixture fixture) : IClas
             Assert.True(interceptor.Failures >= 2);
             await using var db = F.Context();
             Assert.Single(await db.GoodsReceipts.Where(r => r.ProductBatchId == batch.ProductBatchId).ToListAsync());
+            Assert.Single(await db.Notifications.Where(n => n.AccountId == F.ActorId && n.NotificationType == "GOODS_RECEIPT_COMMITTED"
+                && n.RelatedEntityType == "GOODS_RECEIPT" && n.RelatedEntityId == id.ToString()).ToListAsync());
+            Assert.False(await db.Notifications.AnyAsync(n => n.NotificationType == "GOODS_RECEIPT_CREATED"
+                && n.RelatedEntityId == id.ToString()));
             Assert.Equal(1000, (await db.Inventories.SingleAsync(i => i.ProductBatchId == batch.ProductBatchId)).QuantityOnHand);
             Assert.Single(await db.BatchStatusHistories.Where(h => h.ProductBatchId == batch.ProductBatchId && h.NewStatus == "IN_STOCK").ToListAsync());
             Assert.Single(await db.AuditLogs.Where(a => a.EntityName == "GOODS_RECEIPT" && a.ActionType == "UPDATE" && a.EntityId == "GoodsReceiptId=" + id).ToListAsync());
@@ -551,6 +598,7 @@ public sealed class GoodsReceiptSqlTests(GoodsReceiptSqlFixture fixture) : IClas
         var (batch, location) = await EligibleAsync(); var id = await DraftAsync(batch, location);
         await using var db = F.Context();
         var audits = await db.AuditLogs.CountAsync();
+        var notifications = await db.Notifications.CountAsync();
         var history = await db.BatchStatusHistories.CountAsync(h => h.ProductBatchId == batch.ProductBatchId);
         // Test-only constraint guarantees a real SQL failure during the stock write.
         var failureDdl = "ALTER TABLE INVENTORY ADD CONSTRAINT CK_RECEIPT_TEST_FAILURE CHECK (ProductBatchID <> "
@@ -563,6 +611,7 @@ public sealed class GoodsReceiptSqlTests(GoodsReceiptSqlFixture fixture) : IClas
         }
         finally { await db.Database.ExecuteSqlRawAsync("ALTER TABLE INVENTORY DROP CONSTRAINT CK_RECEIPT_TEST_FAILURE"); }
         Assert.Equal(audits, await db.AuditLogs.CountAsync());
+        Assert.Equal(notifications, await db.Notifications.CountAsync());
         Assert.Equal(history, await db.BatchStatusHistories.CountAsync(h => h.ProductBatchId == batch.ProductBatchId));
         Assert.Equal("DRAFT", (await db.GoodsReceipts.SingleAsync(r => r.GoodsReceiptId == id)).ReceiptStatus);
         Assert.Equal("APPROVED_FOR_STORAGE", (await db.ProductBatches.SingleAsync(b => b.ProductBatchId == batch.ProductBatchId)).BatchStatus);

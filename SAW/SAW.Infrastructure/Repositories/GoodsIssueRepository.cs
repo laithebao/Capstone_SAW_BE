@@ -123,6 +123,7 @@ public sealed partial class GoodsIssueRepository(DbContextOptions<AppDbContext> 
             Receipt(db, "CONFIRM_GOODS_ISSUE", request.RequestId, actorId, payload, id, beforeState,
                 new { issue.IssueStatus, issue.CommittedAt, order.OrderStatus, Lines = lines, Inventory = afterStock, Reservations = afterReservations },
                 "Xác nhận xuất kho theo kg; tiêu thụ đúng phần giữ hàng đã xuất.");
+            await db.QueueGoodsIssueNotificationAsync(issue, actorId, ct);
             await db.SaveChangesAsync(ct); return true;
         }, ct);
     }

@@ -1,6 +1,6 @@
 namespace SAW.Domain.Entities;
 
-// A whole-order return is physically held apart from saleable inventory.
+// Archived records from the retired return workflow. New submissions use OrderDeliveryRefusal.
 public sealed class OrderReturn
 {
     public long OrderReturnId { get; set; }
