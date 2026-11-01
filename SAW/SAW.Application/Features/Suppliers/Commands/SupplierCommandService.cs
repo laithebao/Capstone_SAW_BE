@@ -116,6 +116,14 @@ public class SupplierCommandService : ISupplierCommandService
         supplier.Email = request.Email?.Trim();
         supplier.Note = request.SupplierType;
 
+        // Google registration creates a placeholder profile. Completing it follows
+        // the same ACTIVE outcome as DeclareProfileAsync after email verification.
+        if (supplier.ProfileStatus == "PENDING_REVIEW"
+            && supplier.Account is { AccountStatus: "ACTIVE" } account
+            && account.Username.StartsWith("google_", StringComparison.Ordinal)
+            && !string.IsNullOrWhiteSpace(supplier.PhoneNumber))
+            supplier.ProfileStatus = "ACTIVE";
+
         var normalizedCertifications = request.GetNormalizedCertifications();
 
         await _supplierRepository.UpdateSupplierAsync(

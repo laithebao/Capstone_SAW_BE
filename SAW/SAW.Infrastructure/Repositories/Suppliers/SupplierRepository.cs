@@ -321,6 +321,7 @@ public class SupplierRepository : ISupplierRepository
 
     public async Task<Supplier?> GetEntityByAccountIdAsync(int accountId, CancellationToken cancellationToken = default)
     {
-        return await _context.Set<Supplier>().FirstOrDefaultAsync(s => s.AccountId == accountId, cancellationToken);
+        return await _context.Set<Supplier>().Include(s => s.Account)
+            .FirstOrDefaultAsync(s => s.AccountId == accountId, cancellationToken);
     }
 }

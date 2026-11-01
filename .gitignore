@@ -526,3 +526,6 @@ secrets.json
 
 # Local Supplier handover notes
 /docs/Supplier-fixes.md
+
+# Uploaded customer evidence is runtime data, not source code.
+/SAW/SAW.API/App_Data/DeliveryRefusalFiles/

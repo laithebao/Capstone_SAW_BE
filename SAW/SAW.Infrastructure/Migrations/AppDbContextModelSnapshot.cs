@@ -1562,6 +1562,102 @@ namespace SAW.Infrastructure.Migrations
                     b.HasAnnotation("SqlServer:UseSqlOutputClause", false);
                 });
 
+            modelBuilder.Entity("SAW.Domain.Entities.OrderDeliveryRefusal", b =>
+                {
+                    b.Property<long>("OrderDeliveryRefusalId")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("bigint");
+
+                    SqlServerPropertyBuilderExtensions.UseIdentityColumn(b.Property<long>("OrderDeliveryRefusalId"));
+
+                    b.Property<DateTime>("CreatedAt")
+                        .HasColumnType("datetime2");
+
+                    b.Property<int>("CreatedByAccountId")
+                        .HasColumnType("int");
+
+                    b.Property<long>("PurchaseOrderId")
+                        .HasColumnType("bigint");
+
+                    b.Property<string>("Reason")
+                        .IsRequired()
+                        .HasMaxLength(1000)
+                        .HasColumnType("nvarchar(1000)");
+
+                    b.Property<Guid>("RequestId")
+                        .HasColumnType("uniqueidentifier");
+
+                    b.HasKey("OrderDeliveryRefusalId");
+
+                    b.HasIndex("CreatedByAccountId");
+
+                    b.HasIndex("PurchaseOrderId");
+
+                    b.HasIndex("RequestId")
+                        .IsUnique();
+
+                    b.ToTable("ORDER_DELIVERY_REFUSAL", (string)null);
+                });
+
+            modelBuilder.Entity("SAW.Domain.Entities.OrderDeliveryRefusalImage", b =>
+                {
+                    b.Property<Guid>("OrderDeliveryRefusalImageId")
+                        .HasColumnType("uniqueidentifier");
+
+                    b.Property<long>("ByteLength")
+                        .HasColumnType("bigint");
+
+                    b.Property<string>("ContentType")
+                        .IsRequired()
+                        .HasMaxLength(30)
+                        .HasColumnType("nvarchar(30)");
+
+                    b.Property<string>("FileName")
+                        .IsRequired()
+                        .HasMaxLength(255)
+                        .HasColumnType("nvarchar(255)");
+
+                    b.Property<long>("OrderDeliveryRefusalId")
+                        .HasColumnType("bigint");
+
+                    b.Property<int>("Position")
+                        .HasColumnType("int");
+
+                    b.Property<string>("Sha256")
+                        .IsRequired()
+                        .HasMaxLength(64)
+                        .HasColumnType("nvarchar(64)");
+
+                    b.Property<string>("StorageName")
+                        .IsRequired()
+                        .HasMaxLength(64)
+                        .HasColumnType("nvarchar(64)");
+
+                    b.HasKey("OrderDeliveryRefusalImageId");
+
+                    b.HasIndex("OrderDeliveryRefusalId");
+
+                    b.HasIndex("StorageName")
+                        .IsUnique();
+
+                    b.ToTable("ORDER_DELIVERY_REFUSAL_IMAGE", (string)null);
+                });
+
+            modelBuilder.Entity("SAW.Domain.Entities.OrderDeliveryRefusalLot", b =>
+                {
+                    b.Property<long>("OrderDetailId")
+                        .HasColumnType("bigint");
+
+                    b.Property<long>("OrderDeliveryRefusalId")
+                        .HasColumnType("bigint");
+
+                    b.HasKey("OrderDetailId");
+
+                    b.HasIndex("OrderDeliveryRefusalId");
+
+                    b.ToTable("ORDER_DELIVERY_REFUSAL_LOT", (string)null);
+                });
+
             modelBuilder.Entity("SAW.Domain.Entities.OrderDetail", b =>
                 {
                     b.Property<long>("OrderDetailId")
@@ -1662,6 +1758,70 @@ namespace SAW.Infrastructure.Migrations
                     b.HasIndex("RequestedProductBatchId");
 
                     b.ToTable("ORDER_DETAIL", (string)null);
+                });
+
+            modelBuilder.Entity("SAW.Domain.Entities.OrderReturn", b =>
+                {
+                    b.Property<long>("OrderReturnId")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("bigint");
+
+                    SqlServerPropertyBuilderExtensions.UseIdentityColumn(b.Property<long>("OrderReturnId"));
+
+                    b.Property<long>("PurchaseOrderId")
+                        .HasColumnType("bigint");
+
+                    b.Property<string>("Reason")
+                        .IsRequired()
+                        .HasMaxLength(1000)
+                        .HasColumnType("nvarchar(1000)");
+
+                    b.Property<string>("ReceiptNote")
+                        .HasMaxLength(1000)
+                        .HasColumnType("nvarchar(1000)");
+
+                    b.Property<DateTime?>("ReceivedAt")
+                        .HasColumnType("datetime2");
+
+                    b.Property<int?>("ReceivedByAccountId")
+                        .HasColumnType("int");
+
+                    b.Property<DateTime>("RequestedAt")
+                        .HasColumnType("datetime2");
+
+                    b.Property<int>("RequestedByAccountId")
+                        .HasColumnType("int");
+
+                    b.Property<string>("ReviewNote")
+                        .HasMaxLength(1000)
+                        .HasColumnType("nvarchar(1000)");
+
+                    b.Property<DateTime?>("ReviewedAt")
+                        .HasColumnType("datetime2");
+
+                    b.Property<int?>("ReviewedByAccountId")
+                        .HasColumnType("int");
+
+                    b.Property<string>("Status")
+                        .IsRequired()
+                        .HasMaxLength(20)
+                        .HasColumnType("nvarchar(20)");
+
+                    b.HasKey("OrderReturnId");
+
+                    b.HasIndex("PurchaseOrderId")
+                        .IsUnique();
+
+                    b.HasIndex("ReceivedByAccountId");
+
+                    b.HasIndex("RequestedByAccountId");
+
+                    b.HasIndex("ReviewedByAccountId");
+
+                    b.ToTable("ORDER_RETURN", null, t =>
+                        {
+                            t.HasCheckConstraint("CK_ORDER_RETURN_Status", "[Status] IN ('REQUESTED','APPROVED','REJECTED','RECEIVED')");
+                        });
                 });
 
             modelBuilder.Entity("SAW.Domain.Entities.OrderStatusHistory", b =>
@@ -4045,6 +4205,53 @@ namespace SAW.Infrastructure.Migrations
                     b.Navigation("Proposal");
                 });
 
+            modelBuilder.Entity("SAW.Domain.Entities.OrderDeliveryRefusal", b =>
+                {
+                    b.HasOne("SAW.Domain.Entities.Account", null)
+                        .WithMany()
+                        .HasForeignKey("CreatedByAccountId")
+                        .OnDelete(DeleteBehavior.Restrict)
+                        .IsRequired();
+
+                    b.HasOne("SAW.Domain.Entities.PurchaseOrder", "PurchaseOrder")
+                        .WithMany()
+                        .HasForeignKey("PurchaseOrderId")
+                        .OnDelete(DeleteBehavior.Restrict)
+                        .IsRequired();
+
+                    b.Navigation("PurchaseOrder");
+                });
+
+            modelBuilder.Entity("SAW.Domain.Entities.OrderDeliveryRefusalImage", b =>
+                {
+                    b.HasOne("SAW.Domain.Entities.OrderDeliveryRefusal", "OrderDeliveryRefusal")
+                        .WithMany("Images")
+                        .HasForeignKey("OrderDeliveryRefusalId")
+                        .OnDelete(DeleteBehavior.Restrict)
+                        .IsRequired();
+
+                    b.Navigation("OrderDeliveryRefusal");
+                });
+
+            modelBuilder.Entity("SAW.Domain.Entities.OrderDeliveryRefusalLot", b =>
+                {
+                    b.HasOne("SAW.Domain.Entities.OrderDeliveryRefusal", "OrderDeliveryRefusal")
+                        .WithMany("Lots")
+                        .HasForeignKey("OrderDeliveryRefusalId")
+                        .OnDelete(DeleteBehavior.Restrict)
+                        .IsRequired();
+
+                    b.HasOne("SAW.Domain.Entities.OrderDetail", "OrderDetail")
+                        .WithMany()
+                        .HasForeignKey("OrderDetailId")
+                        .OnDelete(DeleteBehavior.Restrict)
+                        .IsRequired();
+
+                    b.Navigation("OrderDeliveryRefusal");
+
+                    b.Navigation("OrderDetail");
+                });
+
             modelBuilder.Entity("SAW.Domain.Entities.OrderDetail", b =>
                 {
                     b.HasOne("SAW.Domain.Entities.CropType", "CropType")
@@ -4071,6 +4278,33 @@ namespace SAW.Infrastructure.Migrations
                     b.Navigation("PurchaseOrder");
 
                     b.Navigation("RequestedProductBatch");
+                });
+
+            modelBuilder.Entity("SAW.Domain.Entities.OrderReturn", b =>
+                {
+                    b.HasOne("SAW.Domain.Entities.PurchaseOrder", "PurchaseOrder")
+                        .WithMany()
+                        .HasForeignKey("PurchaseOrderId")
+                        .OnDelete(DeleteBehavior.Restrict)
+                        .IsRequired();
+
+                    b.HasOne("SAW.Domain.Entities.Account", null)
+                        .WithMany()
+                        .HasForeignKey("ReceivedByAccountId")
+                        .OnDelete(DeleteBehavior.Restrict);
+
+                    b.HasOne("SAW.Domain.Entities.Account", null)
+                        .WithMany()
+                        .HasForeignKey("RequestedByAccountId")
+                        .OnDelete(DeleteBehavior.Restrict)
+                        .IsRequired();
+
+                    b.HasOne("SAW.Domain.Entities.Account", null)
+                        .WithMany()
+                        .HasForeignKey("ReviewedByAccountId")
+                        .OnDelete(DeleteBehavior.Restrict);
+
+                    b.Navigation("PurchaseOrder");
                 });
 
             modelBuilder.Entity("SAW.Domain.Entities.OrderStatusHistory", b =>
@@ -4667,6 +4901,13 @@ namespace SAW.Infrastructure.Migrations
                     b.Navigation("GoodsIssueDetails");
 
                     b.Navigation("PickingHistories");
+                });
+
+            modelBuilder.Entity("SAW.Domain.Entities.OrderDeliveryRefusal", b =>
+                {
+                    b.Navigation("Images");
+
+                    b.Navigation("Lots");
                 });
 
             modelBuilder.Entity("SAW.Domain.Entities.OrderDetail", b =>

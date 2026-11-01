@@ -262,6 +262,12 @@ public sealed class DistributorOrderSqlTests : IClassFixture<DistributorSqlFixtu
 
         await using (var warehouseDb = fixture.Context())
         {
+            var managerRole = await warehouseDb.Roles.SingleOrDefaultAsync(r => r.RoleCode == "WAREHOUSE_MANAGER")
+                ?? new Role { RoleCode = "WAREHOUSE_MANAGER", RoleName = "Manager", IsActive = true };
+            var managerKey = Guid.NewGuid().ToString("N");
+            var manager = new Account { Role = managerRole, Username = managerKey, Email = managerKey + "@test.invalid",
+                FullName = "Pricing manager", PasswordHash = "test", AccountStatus = "ACTIVE" };
+            warehouseDb.Accounts.Add(manager); await warehouseDb.SaveChangesAsync();
             var warehouse = new WarehouseInventoryRepository(warehouseDb,
                 new OrderReservationAllocator(new DbContextOptionsBuilder<AppDbContext>().UseSqlServer(fixture.ConnectionString).Options,
                     new HttpContextAccessor()));
@@ -270,11 +276,27 @@ public sealed class DistributorOrderSqlTests : IClassFixture<DistributorSqlFixtu
             var published = await warehouse.UpdateSaleOfferAsync(lot.BatchId,
                 new WarehouseSaleOfferUpdateRequest(1_750_000m, true), default);
             Assert.True(published.IsPublished);
+            var firstNote = Assert.Single(await warehouseDb.Notifications.Where(n => n.AccountId == manager.AccountId
+                && n.NotificationType == "SALE_PRICE_UPDATED" && n.RelatedEntityId == lot.BatchId.ToString()).ToListAsync());
+            Assert.False(firstNote.IsRead); Assert.Equal("SALE_OFFER", firstNote.RelatedEntityType);
+            Assert.Contains("1.750.000 đ", firstNote.Message);
+            var changed = await warehouse.UpdateSaleOfferAsync(lot.BatchId,
+                new WarehouseSaleOfferUpdateRequest(2_000_000m, true, published.PublicationSnapshot), default);
+            Assert.Equal(2, await warehouseDb.Notifications.CountAsync(n => n.AccountId == manager.AccountId
+                && n.NotificationType == "SALE_PRICE_UPDATED" && n.RelatedEntityId == lot.BatchId.ToString()));
+            var noteCount = await warehouseDb.Notifications.CountAsync();
+            await warehouse.UpdateSaleOfferAsync(lot.BatchId,
+                new WarehouseSaleOfferUpdateRequest(2_000_000m, true, changed.PublicationSnapshot), default);
+            Assert.Equal(noteCount, await warehouseDb.Notifications.CountAsync());
+            await Assert.ThrowsAsync<ConflictException>(() => warehouse.UpdateSaleOfferAsync(lot.BatchId,
+                new WarehouseSaleOfferUpdateRequest(3_000_000m, true, "stale snapshot"), default));
+            Assert.Equal(noteCount, await warehouseDb.Notifications.CountAsync());
+            Assert.False(await warehouseDb.Notifications.AnyAsync(n => n.AccountId == buyer && n.NotificationType == "SALE_PRICE_UPDATED"));
         }
 
         var catalog = await Repository().CatalogAsync(buyer, new(PageSize: 50), default);
         var visible = Assert.Single(catalog.Items, row => row.BatchId == lot.BatchId);
-        Assert.Equal(1_750_000m, visible.WholeLotPrice);
+        Assert.Equal(2_000_000m, visible.WholeLotPrice);
     }
 
     [ReceivingSqlFact]

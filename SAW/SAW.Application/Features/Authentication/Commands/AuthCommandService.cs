@@ -22,7 +22,7 @@ public sealed class AuthCommandService(
 
         var now = DateTime.UtcNow;
         if (account.AccountStatus == "INACTIVE") throw new ForbiddenException("Your account has been disabled.");
-        if (account.AccountStatus == "PENDING") throw new ForbiddenException("Your account is pending activation.");
+        if (account.AccountStatus == "PENDING") throw new ForbiddenException("Tài khoản chưa xác nhận email. Vui lòng mở email xác nhận (kiểm tra cả thư rác), xác nhận rồi đăng nhập lại.");
         if (account.AccountStatus == "LOCKED" && account.LockoutEnd is null) throw new ForbiddenException("Your account has been locked.");
         if (account.LockoutEnd > now) throw new ForbiddenException($"Your account is temporarily locked until {account.LockoutEnd:O}.");
 
@@ -86,7 +86,7 @@ public sealed class AuthCommandService(
                 Email = identity.Email,
                 PasswordHash = passwordHasher.Hash(tokenService.CreateOpaqueToken()),
                 FullName = identity.FullName,
-                AccountStatus = "ACTIVE",
+                AccountStatus = "PENDING",
                 CreatedAt = now
             };
             var placeholderTaxCode = $"GOOGLE-{suffix}";
@@ -106,15 +106,32 @@ public sealed class AuthCommandService(
                 TaxCode = placeholderTaxCode,
                 ContactPerson = identity.FullName,
                 Email = identity.Email,
-                ProfileStatus = "PENDING_REVIEW",
+                // Account PENDING gates access until email verification, as for normal registration.
+                ProfileStatus = "ACTIVE",
                 CreatedAt = now
             } : null;
             await repository.CreateRegistrationAsync(account, supplier, distributor, cancellationToken);
+            var verificationToken = tokenService.CreateOpaqueToken();
+            repository.AddEmailVerificationToken(new EmailVerificationToken
+            {
+                AccountId = account.AccountId, TokenHash = tokenService.HashToken(verificationToken),
+                CreatedAt = now, ExpiresAt = now.AddHours(24)
+            });
+            await repository.SaveChangesAsync(cancellationToken);
+            await emailSender.SendEmailVerificationAsync(account.Email, verificationToken, cancellationToken);
         }
 
         if (account.AccountStatus == "INACTIVE" || account.AccountStatus == "LOCKED")
             throw new ForbiddenException("Your account is not allowed to sign in.");
-        if (account.AccountStatus == "PENDING") account.AccountStatus = "ACTIVE";
+        if (account.AccountStatus == "PENDING")
+            throw new ForbiddenException("Tài khoản chưa xác nhận email. Vui lòng mở email xác nhận (kiểm tra cả thư rác), xác nhận rồi đăng nhập lại.");
+
+        // Older Google signups left a generated distributor profile pending review
+        // even though this registration flow has no distributor profile approval step.
+        if (account.AccountStatus == "ACTIVE" && account.Username.StartsWith("google_", StringComparison.Ordinal)
+            && account.Distributor is { ProfileStatus: "PENDING_REVIEW" } profile
+            && profile.TaxCode.StartsWith("GOOGLE-", StringComparison.Ordinal))
+            profile.ProfileStatus = "ACTIVE";
 
         var session = await CreateSessionAsync(account, ipAddress, cancellationToken);
         return new GoogleLoginResponse(false, session);

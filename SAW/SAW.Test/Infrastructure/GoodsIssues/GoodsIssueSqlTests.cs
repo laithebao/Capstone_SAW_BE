@@ -93,6 +93,44 @@ public sealed class GoodsIssueSqlTests(GoodsIssueSqlFixture fixture) : IClassFix
     }
     private static ConfirmGoodsIssueRequest Confirm(IssueDetail detail) => new(Guid.NewGuid(), detail.Snapshot);
     [ReceivingSqlFact]
+    public async Task Issue_notifications_skip_drafts_and_reach_participants_once_on_actual_dispatch()
+    {
+        var s = await ScenarioAsync();
+        await using var db = F.Context();
+        var role = await db.Roles.SingleOrDefaultAsync(r => r.RoleCode == "WAREHOUSE_MANAGER")
+            ?? new Role { RoleCode = "WAREHOUSE_MANAGER", RoleName = "Manager", IsActive = true };
+        var key = Guid.NewGuid().ToString("N");
+        var manager = new Account { Role = role, Username = key, Email = key + "@test.invalid",
+            FullName = "Manager", PasswordHash = "test", AccountStatus = "ACTIVE" };
+        db.Accounts.Add(manager); await db.SaveChangesAsync();
+        var buyerId = await db.PurchaseOrders.Where(o => o.PurchaseOrderId == s.OrderId).Select(o => o.Distributor.AccountId).SingleAsync();
+        var before = await StockStateAsync(s);
+        var request = await RequestAsync(s);
+        var beforeDraftCount = await db.Notifications.CountAsync();
+        var draft = await Service().CreateAsync(request, F.ActorId, default);
+        async Task<List<Notification>> Notes(string type) => await db.Notifications.AsNoTracking().Where(n => n.RelatedEntityType == "GOODS_ISSUE"
+            && n.RelatedEntityId == draft.Summary.Id.ToString() && n.NotificationType == type).ToListAsync();
+        var created = await Notes("GOODS_ISSUE_CREATED");
+        Assert.Empty(created);
+        Assert.Equal(beforeDraftCount, await db.Notifications.CountAsync());
+        Assert.Equal(before, await StockStateAsync(s));
+        var createdCount = await db.Notifications.CountAsync();
+        await Service().CreateAsync(request, F.ActorId, default);
+        Assert.Equal(createdCount, await db.Notifications.CountAsync());
+        var confirm = Confirm(draft);
+        await Service().ConfirmAsync(draft.Summary.Id, confirm, F.ActorId, default);
+        var committed = await Notes("GOODS_ISSUE_COMMITTED");
+        foreach (var accountId in new[] { F.ActorId, manager.AccountId })
+            Assert.False(Assert.Single(committed, n => n.AccountId == accountId).IsRead);
+        Assert.DoesNotContain(committed, n => n.AccountId == buyerId);
+        Assert.True(await db.Notifications.AnyAsync(n => n.AccountId == buyerId && n.NotificationType == "ORDER_STATUS"
+            && n.RelatedEntityId == s.OrderId.ToString() && n.Message.Contains("Đã xuất kho")));
+        var committedCount = await db.Notifications.CountAsync();
+        await Service().ConfirmAsync(draft.Summary.Id, confirm, F.ActorId, default);
+        Assert.Equal(committedCount, await db.Notifications.CountAsync());
+    }
+
+    [ReceivingSqlFact]
     public async Task Draft_edit_and_GET_preserve_stock_and_fixed_fields_then_confirm_consumes_exactly_once()
     {
         var s = await ScenarioAsync(); var input = await RequestAsync(s); var before = await StockStateAsync(s);
@@ -230,10 +268,12 @@ public sealed class GoodsIssueSqlTests(GoodsIssueSqlFixture fixture) : IClassFix
     {
         var s = await ScenarioAsync(); var draft = await Service().CreateAsync(await RequestAsync(s), F.ActorId, default);
         var before = await StockStateAsync(s); await using var db = F.Context(); var auditCount = await db.AuditLogs.CountAsync();
+        var notifications = await db.Notifications.CountAsync();
         var failure = await Assert.ThrowsAnyAsync<Exception>(() => Service(new AuditFailure()).ConfirmAsync(draft.Summary.Id, Confirm(draft), F.ActorId, default));
         Assert.Contains("Fixture audit failure", failure.ToString());
         Assert.Equal(before, await StockStateAsync(s)); Assert.Equal(draft.Snapshot, (await Service().GetAsync(draft.Summary.Id, default)).Snapshot);
         Assert.Equal(auditCount, await db.AuditLogs.CountAsync());
+        Assert.Equal(notifications, await db.Notifications.CountAsync());
     }
     [ReceivingSqlFact]
     public async Task Server_search_filters_sort_paging_and_detail_transactions_use_saved_documents()
