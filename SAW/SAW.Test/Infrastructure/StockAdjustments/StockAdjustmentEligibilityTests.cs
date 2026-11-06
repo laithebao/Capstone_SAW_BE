@@ -47,8 +47,10 @@ public sealed partial class StockAdjustmentSqlTests
         var qc=F.Inspection(s.Batch,"COMPLETED");qc.QcResult="PASS";qc.QualityGrade="E";qc.CompletedAt=DateTime.UtcNow.AddSeconds(1);db.Add(qc);
         db.Add(new BatchSaleOffer {ProductBatchId=s.Batch,IsPublished=true,WholeLotPrice=100,UpdatedAt=DateTime.UtcNow});await db.SaveChangesAsync();
         var distributor=new DistributorOrderRepository(Options(),Accessor);Assert.Contains((await distributor.CatalogAsync(F.ActorId,new(PageSize:100),default)).Items,b=>b.BatchId==s.Batch);
+        Assert.Contains((await distributor.PublicCatalogAsync(new(PageSize:100),default)).Items,b=>b.BatchId==s.Batch);
         var a=await Service().CreateAsync(await Request(s.Batch,kind),F.ActorId,default);
         Assert.DoesNotContain((await distributor.CatalogAsync(F.ActorId,new(PageSize:100),default)).Items,b=>b.BatchId==s.Batch);
+        Assert.DoesNotContain((await distributor.PublicCatalogAsync(new(PageSize:100),default)).Items,b=>b.BatchId==s.Batch);
         var request=new CreateDistributorOrderRequest(Guid.NewGuid(),[new(s.Batch,100,100)],"Fixture address","0901234567",null,null);
         await Assert.ThrowsAsync<ConflictException>(()=>distributor.CreateAsync(F.ActorId,request,default));
         var manager=new WarehouseInventoryRepository(db,new OrderReservationAllocator(Options(),Accessor));var offers=await manager.GetSaleOffersAsync(null,1,100,default);

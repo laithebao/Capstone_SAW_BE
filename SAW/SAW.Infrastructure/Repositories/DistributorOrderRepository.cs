@@ -68,6 +68,21 @@ public sealed class DistributorOrderRepository(DbContextOptions<AppDbContext> op
                     && (q.QualityGrade == "A" || q.QualityGrade == "B" || q.QualityGrade == "C" || q.QualityGrade == "D" || q.QualityGrade == "E")));
     }
 
+    public async Task<DistributorPage<PublicCatalogLot>> PublicCatalogAsync(DistributorQuery query, CancellationToken ct)
+    {
+        await using var db = Context();
+        var rows = Saleable(db);
+        if (!string.IsNullOrWhiteSpace(query.Search)) rows = rows.Where(o => o.ProductBatch.BatchCode.Contains(query.Search)
+            || o.ProductBatch.ProductName.Contains(query.Search) || o.ProductBatch.CropType.CropName.Contains(query.Search));
+        var total = await rows.CountAsync(ct);
+        var items = await rows.OrderByDescending(o => o.UpdatedAt).ThenByDescending(o => o.ProductBatchId)
+            .Skip((query.Page - 1) * query.PageSize).Take(query.PageSize)
+            .Select(o => new PublicCatalogLot(o.ProductBatchId, o.ProductBatch.BatchCode, o.ProductBatch.ProductName,
+                o.ProductBatch.CropType.CropName, o.ProductBatch.QualityGrade, o.ProductBatch.ExpiryDate,
+                o.ApprovedRemainderWeightKg ?? o.ProductBatch.VerifiedWeightInKg!.Value, o.WholeLotPrice)).ToListAsync(ct);
+        return new(items, total, query.Page, query.PageSize);
+    }
+
     public async Task<DistributorPage<CatalogLot>> CatalogAsync(int accountId, DistributorQuery query, CancellationToken ct)
     {
         await using var db = Context();
