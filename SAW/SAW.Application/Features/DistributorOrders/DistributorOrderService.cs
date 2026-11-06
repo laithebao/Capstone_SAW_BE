@@ -4,6 +4,8 @@ namespace SAW.Application.Features.DistributorOrders;
 
 public sealed class DistributorOrderService(IDistributorOrderRepository repository) : IDistributorOrderService
 {
+    public Task<DistributorPage<PublicCatalogLot>> PublicCatalogAsync(DistributorQuery query, CancellationToken ct)
+    { ValidateQuery(query); return repository.PublicCatalogAsync(query with { Search = query.Search?.Trim() }, ct); }
     public Task<DistributorDashboard> DashboardAsync(int accountId, CancellationToken ct) => repository.DashboardAsync(accountId, ct);
     public static readonly string[] Statuses = ["PENDING", "APPROVED", "RESERVED", "PARTIALLY_PICKED",
         "PICKED", "PREPARED", "PARTIALLY_ISSUED", "ISSUED", "DISPATCHED", "DELIVERED", "REJECTED", "CANCELLED", "RETURNED", DeliveryRefusalRules.Status, DeliveryRefusalRules.PartialStatus];

@@ -6,6 +6,8 @@ public sealed record DistributorPage<T>(IReadOnlyList<T> Items, int TotalCount, 
 public sealed record CatalogLot(long BatchId, string BatchCode, string ProductName, string CropName,
     string SupplierName, string Origin, string? QualityGrade, DateOnly HarvestDate,
     DateOnly? ExpiryDate, decimal WeightKg, decimal WholeLotPrice);
+public sealed record PublicCatalogLot(long BatchId, string BatchCode, string ProductName, string CropName,
+    string? QualityGrade, DateOnly? ExpiryDate, decimal WeightKg, decimal WholeLotPrice);
 public sealed record DistributorLotDetail(long BatchId, string BatchCode, string ProductName, string CropName,
     string CategoryName, string SupplierName, string Origin, string Province, string District, string Ward,
     string? QualityGrade, DateOnly HarvestDate, DateOnly? ExpiryDate, decimal WeightKg, decimal? WholeLotPrice,
@@ -28,6 +30,7 @@ public sealed record DistributorOrderDetail(long Id, string OrderCode, string St
 
 public interface IDistributorOrderRepository
 {
+    Task<DistributorPage<PublicCatalogLot>> PublicCatalogAsync(DistributorQuery query, CancellationToken ct);
     Task<DistributorDashboard> DashboardAsync(int accountId, CancellationToken ct);
     Task<DistributorPage<CatalogLot>> CatalogAsync(int accountId, DistributorQuery query, CancellationToken ct);
     Task<DistributorLotDetail> LotAsync(int accountId, long id, CancellationToken ct);
