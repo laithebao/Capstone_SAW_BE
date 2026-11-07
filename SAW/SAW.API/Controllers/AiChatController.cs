@@ -34,12 +34,8 @@ public sealed class AiChatController(IAiChatService service, KnowledgeBaseServic
     [HttpGet("kb-status")]
     public IActionResult GetKbStatus()
     {
-        return Ok(ApiResponse<object>.Success(new
-        {
-            isReady = kbService.IsReady,
-            chunkCount = kbService.ChunkCount,
-            indexedFiles = kbService.IndexedFiles
-        }));
+        var (isReady, chunkCount, indexedFiles) = kbService.GetStatus();
+        return Ok(ApiResponse<object>.Success(new { isReady, chunkCount, indexedFiles }));
     }
 
     /// <summary>
@@ -49,12 +45,17 @@ public sealed class AiChatController(IAiChatService service, KnowledgeBaseServic
     [HttpPost("kb-reindex")]
     public async Task<IActionResult> ReindexKb(CancellationToken ct)
     {
-        await kbService.BuildIndexAsync(ct);
+        if (!await kbService.BuildIndexAsync(ct))
+            return StatusCode(StatusCodes.Status503ServiceUnavailable, ApiResponse<object>.Failure(
+                StatusCodes.Status503ServiceUnavailable,
+                "Chưa thể tái lập chỉ mục Kho tri thức. Vui lòng thử lại sau."));
+
+        var (_, chunkCount, indexedFiles) = kbService.GetStatus();
         return Ok(ApiResponse<object>.Success(new
         {
             message = "Tái lập chỉ mục Knowledge Base thành công.",
-            chunkCount = kbService.ChunkCount,
-            indexedFiles = kbService.IndexedFiles
+            chunkCount,
+            indexedFiles
         }));
     }
 

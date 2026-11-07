@@ -11,7 +11,7 @@ public interface ISpoilageForecastService
         CancellationToken ct = default);
 
     /// <summary>
-    /// Lấy dự báo gần nhất đã lưu trong cơ sở dữ liệu (không gọi lại Gemini).
+    /// Lấy dự báo gần nhất đã lưu trong cơ sở dữ liệu (không gọi lại OpenAI).
     /// </summary>
     Task<SpoilageForecastResponse?> GetLatestForecastAsync(
         long productBatchId,

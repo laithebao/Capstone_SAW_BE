@@ -13,17 +13,17 @@ namespace SAW.Infrastructure.AiForecast;
 /// </summary>
 public sealed class ForecastInputCollector(AppDbContext db)
 {
-    public async Task<ForecastInputSnapshot?> CollectAsync(long productBatchId, CancellationToken ct)
-    {
-        // 1. Thông tin lô hàng + Loại nông sản + Vùng trồng + Nhà cung cấp
-        var batch = await db.ProductBatches
+    public Task<ProductBatch?> FindBatchAsync(long productBatchId, CancellationToken ct) =>
+        db.ProductBatches
             .AsNoTracking()
             .Include(b => b.CropType)
             .Include(b => b.GrowingArea)
             .Include(b => b.Supplier)
             .FirstOrDefaultAsync(b => b.ProductBatchId == productBatchId, ct);
 
-        if (batch == null) return null;
+    public async Task<ForecastInputSnapshot> CollectAsync(ProductBatch batch, CancellationToken ct)
+    {
+        var productBatchId = batch.ProductBatchId;
 
         // 2. Kết quả kiểm định QC gần nhất đã hoàn tất
         var qcInspection = await db.QcInspections

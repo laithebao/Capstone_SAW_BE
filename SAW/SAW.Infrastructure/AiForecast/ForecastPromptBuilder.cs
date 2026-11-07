@@ -4,7 +4,7 @@ namespace SAW.Infrastructure.AiForecast;
 
 /// <summary>
 /// Xây dựng prompt chuẩn chuyên gia phân tích chất lượng chuỗi lạnh nông sản (Cold Chain Quality Analyst)
-/// để yêu cầu Gemini dự báo độ hao hụt và đề xuất kế hoạch hành động tối ưu cho Warehouse Manager.
+/// để yêu cầu OpenAI dự báo độ hao hụt và đề xuất kế hoạch hành động tối ưu cho Warehouse Manager.
 /// </summary>
 public static class ForecastPromptBuilder
 {
@@ -163,13 +163,15 @@ public static class ForecastPromptBuilder
             Hãy trả về đúng cấu trúc JSON sau:
             {
               "spoilageRiskScore": <số thực từ 0 đến 100, ví dụ: 45.0>,
-              "predictedLossPercent": <số thực từ 0 đến 100, % hao hụt lượng/chất lượng ước tính, ví dụ: 6.5>,
-              "safeStorageRemainingDays": <số nguyên ngày lưu kho an toàn còn lại, ví dụ: 5>,
+              "predictedLossPercent": <số thực từ 0 đến 100, ví dụ: 6.5, hoặc null nếu thiếu dữ liệu>,
+              "safeStorageRemainingDays": <số nguyên ngày lưu kho an toàn còn lại, ví dụ: 5, hoặc null nếu thiếu dữ liệu>,
               "riskLevel": "<chính xác một trong các giá trị: LOW | MEDIUM | HIGH | CRITICAL>",
               "forecastHorizonDays": <số ngày trong phạm vi dự báo, ví dụ: 7>,
               "recommendation": "<Bài phân tích chi tiết từ 250 đến 400 từ, định dạng Markdown rõ ràng tập trung vào:
               ### ⚠️ Nguyên Nhân Dẫn Đến Độ Hao Hụt Cao & Giải Pháp Khắc Phục
-              (Liệt kê rõ từng nguyên nhân cốt lõi từ nhiệt độ độ ẩm chuỗi lạnh 72h qua, số ngày sau thu hoạch, chỉ số QC ban đầu... kèm theo giải pháp khắc phục trực diện cho từng nguyên nhân cụ thể)>"
+              (Liệt kê rõ từng nguyên nhân cốt lõi từ nhiệt độ độ ẩm chuỗi lạnh 72h qua, số ngày sau thu hoạch, chỉ số QC ban đầu... kèm theo giải pháp khắc phục trực diện cho từng nguyên nhân cụ thể)>",
+              "actions": <danh sách hành động khả thi, mỗi mục có priority, category, action, reason và deadline. Dùng [] nếu chưa có hành động cụ thể và null nếu không xác định được thời hạn>,
+              "analysisNotes": <ghi chú ngắn về dữ liệu còn thiếu hoặc giả định quan trọng, hoặc null nếu không có>
             }
             """);
 

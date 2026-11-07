@@ -21,9 +21,9 @@ public sealed class AiToolExecutorTests
         var kbLogger = NullLogger<KnowledgeBaseService>.Instance;
 
         // Khởi tạo dummy KnowledgeBaseService
-        var kbOptions = new GeminiOptions();
+        var kbOptions = new AiChatOptions();
         var httpFactoryMock = new Moq.Mock<IHttpClientFactory>();
-        var embedder = new GeminiEmbeddingService(httpFactoryMock.Object, kbOptions, NullLogger<GeminiEmbeddingService>.Instance);
+        var embedder = new OpenAIEmbeddingService(httpFactoryMock.Object, new OpenAIOptions { ApiKey = "test-key" }, NullLogger<OpenAIEmbeddingService>.Instance);
         var kb = new KnowledgeBaseService(embedder, Array.Empty<IDocumentLoader>(), kbOptions, kbLogger);
 
         _executor = new AiToolExecutor(db, logger, kb);
@@ -40,8 +40,7 @@ public sealed class AiToolExecutorTests
         var result = await _executor.ExecuteAsync(unknownTool, args, accountId: 1, CancellationToken.None);
 
         // Assert
-        result.Should().Contain("không được hỗ trợ");
-        result.Should().Contain(unknownTool);
+        ExtractError(result).Should().Contain("không được hỗ trợ").And.Contain(unknownTool);
     }
 
     [Fact]

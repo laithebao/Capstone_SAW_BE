@@ -65,6 +65,41 @@ public sealed class ForecastResponseParserTests
     }
 
     [Fact]
+    public void Parse_WithNullableEstimates_ShouldPreserveNulls()
+    {
+        var result = ForecastResponseParser.Parse("""
+            {
+              "spoilageRiskScore": 42.5,
+              "predictedLossPercent": null,
+              "safeStorageRemainingDays": null,
+              "riskLevel": "MEDIUM",
+              "forecastHorizonDays": 7,
+              "recommendation": "Bổ sung số liệu nhiệt độ.",
+              "actions": [
+                {"priority":"RECOMMENDED","category":"TEMPERATURE","action":"Đo lại nhiệt độ.","reason":"Thiếu dữ liệu.","deadline":null}
+              ],
+              "analysisNotes": null
+            }
+            """);
+
+        result.IsSuccess.Should().BeTrue();
+        result.Data!.PredictedLossPercent.Should().BeNull();
+        result.Data.SafeStorageRemainingDays.Should().BeNull();
+        result.Data.Actions.Should().ContainSingle().Which.Deadline.Should().BeNull();
+    }
+
+    [Theory]
+    [InlineData("{}")]
+    [InlineData("""{"spoilageRiskScore":null}""")]
+    public void Parse_WithoutRiskScore_ShouldRejectForecast(string response)
+    {
+        var result = ForecastResponseParser.Parse(response);
+
+        result.IsSuccess.Should().BeFalse();
+        result.Data.Should().BeNull();
+    }
+
+    [Fact]
     public void Parse_WithMarkdownCodeFence_ShouldStripMarkdownAndParse()
     {
         // Arrange

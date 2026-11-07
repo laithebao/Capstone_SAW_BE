@@ -4,7 +4,7 @@ namespace SAW.Infrastructure.AiChat.Rag;
 /// Một đoạn văn bản (chunk) đã được embedding từ tài liệu Knowledge Base.
 /// </summary>
 internal sealed record KnowledgeChunk(
-    /// <summary>Vector embedding của chunk (768 chiều, Gemini text-embedding-004).</summary>
+    /// <summary>Vector embedding của chunk.</summary>
     float[] Embedding,
     /// <summary>Nội dung văn bản gốc của chunk.</summary>
     string Content,

@@ -38,12 +38,13 @@ public static class ForecastResponseParser
             using var doc = JsonDocument.Parse(cleanJson);
             var root = doc.RootElement;
 
-            // 1. SpoilageRiskScore
-            decimal riskScore = 0;
-            if (root.TryGetProperty("spoilageRiskScore", out var scoreEl) && scoreEl.TryGetDecimal(out var s))
-            {
-                riskScore = Math.Clamp(s, 0m, 100m);
-            }
+            if (root.ValueKind != JsonValueKind.Object
+                || !root.TryGetProperty("spoilageRiskScore", out var scoreEl)
+                || scoreEl.ValueKind != JsonValueKind.Number
+                || !scoreEl.TryGetDecimal(out var score))
+                return ForecastParseResult.Failure("Thiếu điểm rủi ro hao hụt hợp lệ.");
+
+            var riskScore = Math.Clamp(score, 0m, 100m);
 
             // 2. RiskLevel
             var riskLevel = "MEDIUM";
@@ -66,21 +67,21 @@ public static class ForecastResponseParser
 
             // 3. PredictedLossPercent
             decimal? lossPercent = null;
-            if (root.TryGetProperty("predictedLossPercent", out var lossEl) && lossEl.TryGetDecimal(out var lp))
+            if (root.TryGetProperty("predictedLossPercent", out var lossEl) && lossEl.ValueKind == JsonValueKind.Number && lossEl.TryGetDecimal(out var lp))
             {
                 lossPercent = Math.Clamp(lp, 0m, 100m);
             }
 
             // 4. SafeStorageRemainingDays
             int? safeDays = null;
-            if (root.TryGetProperty("safeStorageRemainingDays", out var daysEl) && daysEl.TryGetInt32(out var sd))
+            if (root.TryGetProperty("safeStorageRemainingDays", out var daysEl) && daysEl.ValueKind == JsonValueKind.Number && daysEl.TryGetInt32(out var sd))
             {
                 safeDays = Math.Max(0, sd);
             }
 
             // 5. ForecastHorizonDays
             int? horizonDays = 7;
-            if (root.TryGetProperty("forecastHorizonDays", out var hEl) && hEl.TryGetInt32(out var hd))
+            if (root.TryGetProperty("forecastHorizonDays", out var hEl) && hEl.ValueKind == JsonValueKind.Number && hEl.TryGetInt32(out var hd))
             {
                 horizonDays = Math.Max(1, hd);
             }

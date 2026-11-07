@@ -3,17 +3,15 @@ using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Logging;
 using SAW.Application.Features.SpoilageForecast;
 using SAW.Domain.Entities;
-using SAW.Infrastructure.AiChat;
 using SAW.Infrastructure.Persistence;
 
 namespace SAW.Infrastructure.AiForecast;
 
-public sealed class SpoilageForecastGeminiService(
+public sealed class SpoilageForecastService(
     AppDbContext db,
-    GeminiApiClient geminiClient,
+    IForecastModelClient forecastClient,
     ForecastInputCollector inputCollector,
-    GeminiOptions options,
-    ILogger<SpoilageForecastGeminiService> logger) : ISpoilageForecastService
+    ILogger<SpoilageForecastService> logger) : ISpoilageForecastService
 {
     private static readonly TimeSpan CacheValidityDuration = TimeSpan.FromHours(6);
 
@@ -22,37 +20,15 @@ public sealed class SpoilageForecastGeminiService(
         SpoilageForecastRequest request,
         CancellationToken ct = default)
     {
-        // 1. Kiểm tra cache nếu không yêu cầu làm mới bắt buộc
-        if (!request.ForceRefresh)
-        {
-            var cached = await db.AiRiskForecasts
-                .AsNoTracking()
-                .Include(f => f.ProductBatch)
-                    .ThenInclude(b => b.CropType)
-                .Where(f => f.ProductBatchId == request.ProductBatchId)
-                .OrderByDescending(f => f.GeneratedAt)
-                .FirstOrDefaultAsync(ct);
-
-            if (cached != null && DateTime.UtcNow - cached.GeneratedAt < CacheValidityDuration)
-            {
-                logger.LogInformation(
-                    "[AI-Forecast] Trả về kết quả dự báo từ Cache cho Lô hàng ID {BatchId} (đã tạo cách đây {Minutes:F0} phút)",
-                    request.ProductBatchId, (DateTime.UtcNow - cached.GeneratedAt).TotalMinutes);
-
-                return MapEntityToResponse(cached, isFromCache: true);
-            }
-        }
-
-        // 2. Thu thập dữ liệu đa chiều từ Database
-        var snapshot = await inputCollector.CollectAsync(request.ProductBatchId, ct);
-        if (snapshot == null)
+        var batch = await inputCollector.FindBatchAsync(request.ProductBatchId, ct);
+        if (batch is null)
         {
             logger.LogWarning("[AI-Forecast] Không tìm thấy lô hàng với ID {BatchId}", request.ProductBatchId);
             return CreateErrorResponse(request.ProductBatchId, "Không tìm thấy thông tin lô hàng trên hệ thống.");
         }
 
         // ── Kiểm tra điều kiện nghiệp vụ: Chỉ dự báo cho các lô ĐÃ NHẬP KHO và CHƯA XUẤT KHO ──
-        var status = snapshot.Batch.BatchStatus?.Trim().ToUpperInvariant() ?? "";
+        var status = batch.BatchStatus?.Trim().ToUpperInvariant() ?? "";
 
         var preStorageStatuses = new HashSet<string>(StringComparer.OrdinalIgnoreCase)
         {
@@ -72,60 +48,84 @@ public sealed class SpoilageForecastGeminiService(
 
         if (preStorageStatuses.Contains(status))
         {
-            logger.LogInformation("[AI-Forecast] Từ chối dự báo lô {BatchCode} vì chưa nhập kho (Status: {Status})", snapshot.Batch.BatchCode, status);
+            logger.LogInformation("[AI-Forecast] Từ chối dự báo lô {BatchCode} vì chưa nhập kho (Status: {Status})", batch.BatchCode, status);
             return CreateErrorResponse(
                 request.ProductBatchId,
-                $"Lô hàng '{snapshot.Batch.BatchCode}' chưa hoàn tất nhập kho (Trạng thái: {status}). Chức năng dự báo rủi ro hao hụt AI chỉ áp dụng cho các lô hàng đã kiểm định và nhập kho bảo quản thành công.",
-                snapshot);
+                $"Lô hàng '{batch.BatchCode}' chưa hoàn tất nhập kho (Trạng thái: {status}). Chức năng dự báo rủi ro hao hụt AI chỉ áp dụng cho các lô hàng đã kiểm định và nhập kho bảo quản thành công.",
+                batch);
         }
 
         if (postStorageStatuses.Contains(status))
         {
-            logger.LogInformation("[AI-Forecast] Từ chối dự báo lô {BatchCode} vì đã xuất kho/hủy (Status: {Status})", snapshot.Batch.BatchCode, status);
+            logger.LogInformation("[AI-Forecast] Từ chối dự báo lô {BatchCode} vì đã xuất kho/hủy (Status: {Status})", batch.BatchCode, status);
             return CreateErrorResponse(
                 request.ProductBatchId,
-                $"Lô hàng '{snapshot.Batch.BatchCode}' đã xuất kho hoặc kết thúc lưu trữ (Trạng thái: {status}). Không còn tồn kho để thực hiện dự báo hao hụt.",
-                snapshot);
+                $"Lô hàng '{batch.BatchCode}' đã xuất kho hoặc kết thúc lưu trữ (Trạng thái: {status}). Không còn tồn kho để thực hiện dự báo hao hụt.",
+                batch);
         }
 
         if (!validInWarehouseStatuses.Contains(status))
         {
             return CreateErrorResponse(
                 request.ProductBatchId,
-                $"Lô hàng '{snapshot.Batch.BatchCode}' không ở trạng thái lưu kho hợp lệ để dự báo hao hụt (Trạng thái: {status}).",
-                snapshot);
+                $"Lô hàng '{batch.BatchCode}' không ở trạng thái lưu kho hợp lệ để dự báo hao hụt (Trạng thái: {status}).",
+                batch);
         }
+
+        // 1. Kiểm tra cache nếu không yêu cầu làm mới bắt buộc
+        if (!request.ForceRefresh)
+        {
+            var cached = await db.AiRiskForecasts
+                .AsNoTracking()
+                .Where(f => f.ProductBatchId == request.ProductBatchId)
+                .OrderByDescending(f => f.GeneratedAt)
+                .FirstOrDefaultAsync(ct);
+
+            if (cached != null && DateTime.UtcNow - cached.GeneratedAt < CacheValidityDuration)
+            {
+                logger.LogInformation(
+                    "[AI-Forecast] Trả về kết quả dự báo từ Cache cho Lô hàng ID {BatchId} (đã tạo cách đây {Minutes:F0} phút)",
+                    request.ProductBatchId, (DateTime.UtcNow - cached.GeneratedAt).TotalMinutes);
+
+                return MapEntityToResponse(cached, isFromCache: true, batch);
+            }
+        }
+
+        var snapshot = await inputCollector.CollectAsync(batch, ct);
 
         // 3. Xây dựng prompt chuyên môn
         var systemPrompt = ForecastPromptBuilder.BuildSystemPrompt();
         var userPrompt = ForecastPromptBuilder.BuildUserPrompt(snapshot);
 
-        // 4. Gọi Gemini API để sinh kết quả JSON có cấu trúc
+        // 4. Sinh kết quả dự báo có cấu trúc.
         string rawJson;
+        string model;
         try
         {
-            logger.LogInformation("[AI-Forecast] Bắt đầu gọi Gemini ({Model}) dự báo hao hụt cho lô {BatchCode}",
-                options.Model, snapshot.Batch.BatchCode);
-
-            rawJson = await geminiClient.GenerateStructuredJsonAsync(systemPrompt, userPrompt, ct);
+            (rawJson, model) = await forecastClient.GenerateAsync(systemPrompt, userPrompt, ct);
         }
-        catch (TaskCanceledException)
+        catch (OperationCanceledException) when (!ct.IsCancellationRequested)
         {
-            logger.LogWarning("[AI-Forecast] Hết thời gian chờ phản hồi từ Gemini API cho lô {BatchCode}", snapshot.Batch.BatchCode);
-            return CreateErrorResponse(request.ProductBatchId, "Hết thời gian chờ phản hồi từ Gemini AI. Vui lòng thử lại sau.", snapshot);
+            logger.LogWarning("[AI-Forecast] Hết thời gian chờ phản hồi từ OpenAI.");
+            return CreateErrorResponse(request.ProductBatchId, "Hết thời gian chờ dự báo AI. Vui lòng thử lại sau.", batch);
         }
-        catch (Exception ex)
+        catch (HttpRequestException)
         {
-            logger.LogError(ex, "[AI-Forecast] Lỗi khi kết nối hoặc xử lý với Gemini API cho lô {BatchCode}", snapshot.Batch.BatchCode);
-            return CreateErrorResponse(request.ProductBatchId, $"Lỗi kết nối Gemini AI: {ex.Message}", snapshot);
+            logger.LogWarning("[AI-Forecast] Không thể lấy dự báo từ OpenAI.");
+            return CreateErrorResponse(request.ProductBatchId, "Dịch vụ dự báo AI tạm thời gián đoạn. Vui lòng thử lại sau.", batch);
+        }
+        catch (JsonException)
+        {
+            logger.LogWarning("[AI-Forecast] OpenAI không trả về kết quả dự báo hoàn chỉnh.");
+            return CreateErrorResponse(request.ProductBatchId, "AI chưa tạo được dự báo. Vui lòng thử lại.", batch);
         }
 
-        // 5. Phân tích kết quả trả về từ AI
+        // 5. Kiểm tra và chuẩn hóa kết quả trước khi lưu.
         var parseResult = ForecastResponseParser.Parse(rawJson);
         if (!parseResult.IsSuccess || parseResult.Data == null)
         {
-            logger.LogError("[AI-Forecast] Phân tích cú pháp JSON thất bại: {Error}. Raw: {Raw}", parseResult.ErrorMessage, rawJson);
-            return CreateErrorResponse(request.ProductBatchId, "AI trả về dữ liệu không đúng định dạng. Vui lòng thử lại.", snapshot);
+            logger.LogWarning("[AI-Forecast] Kết quả dự báo không đúng định dạng.");
+            return CreateErrorResponse(request.ProductBatchId, "AI trả về dữ liệu không đúng định dạng. Vui lòng thử lại.", batch);
         }
 
         var parsed = parseResult.Data;
@@ -168,7 +168,7 @@ public sealed class SpoilageForecastGeminiService(
             RiskLevel = parsed.RiskLevel,
             ForecastHorizonDays = parsed.ForecastHorizonDays,
             Recommendation = truncatedRecommendation,
-            ModelVersion = options.Model,
+            ModelVersion = model,
             InputSnapshotJson = snapshotJson,
             GeneratedAt = DateTime.UtcNow
         };
@@ -196,7 +196,7 @@ public sealed class SpoilageForecastGeminiService(
             AnalysisNotes: parsed.AnalysisNotes,
             GeneratedAt: ToVietnamTime(entity.GeneratedAt),
             IsFromCache: false,
-            ModelVersion: entity.ModelVersion ?? options.Model
+            ModelVersion: model
         );
     }
 
@@ -261,7 +261,8 @@ public sealed class SpoilageForecastGeminiService(
         return entities.Select(e => MapEntityToResponse(e, isFromCache: true)).ToList();
     }
 
-    private static SpoilageForecastResponse MapEntityToResponse(AiRiskForecast entity, bool isFromCache)
+    private static SpoilageForecastResponse MapEntityToResponse(
+        AiRiskForecast entity, bool isFromCache, ProductBatch? batch = null)
     {
         var actions = new List<ForecastActionItem>();
         string? notes = null;
@@ -311,12 +312,13 @@ public sealed class SpoilageForecastGeminiService(
             }
         }
 
+        batch ??= entity.ProductBatch;
         return new SpoilageForecastResponse(
             ProductBatchId: entity.ProductBatchId,
-            BatchCode: entity.ProductBatch?.BatchCode ?? "",
-            ProductName: entity.ProductBatch?.ProductName ?? "",
-            CropName: entity.ProductBatch?.CropType?.CropName ?? "N/A",
-            QualityGrade: entity.ProductBatch?.QualityGrade,
+            BatchCode: batch?.BatchCode ?? "",
+            ProductName: batch?.ProductName ?? "",
+            CropName: batch?.CropType?.CropName ?? "N/A",
+            QualityGrade: batch?.QualityGrade,
             SpoilageRiskScore: entity.SpoilageRiskScore,
             PredictedLossPercent: entity.PredictedLossPercent,
             SafeStorageRemainingDays: entity.SafeStorageRemainingDays,
@@ -334,14 +336,14 @@ public sealed class SpoilageForecastGeminiService(
     private static SpoilageForecastResponse CreateErrorResponse(
         long batchId,
         string message,
-        ForecastInputSnapshot? snapshot = null)
+        ProductBatch? batch = null)
     {
         return new SpoilageForecastResponse(
             ProductBatchId: batchId,
-            BatchCode: snapshot?.Batch.BatchCode ?? "",
-            ProductName: snapshot?.Batch.ProductName ?? "",
-            CropName: snapshot?.Batch.CropType?.CropName ?? "",
-            QualityGrade: snapshot?.Batch.QualityGrade,
+            BatchCode: batch?.BatchCode ?? "",
+            ProductName: batch?.ProductName ?? "",
+            CropName: batch?.CropType?.CropName ?? "",
+            QualityGrade: batch?.QualityGrade,
             SpoilageRiskScore: 0,
             PredictedLossPercent: null,
             SafeStorageRemainingDays: null,

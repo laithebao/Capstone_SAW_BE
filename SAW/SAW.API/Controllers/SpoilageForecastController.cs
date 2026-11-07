@@ -13,7 +13,7 @@ public sealed class SpoilageForecastController(ISpoilageForecastService forecast
 {
     /// <summary>
     /// POST api/warehouse/spoilage-forecast
-    /// Tạo mới hoặc lấy cache phân tích dự báo hao hụt bằng Gemini AI cho một lô hàng.
+    /// Tạo mới hoặc lấy cache phân tích dự báo hao hụt bằng OpenAI cho một lô hàng.
     /// </summary>
     [HttpPost]
     public async Task<IActionResult> GenerateForecast([FromBody] SpoilageForecastRequest request, CancellationToken ct)
