@@ -1,0 +1,128 @@
+using Microsoft.EntityFrameworkCore;
+using Microsoft.Extensions.Configuration;
+using Microsoft.Extensions.DependencyInjection;
+using SAW.Infrastructure.AiChat.Rag;
+using SAW.Infrastructure.AiChat.Rag.Loaders;
+using SAW.Infrastructure.Persistence;
+using SAW.Application.Features.Authentication.Commands;
+using SAW.Application.Repositories;
+using SAW.Infrastructure.Authentication;
+using SAW.Infrastructure.Repositories;
+using SAW.Application.Features.CropTypes;
+using SAW.Application.Features.UserAccess;
+using SAW.Application.Features.AdminDashboard;
+using SAW.Application.Features.InspectionStandards;
+using SAW.Application.Features.AuditLogs;
+using SAW.Application.Repositories.Suppliers;
+using SAW.Infrastructure.Repositories.Suppliers;
+using SAW.Application.Features.QrCodes;
+using SAW.Application.Features.QrCodes.Interfaces;
+using SAW.Application.Features.WarehouseInventory;
+using SAW.Infrastructure.QrCodes;
+using SAW.Application.Features.SupplyContracts;
+using SAW.Infrastructure.Notifications;
+using SAW.Infrastructure.AiChat;
+using SAW.Application.Features.AiChat;
+
+namespace SAW.Infrastructure.Extensions;
+
+public static class ServiceCollectionExtensions
+{
+    public static IServiceCollection AddInfrastructure(
+        this IServiceCollection services,
+        IConfiguration configuration)
+    {
+        services.AddHttpContextAccessor();
+        services.AddDbContext<AppDbContext>(options =>
+            options.UseSqlServer(
+                configuration.GetConnectionString("DefaultConnection"),
+                sql =>
+                {
+                    sql.MigrationsHistoryTable("__EFMigrationsHistory");
+                    sql.CommandTimeout(60);
+                    sql.EnableRetryOnFailure(
+                        maxRetryCount: 3,
+                        maxRetryDelay: TimeSpan.FromSeconds(10),
+                        errorNumbersToAdd: null);
+                }
+            ));
+
+        services.AddScoped<IAuthRepository, AuthRepository>();
+        services.AddScoped<ICropTypeRepository, CropTypeRepository>();
+        services.AddScoped<IUserAccessRepository, UserAccessRepository>();
+        services.AddScoped<IAdminDashboardRepository, AdminDashboardRepository>();
+        services.AddScoped<IInspectionStandardRepository, InspectionStandardRepository>();
+        services.AddScoped<IAuditLogRepository, AuditLogRepository>();
+        services.AddSingleton<IPasswordHasher, BcryptPasswordHasher>();
+        services.AddSingleton<ITokenService, JwtTokenService>();
+        var emailDeliveryMode = configuration["Email:DeliveryMode"];
+        if (string.Equals(emailDeliveryMode, "Log", StringComparison.OrdinalIgnoreCase))
+            services.AddSingleton<IEmailSender, LogEmailSender>();
+        else
+            services.AddSingleton<IEmailSender, SmtpEmailSender>();
+        services.AddSingleton<IGoogleIdentityService, GoogleIdentityService>();
+
+        services.AddScoped<ISupplierRepository, SupplierRepository>();
+        services.AddScoped<IProductBatchRepository, ProductBatchRepository>();
+        services.AddScoped<IProductBatchQueryRepository, ProductBatchQueryRepository>();
+        services.AddScoped<IGoodsReceiptQueryRepository, GoodsReceiptQueryRepository>();
+        services.AddScoped<IGoodsReceiptRepository, GoodsReceiptRepository>();
+        services.AddScoped<SAW.Application.Features.DistributorOrders.IDistributorOrderRepository, DistributorOrderRepository>();
+        services.AddScoped<IWarehouseInventoryRepository, WarehouseInventoryRepository>();
+        services.AddScoped<SAW.Application.Features.Picking.IPickingRepository, PickingRepository>();
+        services.AddScoped<SAW.Application.Features.GoodsIssues.IGoodsIssueRepository, GoodsIssueRepository>();
+        services.AddScoped<SAW.Application.Features.StockAdjustments.IStockAdjustmentRepository, StockAdjustmentRepository>();
+        services.AddScoped<SAW.Application.Features.StockAdjustments.IStockAdjustmentResolutionRepository>(sp => (StockAdjustmentRepository)sp.GetRequiredService<SAW.Application.Features.StockAdjustments.IStockAdjustmentRepository>());
+        services.AddScoped<SAW.Application.Features.Picking.IOrderReservationAllocator, OrderReservationAllocator>();
+        services.AddScoped<IProductBatchVerificationRepository, ProductBatchVerificationRepository>();
+        services.AddScoped<IQcInspectionRepository, QcInspectionRepository>();
+        services.AddScoped<IQrCodeRepository, QrCodeRepository>();
+        services.AddScoped<ITraceabilityRepository, TraceabilityRepository>();
+        services.AddScoped<ISupplyContractRepository, SupplyContractRepository>();
+        services.AddSingleton(configuration.GetSection("QrCode").Get<QrCodeOptions>() ?? new QrCodeOptions());
+        services.AddSingleton(configuration.GetSection("Cloudinary").Get<CloudinaryOptions>() ?? new CloudinaryOptions());
+        services.AddSingleton<IQrCodeRenderer, PngQrCodeRenderer>();
+        services.AddHttpClient<IQrImageStorage, CloudinaryQrImageStorage>(client => client.Timeout = TimeSpan.FromSeconds(30));
+        services.AddHostedService<QrCodeGenerationWorker>();
+        services.AddHostedService<SupplyContractDeliveryReminderWorker>();
+
+        // ── AI Chat (Gemini) ───────────────────────────────────────────────
+        var geminiOptions = configuration.GetSection("GeminiAI").Get<GeminiOptions>() ?? new GeminiOptions();
+        services.AddSingleton(geminiOptions);
+
+        // Chat API client (HttpClient typed)
+        services.AddHttpClient<GeminiApiClient>(client =>
+        {
+            // 120s: đủ cho Gemini Flash cả khi mạng chậm hoặc tải cao
+            client.Timeout = TimeSpan.FromSeconds(120);
+        });
+
+        // Embedding API client (named, dùng bởi GeminiEmbeddingService — Singleton)
+        services.AddHttpClient(GeminiEmbeddingService.HttpClientName, client =>
+        {
+            client.Timeout = TimeSpan.FromSeconds(30);
+        });
+
+        // Document loaders — mỗi loader hỗ trợ một định dạng file
+        services.AddSingleton<IDocumentLoader, MarkdownTextLoader>();
+        services.AddSingleton<IDocumentLoader, PlainTextLoader>();
+        services.AddSingleton<IDocumentLoader, PdfDocumentLoader>();
+        services.AddSingleton<IDocumentLoader, WordDocumentLoader>();
+
+        // RAG core services
+        services.AddSingleton<GeminiEmbeddingService>();
+        services.AddSingleton<KnowledgeBaseService>();
+
+        // Background service: xây dựng vector index sau khi server khởi động
+        services.AddHostedService<KnowledgeBaseIndexingService>();
+
+        services.AddScoped<AiToolExecutor>();
+        services.AddScoped<IAiChatService, AiChatService>();
+
+        // ── AI Spoilage Forecast ───────────────────────────────────────────
+        services.AddScoped<SAW.Infrastructure.AiForecast.ForecastInputCollector>();
+        services.AddScoped<SAW.Application.Features.SpoilageForecast.ISpoilageForecastService, SAW.Infrastructure.AiForecast.SpoilageForecastGeminiService>();
+
+        return services;
+    }
+}
