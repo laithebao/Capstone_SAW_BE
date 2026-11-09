@@ -3,12 +3,12 @@ namespace SAW.Application.Features.SpoilageForecast;
 public interface ISpoilageForecastService
 {
     /// <summary>
-    /// Tạo hoặc lấy dự báo hao hụt nông sản mới nhất cho một lô hàng.
+    /// Tạo dự báo mới cho tất cả lô hàng đang lưu kho còn tồn.
     /// </summary>
-    Task<SpoilageForecastResponse> GenerateForecastAsync(
-        int requestedByAccountId,
-        SpoilageForecastRequest request,
+    Task<(IReadOnlyList<SpoilageForecastResponse> Forecasts, string? ErrorMessage)> GenerateForecastsAsync(
         CancellationToken ct = default);
+
+    Task<IReadOnlyList<SpoilageForecastResponse>> GetLatestForecastsAsync(CancellationToken ct = default);
 
     /// <summary>
     /// Lấy dự báo gần nhất đã lưu trong cơ sở dữ liệu (không gọi lại OpenAI).

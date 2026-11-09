@@ -13,13 +13,21 @@ namespace SAW.Infrastructure.AiForecast;
 /// </summary>
 public sealed class ForecastInputCollector(AppDbContext db)
 {
-    public Task<ProductBatch?> FindBatchAsync(long productBatchId, CancellationToken ct) =>
+    private static readonly string[] StorageStatuses =
+        ["APPROVED_FOR_STORAGE", "RECEIVED", "IN_STOCK", "RESERVED", "PARTIALLY_ISSUED", "STORED", "APPROVED"];
+
+    internal IQueryable<ProductBatch> EligibleBatches =>
         db.ProductBatches
             .AsNoTracking()
+            .Where(b => StorageStatuses.Contains(b.BatchStatus) && b.Inventories.Any(i => i.QuantityOnHand > 0));
+
+    public Task<List<ProductBatch>> ListEligibleBatchesAsync(CancellationToken ct) =>
+        EligibleBatches
             .Include(b => b.CropType)
             .Include(b => b.GrowingArea)
             .Include(b => b.Supplier)
-            .FirstOrDefaultAsync(b => b.ProductBatchId == productBatchId, ct);
+            .OrderBy(b => b.ProductBatchId)
+            .ToListAsync(ct);
 
     public async Task<ForecastInputSnapshot> CollectAsync(ProductBatch batch, CancellationToken ct)
     {
@@ -34,6 +42,7 @@ public sealed class ForecastInputCollector(AppDbContext db)
                 .ThenInclude(d => d.InspectionCriterion)
             .Where(q => q.ProductBatchId == productBatchId && q.InspectionStatus == "COMPLETED")
             .OrderByDescending(q => q.CompletedAt ?? q.StartedAt)
+            .ThenByDescending(q => q.QcInspectionId)
             .FirstOrDefaultAsync(ct);
 
         // 3. Nhật ký môi trường trong 72 giờ qua
@@ -47,14 +56,16 @@ public sealed class ForecastInputCollector(AppDbContext db)
             .ToListAsync(ct);
 
         // 4. Vị trí kho hiện tại của lô hàng
-        var inventory = await db.Inventories
+        var inventories = await db.Inventories
             .AsNoTracking()
             .Include(i => i.WarehouseLocation)
             .Where(i => i.ProductBatchId == productBatchId && i.QuantityOnHand > 0)
-            .FirstOrDefaultAsync(ct);
+            .OrderByDescending(i => i.QuantityOnHand)
+            .ThenBy(i => i.InventoryId)
+            .ToListAsync(ct);
 
         // 5. Tính toán các chỉ số thời gian
-        var today = DateOnly.FromDateTime(DateTime.UtcNow);
+        var today = DateOnly.FromDateTime(DateTime.UtcNow.AddHours(7));
         var daysFromHarvest = Math.Max(0, today.DayNumber - batch.HarvestDate.DayNumber);
         
         int? daysUntilExpiry = batch.ExpiryDate.HasValue
@@ -98,10 +109,11 @@ public sealed class ForecastInputCollector(AppDbContext db)
             QcInspection: qcInspection,
             EnvStats: envStats,
             RecentEnvLogs: envLogs.Take(10).ToList(),
-            CurrentLocation: inventory?.WarehouseLocation,
+            CurrentLocation: inventories.FirstOrDefault()?.WarehouseLocation,
             DaysFromHarvest: daysFromHarvest,
             DaysUntilExpiry: daysUntilExpiry,
-            ShelfLifeConsumedPct: shelfLifeConsumedPct
+            ShelfLifeConsumedPct: shelfLifeConsumedPct,
+            QuantityOnHandKg: inventories.Sum(i => i.QuantityOnHand)
         );
     }
 }

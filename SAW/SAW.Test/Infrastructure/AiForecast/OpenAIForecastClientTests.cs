@@ -15,7 +15,7 @@ public sealed class OpenAIForecastClientTests
     [Fact]
     public async Task GenerateAsync_RequestsStrictSchemaAndReturnsForecastJsonAndModel()
     {
-        const string forecast = """{"spoilageRiskScore":65,"riskLevel":"HIGH","recommendation":"Kiểm tra nhiệt độ."}""";
+        const string forecast = """{"forecasts":[{"productBatchId":1,"riskLevel":"HIGH","recommendation":"Kiểm tra nhiệt độ."}]}""";
         using var http = CreateHttpClient(request =>
         {
             request.RequestUri.Should().Be(new Uri("https://api.openai.com/v1/responses"));
@@ -33,9 +33,12 @@ public sealed class OpenAIForecastClientTests
             format["strict"]!.GetValue<bool>().Should().BeTrue();
             var schema = format["schema"]!;
             schema["additionalProperties"]!.GetValue<bool>().Should().BeFalse();
-            schema["required"]!.AsArray().Select(node => node!.GetValue<string>())
-                .Should().Contain(["spoilageRiskScore", "recommendation", "actions"]);
-            schema["properties"]!["actions"]!["items"]!["additionalProperties"]!.GetValue<bool>().Should().BeFalse();
+            schema["required"]!.AsArray().Select(node => node!.GetValue<string>()).Should().Equal("forecasts");
+            var forecastSchema = schema["properties"]!["forecasts"]!["items"]!;
+            forecastSchema["required"]!.AsArray().Select(node => node!.GetValue<string>())
+                .Should().Contain(["productBatchId", "recommendation", "actions"]);
+            forecastSchema["properties"]!["spoilageRiskScore"].Should().BeNull();
+            forecastSchema["properties"]!["actions"]!["items"]!["additionalProperties"]!.GetValue<bool>().Should().BeFalse();
 
             return $$"""
                 {"status":"completed","model":"gpt-6-luna-snapshot","output":[

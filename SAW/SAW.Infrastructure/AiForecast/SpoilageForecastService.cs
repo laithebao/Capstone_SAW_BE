@@ -13,136 +13,82 @@ public sealed class SpoilageForecastService(
     ForecastInputCollector inputCollector,
     ILogger<SpoilageForecastService> logger) : ISpoilageForecastService
 {
-    private static readonly TimeSpan CacheValidityDuration = TimeSpan.FromHours(6);
+    // Bound each structured response while covering all eligible batches in one run.
+    private const int BatchesPerModelRequest = 6;
 
-    public async Task<SpoilageForecastResponse> GenerateForecastAsync(
-        int requestedByAccountId,
-        SpoilageForecastRequest request,
+    public async Task<(IReadOnlyList<SpoilageForecastResponse> Forecasts, string? ErrorMessage)> GenerateForecastsAsync(
         CancellationToken ct = default)
     {
-        var batch = await inputCollector.FindBatchAsync(request.ProductBatchId, ct);
-        if (batch is null)
-        {
-            logger.LogWarning("[AI-Forecast] Không tìm thấy lô hàng với ID {BatchId}", request.ProductBatchId);
-            return CreateErrorResponse(request.ProductBatchId, "Không tìm thấy thông tin lô hàng trên hệ thống.");
-        }
-
-        // ── Kiểm tra điều kiện nghiệp vụ: Chỉ dự báo cho các lô ĐÃ NHẬP KHO và CHƯA XUẤT KHO ──
-        var status = batch.BatchStatus?.Trim().ToUpperInvariant() ?? "";
-
-        var preStorageStatuses = new HashSet<string>(StringComparer.OrdinalIgnoreCase)
-        {
-            "PENDING_PREDECLARATION", "SUBMITTED", "PENDING_APPROVAL", "PENDING_QC",
-            "RECEIVING", "IN_QC", "REJECTED", "QC_FAILED", "QUARANTINE"
-        };
-
-        var postStorageStatuses = new HashSet<string>(StringComparer.OrdinalIgnoreCase)
-        {
-            "ISSUED", "RELEASED", "SOLD_OUT", "DISPOSED", "CANCELLED", "CANCELED"
-        };
-
-        var validInWarehouseStatuses = new HashSet<string>(StringComparer.OrdinalIgnoreCase)
-        {
-            "APPROVED_FOR_STORAGE", "RECEIVED", "IN_STOCK", "RESERVED", "PARTIALLY_ISSUED", "STORED", "APPROVED"
-        };
-
-        if (preStorageStatuses.Contains(status))
-        {
-            logger.LogInformation("[AI-Forecast] Từ chối dự báo lô {BatchCode} vì chưa nhập kho (Status: {Status})", batch.BatchCode, status);
-            return CreateErrorResponse(
-                request.ProductBatchId,
-                $"Lô hàng '{batch.BatchCode}' chưa hoàn tất nhập kho (Trạng thái: {status}). Chức năng dự báo rủi ro hao hụt AI chỉ áp dụng cho các lô hàng đã kiểm định và nhập kho bảo quản thành công.",
-                batch);
-        }
-
-        if (postStorageStatuses.Contains(status))
-        {
-            logger.LogInformation("[AI-Forecast] Từ chối dự báo lô {BatchCode} vì đã xuất kho/hủy (Status: {Status})", batch.BatchCode, status);
-            return CreateErrorResponse(
-                request.ProductBatchId,
-                $"Lô hàng '{batch.BatchCode}' đã xuất kho hoặc kết thúc lưu trữ (Trạng thái: {status}). Không còn tồn kho để thực hiện dự báo hao hụt.",
-                batch);
-        }
-
-        if (!validInWarehouseStatuses.Contains(status))
-        {
-            return CreateErrorResponse(
-                request.ProductBatchId,
-                $"Lô hàng '{batch.BatchCode}' không ở trạng thái lưu kho hợp lệ để dự báo hao hụt (Trạng thái: {status}).",
-                batch);
-        }
-
-        // 1. Kiểm tra cache nếu không yêu cầu làm mới bắt buộc
-        if (!request.ForceRefresh)
-        {
-            var cached = await db.AiRiskForecasts
-                .AsNoTracking()
-                .Where(f => f.ProductBatchId == request.ProductBatchId)
-                .OrderByDescending(f => f.GeneratedAt)
-                .FirstOrDefaultAsync(ct);
-
-            if (cached != null && DateTime.UtcNow - cached.GeneratedAt < CacheValidityDuration)
-            {
-                logger.LogInformation(
-                    "[AI-Forecast] Trả về kết quả dự báo từ Cache cho Lô hàng ID {BatchId} (đã tạo cách đây {Minutes:F0} phút)",
-                    request.ProductBatchId, (DateTime.UtcNow - cached.GeneratedAt).TotalMinutes);
-
-                return MapEntityToResponse(cached, isFromCache: true, batch);
-            }
-        }
-
-        var snapshot = await inputCollector.CollectAsync(batch, ct);
-
-        // 3. Xây dựng prompt chuyên môn
+        var generatedAt = DateTime.UtcNow;
+        var batches = await inputCollector.ListEligibleBatchesAsync(ct);
+        var generated = new List<(AiRiskForecast Entity, ProductBatch Batch)>(batches.Count);
         var systemPrompt = ForecastPromptBuilder.BuildSystemPrompt();
-        var userPrompt = ForecastPromptBuilder.BuildUserPrompt(snapshot);
 
-        // 4. Sinh kết quả dự báo có cấu trúc.
-        string rawJson;
-        string model;
         try
         {
-            (rawJson, model) = await forecastClient.GenerateAsync(systemPrompt, userPrompt, ct);
+            foreach (var group in batches.Chunk(BatchesPerModelRequest))
+            {
+                var snapshots = new List<ForecastInputSnapshot>(group.Length);
+                foreach (var batch in group)
+                {
+                    snapshots.Add(await inputCollector.CollectAsync(batch, ct));
+                }
+
+                var userPrompt = ForecastPromptBuilder.BuildUserPrompt(snapshots);
+                var (json, model) = await forecastClient.GenerateAsync(systemPrompt, userPrompt, ct);
+                var result = ForecastResponseParser.Parse(json, group.Select(b => b.ProductBatchId));
+                if (result.Data is null)
+                {
+                    logger.LogWarning("[AI-Forecast] Kết quả dự báo không hợp lệ: {Reason}", result.ErrorMessage);
+                    return ([], "AI trả về dự báo thiếu hoặc không hợp lệ. Vui lòng thử lại.");
+                }
+
+                foreach (var snapshot in snapshots)
+                {
+                    var batchId = snapshot.Batch.ProductBatchId;
+                    var entity = CreateEntity(snapshot, result.Data[batchId], model, generatedAt);
+                    generated.Add((entity, snapshot.Batch));
+                }
+            }
         }
         catch (OperationCanceledException) when (!ct.IsCancellationRequested)
         {
             logger.LogWarning("[AI-Forecast] Hết thời gian chờ phản hồi từ OpenAI.");
-            return CreateErrorResponse(request.ProductBatchId, "Hết thời gian chờ dự báo AI. Vui lòng thử lại sau.", batch);
+            return ([], "Hết thời gian chờ dự báo AI. Vui lòng thử lại sau.");
         }
         catch (HttpRequestException)
         {
             logger.LogWarning("[AI-Forecast] Không thể lấy dự báo từ OpenAI.");
-            return CreateErrorResponse(request.ProductBatchId, "Dịch vụ dự báo AI tạm thời gián đoạn. Vui lòng thử lại sau.", batch);
+            return ([], "Dịch vụ dự báo AI tạm thời gián đoạn. Vui lòng thử lại sau.");
         }
         catch (JsonException)
         {
             logger.LogWarning("[AI-Forecast] OpenAI không trả về kết quả dự báo hoàn chỉnh.");
-            return CreateErrorResponse(request.ProductBatchId, "AI chưa tạo được dự báo. Vui lòng thử lại.", batch);
+            return ([], "AI chưa tạo được dự báo. Vui lòng thử lại.");
         }
 
-        // 5. Kiểm tra và chuẩn hóa kết quả trước khi lưu.
-        var parseResult = ForecastResponseParser.Parse(rawJson);
-        if (!parseResult.IsSuccess || parseResult.Data == null)
-        {
-            logger.LogWarning("[AI-Forecast] Kết quả dự báo không đúng định dạng.");
-            return CreateErrorResponse(request.ProductBatchId, "AI trả về dữ liệu không đúng định dạng. Vui lòng thử lại.", batch);
-        }
+        if (generated.Count == 0)
+            return ([], null);
 
-        var parsed = parseResult.Data;
+        db.AiRiskForecasts.AddRange(generated.Select(item => item.Entity));
+        await db.SaveChangesAsync(ct);
+        logger.LogInformation("[AI-Forecast] Đã lưu dự báo cho {BatchCount} lô hàng.", generated.Count);
 
-        var rawRecommendation = parsed.Recommendation ?? "";
-        var truncatedRecommendation = rawRecommendation.Length > 1490
-            ? rawRecommendation[..1487] + "..."
-            : rawRecommendation;
+        return (generated.Select(item => MapEntityToResponse(item.Entity, isFromCache: false, item.Batch)).ToList(), null);
+    }
 
-        // 6. Đóng gói snapshot đầu vào + các hành động chi tiết vào InputSnapshotJson để lưu trữ đầy đủ
-        var snapshotWrapper = new
+    private static AiRiskForecast CreateEntity(
+        ForecastInputSnapshot snapshot, ForecastParsedData parsed, string model, DateTime generatedAt)
+    {
+        var recommendation = parsed.Recommendation;
+        var snapshotJson = JsonSerializer.Serialize(new
         {
             batchCode = snapshot.Batch.BatchCode,
             harvestDate = snapshot.Batch.HarvestDate,
             daysFromHarvest = snapshot.DaysFromHarvest,
             daysUntilExpiry = snapshot.DaysUntilExpiry,
             shelfLifeConsumedPct = snapshot.ShelfLifeConsumedPct,
+            quantityOnHandKg = snapshot.QuantityOnHandKg,
             qcSummary = snapshot.QcInspection != null ? new
             {
                 inspectionCode = snapshot.QcInspection.InspectionCode,
@@ -153,51 +99,30 @@ public sealed class SpoilageForecastService(
             envSummary = snapshot.EnvStats,
             actions = parsed.Actions,
             analysisNotes = parsed.AnalysisNotes,
-            fullRecommendation = rawRecommendation
-        };
+            fullRecommendation = recommendation
+        });
 
-        var snapshotJson = JsonSerializer.Serialize(snapshotWrapper);
-
-        // 7. Lưu kết quả vào bảng AI_RISK_FORECAST
-        var entity = new AiRiskForecast
+        return new AiRiskForecast
         {
-            ProductBatchId = request.ProductBatchId,
-            SpoilageRiskScore = parsed.SpoilageRiskScore,
+            ProductBatchId = snapshot.Batch.ProductBatchId,
             PredictedLossPercent = parsed.PredictedLossPercent,
             SafeStorageRemainingDays = parsed.SafeStorageRemainingDays,
             RiskLevel = parsed.RiskLevel,
             ForecastHorizonDays = parsed.ForecastHorizonDays,
-            Recommendation = truncatedRecommendation,
+            Recommendation = recommendation.Length > 1500 ? recommendation[..1497] + "..." : recommendation,
             ModelVersion = model,
             InputSnapshotJson = snapshotJson,
-            GeneratedAt = DateTime.UtcNow
+            GeneratedAt = generatedAt
         };
+    }
 
-        db.AiRiskForecasts.Add(entity);
-        await db.SaveChangesAsync(ct);
+    public async Task<IReadOnlyList<SpoilageForecastResponse>> GetLatestForecastsAsync(CancellationToken ct = default)
+    {
+        var entities = await LatestEligibleForecasts()
+            .OrderBy(f => f.ProductBatchId)
+            .ToListAsync(ct);
 
-        logger.LogInformation(
-            "[AI-Forecast] Đã lưu dự báo thành công cho lô {BatchCode}: Risk={RiskLevel}, Score={Score}, Loss={Loss}%",
-            snapshot.Batch.BatchCode, entity.RiskLevel, entity.SpoilageRiskScore, entity.PredictedLossPercent);
-
-        return new SpoilageForecastResponse(
-            ProductBatchId: entity.ProductBatchId,
-            BatchCode: snapshot.Batch.BatchCode,
-            ProductName: snapshot.Batch.ProductName,
-            CropName: snapshot.Batch.CropType?.CropName ?? "N/A",
-            QualityGrade: snapshot.Batch.QualityGrade,
-            SpoilageRiskScore: entity.SpoilageRiskScore,
-            PredictedLossPercent: entity.PredictedLossPercent,
-            SafeStorageRemainingDays: entity.SafeStorageRemainingDays,
-            RiskLevel: entity.RiskLevel,
-            ForecastHorizonDays: entity.ForecastHorizonDays,
-            Recommendation: rawRecommendation,
-            Actions: parsed.Actions,
-            AnalysisNotes: parsed.AnalysisNotes,
-            GeneratedAt: ToVietnamTime(entity.GeneratedAt),
-            IsFromCache: false,
-            ModelVersion: model
-        );
+        return entities.Select(e => MapEntityToResponse(e, isFromCache: true)).ToList();
     }
 
     public async Task<SpoilageForecastResponse?> GetLatestForecastAsync(long productBatchId, CancellationToken ct = default)
@@ -208,6 +133,7 @@ public sealed class SpoilageForecastService(
                 .ThenInclude(b => b.CropType)
             .Where(f => f.ProductBatchId == productBatchId)
             .OrderByDescending(f => f.GeneratedAt)
+            .ThenByDescending(f => f.AiRiskForecastId)
             .FirstOrDefaultAsync(ct);
 
         return entity == null ? null : MapEntityToResponse(entity, isFromCache: true);
@@ -224,6 +150,7 @@ public sealed class SpoilageForecastService(
                 .ThenInclude(b => b.CropType)
             .Where(f => f.ProductBatchId == productBatchId)
             .OrderByDescending(f => f.GeneratedAt)
+            .ThenByDescending(f => f.AiRiskForecastId)
             .Take(Math.Min(count, 20))
             .ToListAsync(ct);
 
@@ -234,31 +161,30 @@ public sealed class SpoilageForecastService(
         int limit = 10,
         CancellationToken ct = default)
     {
-        var activeStorageStatuses = new[]
-        {
-            "APPROVED_FOR_STORAGE", "RECEIVED", "IN_STOCK", "RESERVED", "PARTIALLY_ISSUED", "STORED", "APPROVED"
-        };
-
-        // Lấy forecast mới nhất của mỗi lô hàng đang lưu kho có RiskLevel là HIGH hoặc CRITICAL
-        var highRiskBatchIds = await db.AiRiskForecasts
-            .AsNoTracking()
-            .Where(f => (f.RiskLevel == "HIGH" || f.RiskLevel == "CRITICAL") &&
-                        activeStorageStatuses.Contains(f.ProductBatch.BatchStatus))
-            .GroupBy(f => f.ProductBatchId)
-            .Select(g => g.OrderByDescending(f => f.GeneratedAt).First().AiRiskForecastId)
-            .Take(limit * 2)
-            .ToListAsync(ct);
-
-        var entities = await db.AiRiskForecasts
-            .AsNoTracking()
-            .Include(f => f.ProductBatch)
-                .ThenInclude(b => b.CropType)
-            .Where(f => highRiskBatchIds.Contains(f.AiRiskForecastId))
-            .OrderByDescending(f => f.SpoilageRiskScore)
+        var entities = await LatestEligibleForecasts()
+            .Where(f => f.RiskLevel == "HIGH" || f.RiskLevel == "CRITICAL")
+            .OrderByDescending(f => f.RiskLevel == "CRITICAL")
+            .ThenByDescending(f => f.PredictedLossPercent)
+            .ThenBy(f => f.ProductBatchId)
             .Take(limit)
             .ToListAsync(ct);
 
         return entities.Select(e => MapEntityToResponse(e, isFromCache: true)).ToList();
+    }
+
+    private IQueryable<AiRiskForecast> LatestEligibleForecasts()
+    {
+        var eligible = inputCollector.EligibleBatches;
+        return db.AiRiskForecasts
+            .AsNoTracking()
+            .Include(f => f.ProductBatch)
+                .ThenInclude(b => b.CropType)
+            .Where(f => eligible.Any(b => b.ProductBatchId == f.ProductBatchId)
+                && f.AiRiskForecastId == f.ProductBatch.AiRiskForecasts
+                    .OrderByDescending(latest => latest.GeneratedAt)
+                    .ThenByDescending(latest => latest.AiRiskForecastId)
+                    .Select(latest => latest.AiRiskForecastId)
+                    .First());
     }
 
     private static SpoilageForecastResponse MapEntityToResponse(
@@ -319,7 +245,6 @@ public sealed class SpoilageForecastService(
             ProductName: batch?.ProductName ?? "",
             CropName: batch?.CropType?.CropName ?? "N/A",
             QualityGrade: batch?.QualityGrade,
-            SpoilageRiskScore: entity.SpoilageRiskScore,
             PredictedLossPercent: entity.PredictedLossPercent,
             SafeStorageRemainingDays: entity.SafeStorageRemainingDays,
             RiskLevel: entity.RiskLevel,
@@ -330,33 +255,6 @@ public sealed class SpoilageForecastService(
             GeneratedAt: ToVietnamTime(entity.GeneratedAt),
             IsFromCache: isFromCache,
             ModelVersion: entity.ModelVersion ?? ""
-        );
-    }
-
-    private static SpoilageForecastResponse CreateErrorResponse(
-        long batchId,
-        string message,
-        ProductBatch? batch = null)
-    {
-        return new SpoilageForecastResponse(
-            ProductBatchId: batchId,
-            BatchCode: batch?.BatchCode ?? "",
-            ProductName: batch?.ProductName ?? "",
-            CropName: batch?.CropType?.CropName ?? "",
-            QualityGrade: batch?.QualityGrade,
-            SpoilageRiskScore: 0,
-            PredictedLossPercent: null,
-            SafeStorageRemainingDays: null,
-            RiskLevel: "UNKNOWN",
-            ForecastHorizonDays: null,
-            Recommendation: message,
-            Actions: [],
-            AnalysisNotes: null,
-            GeneratedAt: ToVietnamTime(DateTime.UtcNow),
-            IsFromCache: false,
-            ModelVersion: "",
-            IsError: true,
-            ErrorMessage: message
         );
     }
 

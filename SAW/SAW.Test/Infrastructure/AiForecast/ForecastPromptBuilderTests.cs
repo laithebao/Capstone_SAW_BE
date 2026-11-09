@@ -8,16 +8,15 @@ namespace SAW.Test.Infrastructure.AiForecast;
 public sealed class ForecastPromptBuilderTests
 {
     [Fact]
-    public void BuildSystemPrompt_ShouldIncludeMandatoryRolesAndHeadingRequirement()
+    public void BuildSystemPrompt_ShouldRequireOneForecastPerBatch()
     {
         // Act
         var systemPrompt = ForecastPromptBuilder.BuildSystemPrompt();
 
         // Assert
         systemPrompt.Should().NotBeNullOrWhiteSpace();
-        systemPrompt.Should().Contain("Senior Agri-Business Commercial & Post-Harvest Strategist");
-        systemPrompt.Should().Contain("### ⚠️ Nguyên Nhân Dẫn Đến Độ Hao Hụt Cao & Giải Pháp Khắc Phục");
-        systemPrompt.Should().Contain("YÊU CẦU ĐỊNH DẠNG JSON");
+        systemPrompt.Should().Contain("đúng một kết quả cho mỗi productBatchId");
+        systemPrompt.Should().Contain("LOW, MEDIUM, HIGH hoặc CRITICAL");
     }
 
     [Fact]
@@ -37,6 +36,7 @@ public sealed class ForecastPromptBuilderTests
 
         var batch = new ProductBatch
         {
+            ProductBatchId = 42,
             BatchCode = "LH-20261028-01",
             ProductName = "Khoai tây hồng",
             CropType = cropType,
@@ -104,13 +104,15 @@ public sealed class ForecastPromptBuilderTests
             CurrentLocation: location,
             DaysFromHarvest: 8,
             DaysUntilExpiry: 23,
-            ShelfLifeConsumedPct: 25.8m
+            ShelfLifeConsumedPct: 25.8m,
+            QuantityOnHandKg: 250m
         );
 
         // Act
-        var userPrompt = ForecastPromptBuilder.BuildUserPrompt(snapshot);
+        var userPrompt = ForecastPromptBuilder.BuildUserPrompt([snapshot]);
 
         // Assert
+        userPrompt.Should().Contain("productBatchId: 42");
         userPrompt.Should().Contain("LH-20261028-01");
         userPrompt.Should().Contain("Khoai tây hồng");
         userPrompt.Should().Contain("Hợp tác xã Rau Đà Lạt");
@@ -141,11 +143,12 @@ public sealed class ForecastPromptBuilderTests
             CurrentLocation: null,
             DaysFromHarvest: 3,
             DaysUntilExpiry: null,
-            ShelfLifeConsumedPct: null
+            ShelfLifeConsumedPct: null,
+            QuantityOnHandKg: 200m
         );
 
         // Act
-        var userPrompt = ForecastPromptBuilder.BuildUserPrompt(snapshot);
+        var userPrompt = ForecastPromptBuilder.BuildUserPrompt([snapshot]);
 
         // Assert: Không được throw Exception và phải có cảnh báo fallback chuẩn
         userPrompt.Should().NotBeNullOrWhiteSpace();

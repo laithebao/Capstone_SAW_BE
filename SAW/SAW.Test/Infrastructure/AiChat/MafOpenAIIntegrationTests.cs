@@ -149,7 +149,7 @@ public sealed class MafOpenAIIntegrationTests
     [Fact]
     public async Task Forecast_RequestsStrictSchemaInOneResponse()
     {
-        const string json = """{"spoilageRiskScore":60,"riskLevel":"HIGH","recommendation":"Kiểm tra nhiệt độ."}""";
+        const string json = """{"forecasts":[{"productBatchId":1,"riskLevel":"HIGH","recommendation":"Kiểm tra nhiệt độ."}]}""";
         using var handler = new ResponsesHandler(TextResponse(json));
         using var http = new HttpClient(handler);
         var client = new MafForecastClient(http, Options, NullLogger<MafForecastClient>.Instance);
@@ -163,8 +163,10 @@ public sealed class MafOpenAIIntegrationTests
         var format = payload["text"]!["format"]!;
         format["type"]!.GetValue<string>().Should().Be("json_schema");
         format["strict"]!.GetValue<bool>().Should().BeTrue();
-        format["schema"]!["required"]!.AsArray().Select(item => item!.GetValue<string>())
-            .Should().Contain(["spoilageRiskScore", "recommendation", "actions"]);
+        var schema = format["schema"]!["properties"]!["forecasts"]!["items"]!;
+        schema["required"]!.AsArray().Select(item => item!.GetValue<string>())
+            .Should().Contain(["productBatchId", "recommendation", "actions"]);
+        schema["properties"]!["spoilageRiskScore"].Should().BeNull();
     }
 
     [Theory]

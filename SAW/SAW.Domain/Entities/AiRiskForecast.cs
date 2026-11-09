@@ -6,7 +6,8 @@ public class AiRiskForecast
 
     public long ProductBatchId { get; set; }
 
-    public decimal SpoilageRiskScore { get; set; }
+    // Giữ điểm của dự báo cũ. Dự báo mới để trống.
+    public decimal? SpoilageRiskScore { get; set; }
     public decimal? PredictedLossPercent { get; set; }
     public int? SafeStorageRemainingDays { get; set; }
 
