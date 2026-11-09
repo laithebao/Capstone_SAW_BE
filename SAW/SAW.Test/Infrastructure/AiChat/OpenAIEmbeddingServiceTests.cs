@@ -1,5 +1,6 @@
 using System.Net;
 using System.Text;
+using System.Text.Json;
 using System.Text.Json.Nodes;
 using FluentAssertions;
 using Microsoft.Extensions.Logging.Abstractions;
@@ -37,12 +38,19 @@ public sealed class OpenAIEmbeddingServiceTests
     }
 
     [Theory]
-    [InlineData("""{"data":[{"index":0,"embedding":[1,0]},{"index":0,"embedding":[0,1]}]}""")]
-    [InlineData("""{"data":[{"index":0,"embedding":[1,0]},{"index":1,"embedding":[1]}]}""")]
-    [InlineData("""{"data":[{"index":0,"embedding":[1,0]}]}""")]
-    public async Task EmbedBatchAsync_RejectsIncompleteOrInvalidBatch(string response)
+    [InlineData(false, """[{"index":0,"embedding":[1,0]},{"index":0,"embedding":[0,1]}]""")]
+    [InlineData(true, """[{"index":0,"embedding":[1,0]},{"index":0,"embedding":[0,1]}]""")]
+    [InlineData(false, """[{"index":0,"embedding":[1,0]},{"index":1,"embedding":[1]}]""")]
+    [InlineData(true, """[{"index":0,"embedding":[1,0]},{"index":1,"embedding":[1]}]""")]
+    [InlineData(false, """[{"index":0,"embedding":[1,0]}]""")]
+    [InlineData(true, """[{"index":0,"embedding":[1,0]}]""")]
+    [InlineData(false, """[{"index":0,"embedding":[1,0]},{"index":1,"embedding":[0,0]}]""")]
+    [InlineData(true, """[{"index":0,"embedding":[1,0]},{"index":1,"embedding":[0,0]}]""")]
+    public async Task EmbedBatchAsync_RejectsIncompleteOrInvalidBatch(bool useMaf, string data)
     {
-        var embedder = CreateEmbedder(_ => response);
+        var embedder = CreateEmbedder(_ => $$$"""
+            {"object":"list","model":"text-embedding-3-small","data":{{{data}}},"usage":{"prompt_tokens":2,"total_tokens":2}}
+            """, useMaf);
 
         var result = await embedder.EmbedBatchAsync(["Một", "Hai"], CancellationToken.None);
 
@@ -50,9 +58,11 @@ public sealed class OpenAIEmbeddingServiceTests
     }
 
     [Theory]
-    [InlineData(true)]
-    [InlineData(false)]
-    public async Task KnowledgeBase_PublishesOnlyCompleteIndex(bool validSecondFile)
+    [InlineData(true, true, false)]
+    [InlineData(true, true, true)]
+    [InlineData(false, true, true)]
+    [InlineData(true, false, true)]
+    public async Task KnowledgeBase_PublishesOnlyCompleteIndex(bool validEmbeddings, bool uploadCompleted, bool hasPrevious)
     {
         var corpus = Directory.CreateTempSubdirectory();
         try
@@ -62,28 +72,131 @@ public sealed class OpenAIEmbeddingServiceTests
             await File.WriteAllTextAsync(Path.Combine(corpus.FullName, "01-orders.txt"), orderGuide);
             await File.WriteAllTextAsync(Path.Combine(corpus.FullName, "02-storage.txt"), storageGuide);
 
+            var documentEmbeddingRequests = 0;
+            var openAI = new OpenAIOptions { ApiKey = "test-key", EmbeddingDimensions = 2 };
             var embedder = CreateEmbedder(request =>
             {
                 var body = JsonNode.Parse(request.Content!.ReadAsStringAsync().GetAwaiter().GetResult())!;
-                var input = body["input"]![0]!.GetValue<string>();
-                if (input != storageGuide)
+                var inputs = body["input"]!.AsArray();
+                if (inputs.Count == 1)
                     return """{"data":[{"index":0,"embedding":[1,0]}]}""";
 
-                return validSecondFile
-                    ? """{"data":[{"index":0,"embedding":[-1,0]}]}"""
-                    : """{"data":[{"index":0,"embedding":[-1]}]}""";
-            });
-            var kb = new KnowledgeBaseService(embedder, [new PlainTextLoader()],
-                new AiChatOptions { KnowledgeBasePath = corpus.FullName }, NullLogger<KnowledgeBaseService>.Instance);
+                documentEmbeddingRequests++;
+                inputs.Select(input => input!.GetValue<string>()).Should().Equal(orderGuide, storageGuide);
+                return validEmbeddings
+                    ? """{"data":[{"index":0,"embedding":[1,0]},{"index":1,"embedding":[-1,0]}]}"""
+                    : """{"data":[{"index":0,"embedding":[1,0]},{"index":1,"embedding":[-1]}]}""";
+            }, options: openAI);
 
-            (await kb.BuildIndexAsync()).Should().Be(validSecondFile);
-            var status = kb.GetStatus();
-            status.IsReady.Should().Be(validSecondFile);
-            status.ChunkCount.Should().Be(validSecondFile ? 2 : 0);
-            var reply = await kb.SearchAsync("Mua lô thế nào?");
-            reply.Should().Be(validSecondFile
-                ? orderGuide
-                : "Kho tri thức đang khởi tạo hoặc tạm thời gián đoạn. Vui lòng thử lại sau.");
+            const string alias = "saw-kb-test";
+            const string previousCollection = "saw-kb-test-previous";
+            const string previousContent = "Quy trình trước đây.";
+            const string completed = """{"status":"ok","result":{"status":"completed","operation_id":0}}""";
+            var publish = validEmbeddings && uploadCompleted;
+            string? activeCollection = hasPrevious ? previousCollection : null;
+            string? draft = null;
+            var draftDeleted = false;
+            var qdrant = new QdrantOptions
+            {
+                Endpoint = "https://test.cloud.qdrant.io", ApiKey = "test-key", CollectionAlias = alias
+            };
+
+            var httpFactory = new Mock<IHttpClientFactory>();
+            httpFactory.Setup(factory => factory.CreateClient("QdrantKnowledgeBase"))
+                .Returns(() => new HttpClient(new StubHandler(request =>
+                {
+                    var path = request.RequestUri!.AbsolutePath;
+                    if (request.Method == HttpMethod.Get && path == "/aliases")
+                    {
+                        var aliases = activeCollection is null ? Array.Empty<object>()
+                            : [new { alias_name = alias, collection_name = activeCollection }];
+                        return JsonSerializer.Serialize(new { status = "ok", result = new { aliases } });
+                    }
+
+                    var body = request.Content is null ? null
+                        : JsonNode.Parse(request.Content.ReadAsStringAsync().GetAwaiter().GetResult());
+
+                    if (request.Method == HttpMethod.Post && path == "/collections/aliases")
+                    {
+                        var actions = body!["actions"]!.AsArray();
+                        actions.Count.Should().Be(hasPrevious ? 2 : 1);
+                        if (hasPrevious)
+                            actions[0]!["delete_alias"]!["alias_name"]!.GetValue<string>().Should().Be(alias);
+                        actions[^1]!["create_alias"]!["collection_name"]!.GetValue<string>().Should().Be(draft);
+                        activeCollection = draft;
+                        return """{"status":"ok","result":true}""";
+                    }
+
+                    if (request.Method == HttpMethod.Put && !path.EndsWith("/index") && !path.EndsWith("/points"))
+                    {
+                        draft = path.Split('/').Last();
+                        body!["vectors"]!["size"]!.GetValue<int>().Should().Be(2);
+                        body["vectors"]!["distance"]!.GetValue<string>().Should().Be("Cosine");
+                        return """{"status":"ok","result":true}""";
+                    }
+
+                    if (path == $"/collections/{draft}/index")
+                    {
+                        body!["field_name"]!.GetValue<string>().Should().Be("embedding_profile");
+                        request.RequestUri.Query.Should().Be("?wait=true");
+                        return completed;
+                    }
+
+                    if (path == $"/collections/{draft}/points")
+                    {
+                        request.RequestUri.Query.Should().Be("?wait=true");
+                        var points = body!["points"]!.AsArray();
+                        points.Select(point => point!["payload"]!["source_file"]!.GetValue<string>())
+                            .Should().Equal("01-orders.txt", "02-storage.txt");
+                        return uploadCompleted
+                            ? completed
+                            : """{"status":"ok","result":{"status":"acknowledged"}}""";
+                    }
+
+                    if (request.Method == HttpMethod.Delete && path == $"/collections/{draft}")
+                    {
+                        draftDeleted = true;
+                        return """{"status":"ok","result":true}""";
+                    }
+
+                    if (path == $"/collections/{activeCollection}/points/scroll")
+                        return publish
+                            ? """{"status":"ok","result":{"points":[{"payload":{"source_file":"01-orders.txt"}},{"payload":{"source_file":"02-storage.txt"}}],"next_page_offset":null}}"""
+                            : """{"status":"ok","result":{"points":[{"payload":{"source_file":"previous.txt"}}],"next_page_offset":null}}""";
+
+                    if (path == $"/collections/{alias}/points/query")
+                    {
+                        body!["query"]!.AsArray().Select(value => value!.GetValue<int>()).Should().Equal(1, 0);
+                        body["limit"]!.GetValue<int>().Should().Be(4);
+                        body["filter"]!["must"]![0]!["match"]!["value"]!.GetValue<string>()
+                            .Should().Be("text-embedding-3-small:2");
+                        return JsonSerializer.Serialize(new
+                        {
+                            status = "ok",
+                            result = new { points = new[] { new { score = 1, payload = new { content = publish ? orderGuide : previousContent } } } }
+                        });
+                    }
+
+                    throw new InvalidOperationException($"Unexpected Qdrant request {request.Method} {path}");
+                })) { BaseAddress = new Uri(qdrant.Endpoint) });
+
+            KnowledgeBaseService CreateKnowledgeBase() => new(embedder, [new PlainTextLoader()],
+                new AiChatOptions { KnowledgeBasePath = corpus.FullName }, openAI,
+                new QdrantKnowledgeStore(httpFactory.Object, qdrant), NullLogger<KnowledgeBaseService>.Instance);
+
+            (await CreateKnowledgeBase().BuildIndexAsync()).Should().Be(publish);
+            activeCollection.Should().Be(publish ? draft : previousCollection);
+            draftDeleted.Should().Be(!publish);
+
+            // A fresh backend can search the active alias and reindex unchanged documents without new embeddings.
+            var restarted = CreateKnowledgeBase();
+            var status = await restarted.GetStatusAsync();
+            status.IsReady.Should().BeTrue();
+            status.ChunkCount.Should().Be(publish ? 2 : 1);
+            (await restarted.SearchAsync("Mua lô thế nào?")).Should().Be(publish ? orderGuide : previousContent);
+            if (publish)
+                (await restarted.BuildIndexAsync()).Should().BeTrue();
+            documentEmbeddingRequests.Should().Be(1);
         }
         finally
         {
@@ -91,14 +204,15 @@ public sealed class OpenAIEmbeddingServiceTests
         }
     }
 
-    private static OpenAIEmbeddingService CreateEmbedder(Func<HttpRequestMessage, string> respond, bool useMaf = false)
+    private static OpenAIEmbeddingService CreateEmbedder(Func<HttpRequestMessage, string> respond, bool useMaf = false,
+        OpenAIOptions? options = null)
     {
         var httpFactory = new Mock<IHttpClientFactory>();
         httpFactory.Setup(factory => factory.CreateClient("OpenAIEmbedding"))
             .Returns(() => new HttpClient(new StubHandler(respond)) { BaseAddress = new Uri("https://api.openai.com/v1/") });
 
         return new OpenAIEmbeddingService(httpFactory.Object,
-            new OpenAIOptions { ApiKey = "test-key", EmbeddingDimensions = 2 },
+            options ?? new OpenAIOptions { ApiKey = "test-key", EmbeddingDimensions = 2 },
             NullLogger<OpenAIEmbeddingService>.Instance, new AiExecutionOptions { UseMafForChat = useMaf });
     }
 

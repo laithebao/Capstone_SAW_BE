@@ -196,7 +196,7 @@ public class SupplierBatchCommandServiceTests
     [InlineData("QUARANTINE")]
     [InlineData("REJECTED")]
     [InlineData("PENDING_QC")]
-    public async Task SupplierDetailStopsAtWarehouseEntryWithoutChangingWarehouseState(string warehouseStatus)
+    public async Task SupplierDetailPreservesWarehouseEntryMilestoneAndCompleteHistory(string warehouseStatus)
     {
         var batch = Batch(warehouseStatus);
         batch.QualityGrade = "C";
@@ -208,17 +208,18 @@ public class SupplierBatchCommandServiceTests
             InspectionStatus = "COMPLETED", CompletedAt = _created.AddDays(4), QcResult = "FAIL", QualityGrade = "C" });
         SetupDetail(batch);
         _batches.Setup(r => r.GetBatchStatusHistoryAsync(5, It.IsAny<CancellationToken>())).ReturnsAsync([
-            new() { BatchStatusHistoryId = 3, OldStatus = "IN_STOCK", NewStatus = warehouseStatus, ChangedAt = _created.AddDays(3) },
+            new() { BatchStatusHistoryId = 1, OldStatus = "PENDING_QC", NewStatus = "APPROVED_FOR_STORAGE", ChangedAt = _created.AddDays(1) },
             new() { BatchStatusHistoryId = 2, OldStatus = "APPROVED_FOR_STORAGE", NewStatus = "IN_STOCK", ChangedAt = _created.AddDays(2) },
-            new() { BatchStatusHistoryId = 1, OldStatus = "PENDING_QC", NewStatus = "APPROVED_FOR_STORAGE", ChangedAt = _created.AddDays(1) }
+            new() { BatchStatusHistoryId = 3, OldStatus = "IN_STOCK", NewStatus = warehouseStatus, ChangedAt = _created.AddDays(3) }
         ]);
         var result = await Service.GetBatchStatusDetailAsync(5, 1);
         Assert.Equal("IN_STOCK", result.CurrentStatus);
         Assert.Equal("Đã nhập kho", result.StatusDisplayName);
         Assert.Equal("PASS", result.QcResult); Assert.Equal("A", result.QualityGrade);
         Assert.Null(result.RejectionReason);
-        Assert.Equal(2, result.StatusHistory.Count);
-        Assert.DoesNotContain(result.StatusHistory, item => item.OldStatus == "IN_STOCK");
+        Assert.Equal(new[] { warehouseStatus, "IN_STOCK", "APPROVED_FOR_STORAGE" },
+            result.StatusHistory.Select(item => item.NewStatus));
+        Assert.Equal(_created.AddDays(2), result.WarehousedAt);
         Assert.Equal(warehouseStatus, batch.BatchStatus);
     }
 
@@ -234,7 +235,7 @@ public class SupplierBatchCommandServiceTests
         var result = await Service.GetBatchStatusDetailAsync(5, 1);
         Assert.Equal("IN_STOCK", result.CurrentStatus);
         Assert.Equal(_created.AddDays(2), result.WarehousedAt);
-        Assert.Single(result.StatusHistory);
+        Assert.Equal(new[] { "QUARANTINE", "IN_STOCK" }, result.StatusHistory.Select(item => item.NewStatus));
     }
 
     [Fact]

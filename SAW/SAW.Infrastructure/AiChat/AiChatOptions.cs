@@ -8,6 +8,7 @@ public sealed class AiChatOptions
     public int MaxModelRequestsPerTurn { get; init; } = 5;
     public int TurnTimeoutSeconds { get; init; } = 120;
     public string KnowledgeBasePath { get; init; } = "KnowledgeBase";
+    public bool? KnowledgeBaseAutoSync { get; init; }
     public float KnowledgeBaseMinTopScore { get; init; } = 0.28f;
     public float KnowledgeBaseMinChunkScore { get; init; } = 0.25f;
 }

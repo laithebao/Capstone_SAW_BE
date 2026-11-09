@@ -3,21 +3,27 @@ using Microsoft.Extensions.Hosting;
 namespace SAW.Infrastructure.AiChat;
 
 /// <summary>
-/// Warms up the Knowledge Base without blocking application startup.
+/// Seeds or refreshes the Qdrant index during startup.
 /// </summary>
 public sealed class KnowledgeBaseIndexingService(
     KnowledgeBaseService knowledgeBase,
-    OpenAIOptions options) : BackgroundService
+    AiChatOptions options,
+    IHostEnvironment environment) : BackgroundService
 {
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
     {
-        if (string.IsNullOrWhiteSpace(options.ApiKey))
+        if (!knowledgeBase.IsConfigured)
             return;
 
         await Task.Delay(TimeSpan.FromSeconds(3), stoppingToken);
-        for (var attempt = 1; attempt <= 3 && !knowledgeBase.IsReady; attempt++)
+        var autoSync = options.KnowledgeBaseAutoSync ?? environment.IsDevelopment();
+
+        for (var attempt = 1; attempt <= 3; attempt++)
         {
-            if (await knowledgeBase.BuildIndexAsync(stoppingToken))
+            var ready = autoSync
+                ? await knowledgeBase.BuildIndexAsync(stoppingToken)
+                : await knowledgeBase.EnsureIndexAsync(stoppingToken);
+            if (ready)
                 return;
 
             if (attempt < 3)

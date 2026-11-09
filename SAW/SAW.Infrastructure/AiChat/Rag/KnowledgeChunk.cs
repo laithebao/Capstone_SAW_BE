@@ -1,11 +1,9 @@
 namespace SAW.Infrastructure.AiChat.Rag;
 
 /// <summary>
-/// Một đoạn văn bản (chunk) đã được embedding từ tài liệu Knowledge Base.
+/// Một đoạn văn bản (chunk) từ tài liệu Knowledge Base.
 /// </summary>
 internal sealed record KnowledgeChunk(
-    /// <summary>Vector embedding của chunk.</summary>
-    float[] Embedding,
     /// <summary>Nội dung văn bản gốc của chunk.</summary>
     string Content,
     /// <summary>Tên file nguồn (dùng để debug/trace).</summary>

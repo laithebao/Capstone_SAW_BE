@@ -92,6 +92,7 @@ public static class ServiceCollectionExtensions
         var aiChatOptions = configuration.GetSection("AiChat").Get<AiChatOptions>() ?? new AiChatOptions();
         var aiExecution = configuration.GetSection("AiExecution").Get<AiExecutionOptions>() ?? new AiExecutionOptions();
         var openAIOptions = configuration.GetSection("OpenAI").Get<OpenAIOptions>() ?? new OpenAIOptions();
+        var qdrantOptions = configuration.GetSection("Qdrant").Get<QdrantOptions>() ?? new QdrantOptions();
         services.AddSingleton(aiChatOptions);
         services.AddSingleton(openAIOptions);
         services.AddSingleton(aiExecution);
@@ -116,6 +117,19 @@ public static class ServiceCollectionExtensions
             client.Timeout = TimeSpan.FromSeconds(Math.Clamp(openAIOptions.EmbeddingRequestTimeoutSeconds, 1, 120));
         }).RedactLoggedHeaders(new[] { "Authorization" });
 
+        services.AddSingleton(qdrantOptions);
+        services.AddHttpClient(QdrantKnowledgeStore.HttpClientName, client =>
+        {
+            client.Timeout = TimeSpan.FromSeconds(15);
+            if (qdrantOptions.IsConfigured)
+            {
+                client.BaseAddress = qdrantOptions.EndpointUri;
+                client.DefaultRequestHeaders.Add("api-key", qdrantOptions.ApiKey.Trim());
+            }
+        })
+        .ConfigurePrimaryHttpMessageHandler(() => new HttpClientHandler { AllowAutoRedirect = false })
+        .RedactLoggedHeaders(new[] { "api-key" });
+
         // Document loaders — mỗi loader hỗ trợ một định dạng file
         services.AddSingleton<IDocumentLoader, MarkdownTextLoader>();
         services.AddSingleton<IDocumentLoader, PlainTextLoader>();
@@ -124,9 +138,10 @@ public static class ServiceCollectionExtensions
 
         // RAG core services
         services.AddSingleton<OpenAIEmbeddingService>();
+        services.AddSingleton<QdrantKnowledgeStore>();
         services.AddSingleton<KnowledgeBaseService>();
 
-        // Background service: xây dựng vector index sau khi server khởi động
+        // Seed or refresh the collection during startup.
         services.AddHostedService<KnowledgeBaseIndexingService>();
 
         services.AddScoped<AiToolExecutor>();

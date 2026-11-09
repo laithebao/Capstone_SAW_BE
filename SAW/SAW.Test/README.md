@@ -125,9 +125,11 @@ dotnet test SAW.Test
 # Chạy với coverage report
 dotnet test SAW.Test --collect:"XPlat Code Coverage"
 
-# Chạy filter theo category
-dotnet test SAW.Test --filter "Category=Unit"
+# Chạy nhóm AI Chat và AI Forecast
+dotnet test SAW.Test --filter 'FullyQualifiedName~Infrastructure.AiChat|FullyQualifiedName~Infrastructure.AiForecast'
 ```
+
+Nhóm AI chạy unit test và test giao thức với phản hồi HTTP giả lập cho OpenAI và Qdrant. Các test SQL của chatbot và dự báo dùng cơ sở dữ liệu riêng do fixture tạo và xóa. Đặt `SAW_TEST_SQL_CONNECTION` trỏ tới SQL Server dành cho kiểm thử để chạy các ca này. xUnit báo bỏ qua nếu chưa có cấu hình.
 
 ---
 

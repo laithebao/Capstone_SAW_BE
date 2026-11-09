@@ -25,8 +25,10 @@ public sealed class AiToolExecutorTests
         // Khởi tạo dummy KnowledgeBaseService
         var kbOptions = new AiChatOptions();
         var httpFactoryMock = new Moq.Mock<IHttpClientFactory>();
-        var embedder = new OpenAIEmbeddingService(httpFactoryMock.Object, new OpenAIOptions { ApiKey = "test-key" }, NullLogger<OpenAIEmbeddingService>.Instance);
-        var kb = new KnowledgeBaseService(embedder, Array.Empty<IDocumentLoader>(), kbOptions, kbLogger);
+        var openAI = new OpenAIOptions { ApiKey = "test-key" };
+        var embedder = new OpenAIEmbeddingService(httpFactoryMock.Object, openAI, NullLogger<OpenAIEmbeddingService>.Instance);
+        var store = new QdrantKnowledgeStore(httpFactoryMock.Object, new QdrantOptions());
+        var kb = new KnowledgeBaseService(embedder, [], kbOptions, openAI, store, kbLogger);
 
         _executor = new AiToolExecutor(db, logger, kb, Mock.Of<IDistributorOrderService>());
     }

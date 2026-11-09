@@ -24,6 +24,7 @@ public sealed class MafOpenAIIntegrationTests
     private static readonly OpenAIOptions Options = new() { ApiKey = "test-key" };
 
     [Theory]
+    [InlineData(false, false)]
     [InlineData(true, false)]
     [InlineData(false, true)]
     [InlineData(true, true)]
@@ -76,15 +77,29 @@ public sealed class MafOpenAIIntegrationTests
         initial["max_output_tokens"]!.GetValue<int>().Should().Be(2048);
         initial["parallel_tool_calls"]!.GetValue<bool>().Should().BeFalse();
         initial["input"]!.AsArray().Should().Contain(item => item!["role"]!.GetValue<string>() == "assistant");
+        initial["include"]!.AsArray().Select(item => item!.GetValue<string>())
+            .Should().Contain("reasoning.encrypted_content");
         var tools = initial["tools"]!.AsArray();
-        tools.Select(item => item!["name"]!.GetValue<string>()).Should()
-            .BeEquivalentTo("GetBatchSummary", "GetBatchQcReport", "SearchSaleLots", "GetStorageAdvice", "SearchKnowledgeBase");
-        foreach (var tool in tools)
+        var expectedParameters = new Dictionary<string, (string Name, string Type)[]>
         {
-            tool!["strict"]!.GetValue<bool>().Should().BeTrue();
-            tool["parameters"]!["additionalProperties"]!.GetValue<bool>().Should().BeFalse();
-            tool["parameters"]!["properties"]!.AsObject().Count.Should()
-                .Be(tool["name"]!.GetValue<string>() == "SearchSaleLots" ? 3 : 1);
+            ["GetBatchSummary"] = [("batchCode", "string")],
+            ["GetBatchQcReport"] = [("batchCode", "string")],
+            ["SearchSaleLots"] = [("search", "string"), ("sort", "string"), ("page", "integer")],
+            ["GetStorageAdvice"] = [("cropTypeId", "integer")],
+            ["SearchKnowledgeBase"] = [("query", "string")]
+        };
+        tools.Select(item => item!["name"]!.GetValue<string>()).Should().BeEquivalentTo(expectedParameters.Keys);
+        foreach (var item in tools)
+        {
+            var tool = item!.AsObject();
+            var expected = expectedParameters[tool["name"]!.GetValue<string>()];
+            var parameters = tool["parameters"]!.AsObject();
+            tool["strict"]!.GetValue<bool>().Should().BeTrue();
+            parameters["additionalProperties"]!.GetValue<bool>().Should().BeFalse();
+            parameters["required"]!.AsArray().Select(name => name!.GetValue<string>())
+                .Should().BeEquivalentTo(expected.Select(parameter => parameter.Name));
+            parameters["properties"]!.AsObject().Select(property =>
+                (property.Key, property.Value!["type"]!.GetValue<string>())).Should().BeEquivalentTo(expected);
         }
 
         var replay = handler.Requests[1]["input"]!.AsArray();
@@ -98,7 +113,7 @@ public sealed class MafOpenAIIntegrationTests
     [Theory]
     [InlineData(false, 8891)]
     [InlineData(true, 8892)]
-    public async Task Chat_QueriesLiveSaleCatalogForMostExpensiveMatchingLot(bool useMaf, int accountId)
+    public async Task Chat_ForwardsPriceSortAndAuthenticatedAccountToSaleCatalog(bool useMaf, int accountId)
     {
         using var handler = new ResponsesHandler(Response("""
             [{"type":"function_call","id":"fc_sale","call_id":"call_sale","status":"completed",
@@ -117,8 +132,10 @@ public sealed class MafOpenAIIntegrationTests
 
         await using var db = new AppDbContext(new DbContextOptionsBuilder<AppDbContext>().Options);
         var chatOptions = new AiChatOptions();
-        var embedder = new OpenAIEmbeddingService(Mock.Of<IHttpClientFactory>(), Options, NullLogger<OpenAIEmbeddingService>.Instance);
-        var kb = new KnowledgeBaseService(embedder, [], chatOptions, NullLogger<KnowledgeBaseService>.Instance);
+        var httpFactory = Mock.Of<IHttpClientFactory>();
+        var embedder = new OpenAIEmbeddingService(httpFactory, Options, NullLogger<OpenAIEmbeddingService>.Instance);
+        var store = new QdrantKnowledgeStore(httpFactory, new QdrantOptions());
+        var kb = new KnowledgeBaseService(embedder, [], chatOptions, Options, store, NullLogger<KnowledgeBaseService>.Instance);
         var executor = new AiToolExecutor(db, NullLogger<AiToolExecutor>.Instance, kb, new DistributorOrderService(repository.Object));
         var service = new AiChatService(client, executor, chatOptions);
 
@@ -146,12 +163,18 @@ public sealed class MafOpenAIIntegrationTests
             """));
         using var http = new HttpClient(handler);
         var client = new MafAiChatClient(http, Options, NullLogger<MafAiChatClient>.Instance);
+        var toolCalls = 0;
 
         var result = await client.ChatAsync("Quy tắc SAW.", [], "Quy trình SAW?", 1,
-            (_, _, _) => throw new InvalidOperationException("No tool should run."), CancellationToken.None);
+            (_, _, _) =>
+            {
+                toolCalls++;
+                return Task.FromResult("{}");
+            }, CancellationToken.None);
 
         result.IsError.Should().BeTrue();
         handler.Requests.Should().ContainSingle();
+        toolCalls.Should().Be(0);
     }
 
     [Fact]

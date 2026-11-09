@@ -1,15 +1,19 @@
+using System.Security.Cryptography;
+using System.Text.Json;
 using Microsoft.Extensions.Logging;
 using SAW.Infrastructure.AiChat.Rag;
 
 namespace SAW.Infrastructure.AiChat;
 
 /// <summary>
-/// Builds and searches a per-process Knowledge Base index using OpenAI embeddings.
+/// Publishes and searches the shared Qdrant index using OpenAI embeddings.
 /// </summary>
 public sealed class KnowledgeBaseService(
     OpenAIEmbeddingService embedder,
     IEnumerable<IDocumentLoader> loaders,
     AiChatOptions options,
+    OpenAIOptions openAIOptions,
+    QdrantKnowledgeStore store,
     ILogger<KnowledgeBaseService> logger)
 {
     private const int TopK = 4;
@@ -17,16 +21,28 @@ public sealed class KnowledgeBaseService(
     private static readonly TimeSpan RebuildCooldown = TimeSpan.FromSeconds(30);
     private const string Unavailable = "Kho tri thức đang khởi tạo hoặc tạm thời gián đoạn. Vui lòng thử lại sau.";
 
-    private volatile IReadOnlyList<KnowledgeChunk>? _index;
     private readonly SemaphoreSlim _buildLock = new(1, 1);
     private DateTimeOffset _nextBuildAt;
 
-    public bool IsReady => _index is not null;
+    internal bool IsConfigured => embedder.IsConfigured && store.IsConfigured;
+    private string EmbeddingProfile =>
+        FormattableString.Invariant($"{openAIOptions.EmbeddingModel}:{openAIOptions.EmbeddingDimensions}");
 
-    public (bool IsReady, int ChunkCount, IReadOnlyList<string> IndexedFiles) GetStatus()
+    public async Task<(bool IsReady, int ChunkCount, IReadOnlyList<string> IndexedFiles)> GetStatusAsync(
+        CancellationToken ct = default)
     {
-        var index = _index;
-        return (index is not null, index?.Count ?? 0, index?.Select(c => c.SourceFile).Distinct().ToArray() ?? []);
+        if (!IsConfigured)
+            return (false, 0, []);
+
+        try
+        {
+            return await store.GetStatusAsync(EmbeddingProfile, ct);
+        }
+        catch (Exception ex) when (IsStoreFailure(ex, ct))
+        {
+            LogStoreFailure(ex);
+            return (false, 0, []);
+        }
     }
 
     public async Task<string> SearchAsync(string query, CancellationToken ct = default)
@@ -34,44 +50,55 @@ public sealed class KnowledgeBaseService(
         if (string.IsNullOrWhiteSpace(query))
             return "Vui lòng cung cấp nội dung cần tìm kiếm.";
 
-        var index = _index;
-        if (index is null)
-        {
-            await BuildIndexAsync(ct);
-            index = _index;
-            if (index is null)
-                return Unavailable;
-        }
+        if (!IsConfigured)
+            return Unavailable;
 
         var queryVec = await embedder.EmbedAsync(query, ct);
         if (queryVec is null)
             return Unavailable;
 
-        var topResults = index
-            .Select(chunk => (chunk, score: CosineSimilarity(queryVec, chunk.Embedding)))
-            .OrderByDescending(x => x.score)
-            .Take(TopK)
-            .ToArray();
-
-        logger.LogDebug("Knowledge Base top cosine score: {Score:F3}.", topResults[0].score);
-
-        if (topResults[0].score < options.KnowledgeBaseMinTopScore)
-            return "Kho tri thức không có tài liệu liên quan trực tiếp đến câu hỏi.";
-
-        var relevant = topResults.Where(r => r.score >= options.KnowledgeBaseMinChunkScore)
-            .Select(r => r.chunk.Content).ToArray();
-        return relevant.Length > 0
-            ? string.Join("\n\n---\n\n", relevant)
-            : topResults[0].chunk.Content;
-    }
-
-    public async Task<bool> BuildIndexAsync(CancellationToken ct = default)
-    {
-        if (!embedder.IsConfigured || !await _buildLock.WaitAsync(0, ct))
-            return false;
-
         try
         {
+            var topResults = await store.SearchAsync(queryVec, TopK, EmbeddingProfile, ct);
+            if (topResults.Length == 0)
+                return Unavailable;
+
+            logger.LogDebug("Knowledge Base top cosine score: {Score:F3}.", topResults[0].Score);
+            if (topResults[0].Score < options.KnowledgeBaseMinTopScore)
+                return "Kho tri thức không có tài liệu liên quan trực tiếp đến câu hỏi.";
+
+            var relevant = topResults.Where(result => result.Score >= options.KnowledgeBaseMinChunkScore)
+                .Select(result => result.Content).ToArray();
+            return relevant.Length > 0
+                ? string.Join("\n\n---\n\n", relevant)
+                : topResults[0].Content;
+        }
+        catch (Exception ex) when (IsStoreFailure(ex, ct))
+        {
+            LogStoreFailure(ex);
+            return Unavailable;
+        }
+    }
+
+    internal Task<bool> EnsureIndexAsync(CancellationToken ct) =>
+        BuildIndexAsync(initializeOnly: true, ct);
+
+    public Task<bool> BuildIndexAsync(CancellationToken ct = default) =>
+        BuildIndexAsync(initializeOnly: false, ct);
+
+    private async Task<bool> BuildIndexAsync(bool initializeOnly, CancellationToken ct)
+    {
+        if (!IsConfigured || !await _buildLock.WaitAsync(0, ct))
+            return false;
+
+        string? unpublishedCollection = null;
+        try
+        {
+            var activeCollection = await store.GetActiveCollectionAsync(ct);
+            // A running deployment owns the alias until an explicit reindex publishes an update.
+            if (initializeOnly && activeCollection is not null)
+                return true;
+
             if (DateTimeOffset.UtcNow < _nextBuildAt)
                 return false;
 
@@ -86,18 +113,19 @@ public sealed class KnowledgeBaseService(
 
             var loaderMap = loaders
                 .SelectMany(loader => loader.SupportedExtensions.Select(ext => (Extension: ext, Loader: loader)))
-                .ToDictionary(x => x.Extension, x => x.Loader, StringComparer.OrdinalIgnoreCase);
+                .ToDictionary(entry => entry.Extension, entry => entry.Loader, StringComparer.OrdinalIgnoreCase);
 
             var files = Directory.EnumerateFiles(resolvedPath, "*", SearchOption.AllDirectories)
                 .Where(file => loaderMap.ContainsKey(Path.GetExtension(file)))
-                .OrderBy(file => file, StringComparer.Ordinal)
+                .Select(path => (Path: path,
+                    Name: Path.GetRelativePath(resolvedPath, path).Replace(Path.DirectorySeparatorChar, '/')))
+                .OrderBy(file => file.Name, StringComparer.Ordinal)
                 .ToArray();
 
-            var newIndex = new List<KnowledgeChunk>();
-            foreach (var path in files)
+            var allChunks = new List<KnowledgeChunk>();
+            foreach (var (path, fileName) in files)
             {
                 ct.ThrowIfCancellationRequested();
-                var fileName = Path.GetFileName(path);
                 var text = await loaderMap[Path.GetExtension(path)].ExtractTextAsync(path, ct);
                 var chunks = DocumentChunker.Chunk(text).ToArray();
                 if (chunks.Length == 0)
@@ -106,32 +134,48 @@ public sealed class KnowledgeBaseService(
                     return false;
                 }
 
-                var chunkIndex = 0;
-                foreach (var batch in chunks.Chunk(EmbeddingBatchSize))
-                {
-                    var embeddings = await embedder.EmbedBatchAsync(batch, ct);
-                    if (embeddings is null)
-                    {
-                        logger.LogWarning("Knowledge Base không tạo được embedding cho {File}.", fileName);
-                        return false;
-                    }
-
-                    for (var i = 0; i < batch.Length; i++)
-                        newIndex.Add(new KnowledgeChunk(embeddings[i], batch[i], fileName, chunkIndex++));
-                }
+                allChunks.AddRange(chunks.Select((chunk, index) => new KnowledgeChunk(chunk, fileName, index)));
             }
 
             ct.ThrowIfCancellationRequested();
-            if (newIndex.Count == 0)
+            if (allChunks.Count == 0)
             {
                 logger.LogWarning("Không có tài liệu Knowledge Base để lập chỉ mục.");
                 return false;
             }
 
-            // Both query and index embeddings use the same immutable provider configuration.
-            _index = newIndex;
+            var model = openAIOptions.EmbeddingModel;
+            var dimensions = openAIOptions.EmbeddingDimensions;
+            var fingerprint = Convert.ToHexString(SHA256.HashData(JsonSerializer.SerializeToUtf8Bytes(
+                new { schemaVersion = 1, model, dimensions, chunks = allChunks })));
+            var versionPrefix = $"{store.CollectionAlias}-{fingerprint[..24].ToLowerInvariant()}-";
+            if (activeCollection?.StartsWith(versionPrefix, StringComparison.Ordinal) == true)
+                return true;
+
+            unpublishedCollection = $"{versionPrefix}{Guid.NewGuid():N}";
+            await store.CreateCollectionAsync(unpublishedCollection, dimensions, ct);
+            var startIndex = 0;
+            foreach (var batch in allChunks.Chunk(EmbeddingBatchSize))
+            {
+                var embeddings = await embedder.EmbedBatchAsync(batch.Select(chunk => chunk.Content).ToArray(), ct);
+                if (embeddings is null)
+                    return false;
+
+                await store.UploadAsync(unpublishedCollection, batch, embeddings, startIndex, EmbeddingProfile, ct);
+                startIndex += batch.Length;
+            }
+
+            activeCollection = await store.GetActiveCollectionAsync(ct);
+            if ((initializeOnly && activeCollection is not null) ||
+                activeCollection?.StartsWith(versionPrefix, StringComparison.Ordinal) == true)
+                return true;
+
+            var collection = unpublishedCollection;
+            // A timeout during the alias update may still mean it was applied.
+            unpublishedCollection = null;
+            await store.ActivateAsync(collection, activeCollection is not null, ct);
             logger.LogInformation("Knowledge Base đã lập chỉ mục {ChunkCount} chunks từ {FileCount} tài liệu.",
-                newIndex.Count, files.Length);
+                allChunks.Count, files.Length);
             return true;
         }
         catch (OperationCanceledException) when (ct.IsCancellationRequested)
@@ -140,12 +184,21 @@ public sealed class KnowledgeBaseService(
         }
         catch (Exception ex)
         {
-            logger.LogWarning("Knowledge Base không lập được chỉ mục ({ErrorType}).", ex.GetType().Name);
+            logger.LogWarning("Knowledge Base không lập được chỉ mục ({ErrorType}, HTTP {StatusCode}).",
+                ex.GetType().Name, (ex as HttpRequestException)?.StatusCode);
             return false;
         }
         finally
         {
-            _buildLock.Release();
+            try
+            {
+                if (unpublishedCollection is not null)
+                    await DeleteDraftAsync(unpublishedCollection);
+            }
+            finally
+            {
+                _buildLock.Release();
+            }
         }
     }
 
@@ -162,19 +215,25 @@ public sealed class KnowledgeBaseService(
         return Path.GetFullPath(path, AppContext.BaseDirectory);
     }
 
-    private static double CosineSimilarity(float[] a, float[] b)
+    private async Task DeleteDraftAsync(string collection)
     {
-        if (a.Length != b.Length)
-            return -1;
-
-        double dot = 0, magA = 0, magB = 0;
-        for (var i = 0; i < a.Length; i++)
+        using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(5));
+        try
         {
-            dot += (double)a[i] * b[i];
-            magA += (double)a[i] * a[i];
-            magB += (double)b[i] * b[i];
+            await store.DeleteCollectionAsync(collection, timeout.Token);
         }
-
-        return dot / Math.Sqrt(magA * magB);
+        catch (Exception ex) when (IsStoreFailure(ex, CancellationToken.None))
+        {
+            logger.LogWarning("Không thể dọn collection Qdrant chưa công bố {Collection} ({ErrorType}).",
+                collection, ex.GetType().Name);
+        }
     }
+
+    private static bool IsStoreFailure(Exception ex, CancellationToken ct) =>
+        ex is HttpRequestException or JsonException ||
+        ex is OperationCanceledException && !ct.IsCancellationRequested;
+
+    private void LogStoreFailure(Exception ex) =>
+        logger.LogWarning("Không truy cập được Qdrant Knowledge Base ({ErrorType}, HTTP {StatusCode}).",
+            ex.GetType().Name, (ex as HttpRequestException)?.StatusCode);
 }

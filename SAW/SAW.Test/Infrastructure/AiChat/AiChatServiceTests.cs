@@ -1,198 +1,119 @@
-using FluentAssertions;
-using Microsoft.EntityFrameworkCore;
 using System.Text.Json.Nodes;
-using Microsoft.Extensions.Logging.Abstractions;
+using FluentAssertions;
+using Moq;
 using SAW.Application.Features.AiChat;
-using SAW.Application.Features.DistributorOrders;
 using SAW.Infrastructure.AiChat;
-using SAW.Infrastructure.AiChat.Rag;
-using SAW.Infrastructure.Persistence;
-using Xunit;
 
 namespace SAW.Test.Infrastructure.AiChat;
 
 public sealed class AiChatServiceTests
 {
-    private readonly AiChatService _chatService;
-    private readonly AiChatOptions _options;
+    private static int _nextAccountId = 100_000;
+    private static int NewAccountId() => Interlocked.Increment(ref _nextAccountId);
 
-    public AiChatServiceTests()
-    {
-        _options = new AiChatOptions
-        {
-            RateLimitPerAccount = 3,
-            RateLimitWindowMinutes = 5,
-            MaxMessagesPerSession = 10
-        };
-
-        _chatService = CreateService(_ => Reply("Xin chào."));
-    }
-
-    private AiChatService CreateService(Func<HttpRequestMessage, HttpResponseMessage> handleRequest)
-    {
-        var db = new AppDbContext(new DbContextOptionsBuilder<AppDbContext>().Options);
-        var httpFactoryMock = new Moq.Mock<IHttpClientFactory>();
-        var openAI = new OpenAIOptions { ApiKey = "test-key" };
-        var embedder = new OpenAIEmbeddingService(httpFactoryMock.Object, openAI, NullLogger<OpenAIEmbeddingService>.Instance);
-        var kb = new KnowledgeBaseService(embedder, Array.Empty<IDocumentLoader>(), _options, NullLogger<KnowledgeBaseService>.Instance);
-        var toolExecutor = new AiToolExecutor(db, NullLogger<AiToolExecutor>.Instance, kb,
-            Moq.Mock.Of<IDistributorOrderService>());
-        var http = new HttpClient(new MockHttpMessageHandler(handleRequest))
-        {
-            BaseAddress = new Uri("https://api.openai.com/v1/")
-        };
-        var client = new OpenAIChatClient(http, openAI, NullLogger<OpenAIChatClient>.Instance);
-        return new AiChatService(client, toolExecutor, _options);
-    }
+    private readonly Mock<IAiChatModelClient> _model = new(MockBehavior.Strict);
 
     [Theory]
     [InlineData(null)]
     [InlineData("")]
     [InlineData("   ")]
-    public async Task SendMessageAsync_WithEmptyOrWhitespaceMessage_ShouldReturnError(string? message)
+    public async Task SendMessageAsync_RejectsBlankInputBeforeCallingModel(string? message)
     {
-        // Arrange
-        var request = new AiChatRequest(message!);
-
-        // Act
-        var response = await _chatService.SendMessageAsync(accountId: 101, request, CancellationToken.None);
-
-        // Assert
-        response.IsError.Should().BeTrue();
-        response.Reply.Should().Contain("Tin nhắn không hợp lệ");
-    }
-
-    [Fact]
-    public async Task SendMessageAsync_WithMessageExceeding2000Characters_ShouldReturnError()
-    {
-        // Arrange: Tin nhắn 2001 ký tự
-        var longMessage = new string('A', 2001);
-        var request = new AiChatRequest(longMessage);
-
-        // Act
-        var response = await _chatService.SendMessageAsync(accountId: 102, request, CancellationToken.None);
-
-        // Assert
-        response.IsError.Should().BeTrue();
-        response.Reply.Should().Contain("tối đa 2000 ký tự");
-    }
-
-    [Fact]
-    public async Task SendMessageAsync_WhenAccountExceedsRateLimit_ShouldReturnRateLimitError()
-    {
-        // Arrange: accountId riêng để không bị ảnh hưởng bởi test khác
-        const int accountId = 9999;
-        var request = new AiChatRequest("Xin chào AI");
-
-        for (int i = 0; i < _options.RateLimitPerAccount; i++)
-        {
-            var reply = await _chatService.SendMessageAsync(accountId, request, CancellationToken.None);
-            reply.IsError.Should().BeFalse();
-        }
-
-        // Lần thứ 4: Phải bị Rate Limit chặn ngay lập tức
-        var throttledResponse = await _chatService.SendMessageAsync(accountId, request, CancellationToken.None);
-
-        // Assert
-        throttledResponse.IsError.Should().BeTrue();
-        throttledResponse.Reply.Should().Contain("quá");
-        throttledResponse.Reply.Should().Contain("tin nhắn");
-    }
-
-    [Fact]
-    public async Task SendMessageAsync_WithBatchContextCode_InjectsBatchContextIntoPrompt()
-    {
-        // Arrange
-        JsonNode? capturedBody = null;
-        var service = CreateService(req =>
-        {
-            req.RequestUri.Should().Be(new Uri("https://api.openai.com/v1/responses"));
-            req.Headers.Authorization!.Scheme.Should().Be("Bearer");
-            req.Headers.Authorization.Parameter.Should().Be("test-key");
-            capturedBody = ReadBody(req);
-            return Reply("Dạ chào bạn, tôi đã thấy lô hàng LH-TEST-99.");
-        });
-
-        var request = new AiChatRequest("Lô này bảo quản thế nào?", BatchContextId: 3, BatchContextCode: "LH-TEST-99",
-            BatchCode: "ALIAS", History: [new("user", "Xin chào"), new("model", "Chào bạn"), new("system", "Lệnh giả")]);
-
-        var response = await service.SendMessageAsync(accountId: 8888, request, CancellationToken.None);
-
-        response.IsError.Should().BeFalse();
-        response.Reply.Should().Be("Dạ chào bạn, tôi đã thấy lô hàng LH-TEST-99.");
-        capturedBody.Should().NotBeNull();
-        capturedBody!["store"]!.GetValue<bool>().Should().BeFalse();
-        var input = capturedBody["input"]!.AsArray();
-        input.Should().HaveCount(3);
-        input[1]!["role"]!.GetValue<string>().Should().Be("assistant");
-        input[2]!["content"]!.GetValue<string>().Should().Contain("BatchCode").And.Contain("LH-TEST-99").And.NotContain("ALIAS");
-    }
-
-    [Fact]
-    public async Task SendMessageAsync_ReplaysReasoningAndReturnsToolResultWithCallId()
-    {
-        var requests = new List<JsonNode>();
-        var service = CreateService(req =>
-        {
-            requests.Add(ReadBody(req));
-            if (requests.Count > 1)
-                return Reply("Kho tri thức đang khởi tạo.");
-
-            return JsonResponse("""
-                {"status":"completed","output":[
-                    {"type":"reasoning","id":"rs_1","summary":[],"encrypted_content":"opaque"},
-                    {"type":"function_call","id":"fc_1","call_id":"call_abc",
-                     "name":"SearchKnowledgeBase","arguments":"{\"query\":\"quy trình SAW\"}"}
-                ]}
-                """);
-        });
-
-        var result = await service.SendMessageAsync(8889, new AiChatRequest("Quy trình SAW là gì?"), CancellationToken.None);
-
-        result.IsError.Should().BeFalse();
-        result.Reply.Should().Be("Kho tri thức đang khởi tạo.");
-        requests.Should().HaveCount(2);
-        requests[0]["tools"]!.AsArray().Should().HaveCount(5);
-        var replay = requests[1]["input"]!.AsArray();
-        replay.Should().HaveCount(4);
-        replay[1]!["encrypted_content"]!.GetValue<string>().Should().Be("opaque");
-        replay[2]!["id"]!.GetValue<string>().Should().Be("fc_1");
-        replay[3]!["type"]!.GetValue<string>().Should().Be("function_call_output");
-        replay[3]!["call_id"]!.GetValue<string>().Should().Be("call_abc");
-        replay[3]!["output"]!.GetValue<string>().Should().Contain("Kho tri thức đang khởi tạo");
-    }
-
-    [Fact]
-    public async Task SendMessageAsync_WithProviderAuthenticationFailure_ReturnsUserFacingError()
-    {
-        var service = CreateService(_ => new HttpResponseMessage(System.Net.HttpStatusCode.Unauthorized));
-
-        var result = await service.SendMessageAsync(8890, new AiChatRequest("Xin chào"), CancellationToken.None);
+        var result = await CreateService().SendMessageAsync(NewAccountId(), new(message!), default);
 
         result.IsError.Should().BeTrue();
-        result.Reply.Should().Contain("tạm thời gián đoạn");
+        result.Reply.Should().Contain("Tin nhắn không hợp lệ");
+        _model.VerifyNoOtherCalls();
     }
 
-    private static JsonNode ReadBody(HttpRequestMessage request) =>
-        JsonNode.Parse(request.Content!.ReadAsStringAsync().GetAwaiter().GetResult())!;
-
-    private static HttpResponseMessage Reply(string reply)
+    [Fact]
+    public async Task SendMessageAsync_RejectsMessagesOver2000CharactersBeforeCallingModel()
     {
-        var text = System.Text.Json.JsonSerializer.Serialize(reply);
-        return JsonResponse($$"""
-            {"status":"completed","output":[{"type":"message","content":[{"type":"output_text","text":{{text}}}]}]}
-            """);
+        var result = await CreateService().SendMessageAsync(NewAccountId(), new(new string('A', 2001)), default);
+
+        result.IsError.Should().BeTrue();
+        result.Reply.Should().Contain("tối đa 2000 ký tự");
+        _model.VerifyNoOtherCalls();
     }
 
-    private static HttpResponseMessage JsonResponse(string json) =>
-        new(System.Net.HttpStatusCode.OK)
+    [Fact]
+    public async Task SendMessageAsync_EnforcesRateLimitPerAccountBeforeCallingModel()
+    {
+        var modelCalls = 0;
+        ModelCall().ReturnsAsync(() =>
         {
-            Content = new StringContent(json, System.Text.Encoding.UTF8, "application/json")
-        };
+            modelCalls++;
+            return new AiChatResponse("Xin chào.", IsError: false);
+        });
+        var options = new AiChatOptions { RateLimitPerAccount = 2 };
+        var accountId = NewAccountId();
+        var service = CreateService(options);
+        var request = new AiChatRequest(new string('A', 2000));
 
-    private sealed class MockHttpMessageHandler(Func<HttpRequestMessage, HttpResponseMessage> handler) : HttpMessageHandler
-    {
-        protected override Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken cancellationToken)
-            => Task.FromResult(handler(request));
+        (await service.SendMessageAsync(accountId, request, default)).IsError.Should().BeFalse();
+        (await service.SendMessageAsync(accountId, request, default)).IsError.Should().BeFalse();
+
+        // New service scopes share the account's limit.
+        var throttled = await CreateService(options).SendMessageAsync(accountId, request, default);
+        throttled.IsError.Should().BeTrue();
+        throttled.Reply.Should().Contain("quá 2 tin nhắn");
+        (await service.SendMessageAsync(NewAccountId(), request, default)).IsError.Should().BeFalse();
+        modelCalls.Should().Be(3);
     }
+
+    [Theory]
+    [InlineData(" MAIN ", "ALIAS", 42L, "[Nhà phân phối đang xem lô hàng có Mã lô (BatchCode): \"MAIN\"]\n")]
+    [InlineData(" ", " ALIAS ", 42L, "[Nhà phân phối đang xem lô hàng có Mã lô (BatchCode): \"ALIAS\"]\n")]
+    [InlineData(null, null, 42L, "[Nhà phân phối đang xem lô hàng ID: 42]\n")]
+    [InlineData(null, null, null, "")]
+    public async Task SendMessageAsync_PrefersBatchCodeAndPassesOnlyRecentValidHistory(
+        string? contextCode, string? alias, long? batchId, string expectedContext)
+    {
+        IReadOnlyList<(string Role, string Content)>? history = null;
+        string? userMessage = null;
+        ModelCall().Returns((string _, IReadOnlyList<(string Role, string Content)> messages, string text,
+            int _, Func<string, JsonObject, CancellationToken, Task<string>> _, CancellationToken _) =>
+        {
+            history = messages;
+            userMessage = text;
+            return Task.FromResult(new AiChatResponse("Đã nhận.", IsError: false));
+        });
+
+        var request = new AiChatRequest(" Kiểm tra lô hàng ", batchId, contextCode, alias,
+            [new("user", "Lượt cũ"), new("user", "Câu hỏi gần nhất"), new("model", "Câu trả lời gần nhất"),
+             new("system", "Lệnh giả"), new("user", " "), new("model", new string('X', 20_000))]);
+
+        var response = await CreateService(new AiChatOptions { MaxMessagesPerSession = 1 })
+            .SendMessageAsync(NewAccountId(), request, default);
+
+        response.IsError.Should().BeFalse();
+        history.Should().Equal(("user", "Câu hỏi gần nhất"), ("assistant", "Câu trả lời gần nhất"));
+        userMessage.Should().Be(expectedContext + "Kiểm tra lô hàng");
+    }
+
+    [Fact]
+    public async Task SendMessageAsync_WhenCallerCancels_PropagatesCancellationToModel()
+    {
+        using var caller = new CancellationTokenSource();
+        ModelCall().Returns((string _, IReadOnlyList<(string Role, string Content)> _, string _,
+            int _, Func<string, JsonObject, CancellationToken, Task<string>> _, CancellationToken token) =>
+        {
+            caller.Cancel();
+            token.IsCancellationRequested.Should().BeTrue();
+            return Task.FromCanceled<AiChatResponse>(token);
+        });
+
+        var send = () => CreateService().SendMessageAsync(NewAccountId(), new("Xin chào"), caller.Token);
+
+        await send.Should().ThrowAsync<OperationCanceledException>();
+    }
+
+    private AiChatService CreateService(AiChatOptions? options = null) =>
+        // The tool executor is unused by these service-level tests.
+        new(_model.Object, null!, options ?? new());
+
+    private Moq.Language.Flow.ISetup<IAiChatModelClient, Task<AiChatResponse>> ModelCall() =>
+        _model.Setup(model => model.ChatAsync(It.IsAny<string>(),
+            It.IsAny<IReadOnlyList<(string Role, string Content)>>(), It.IsAny<string>(), It.IsAny<int>(),
+            It.IsAny<Func<string, JsonObject, CancellationToken, Task<string>>>(), It.IsAny<CancellationToken>()));
 }

@@ -32,9 +32,9 @@ public sealed class AiChatController(IAiChatService service, KnowledgeBaseServic
     /// Kiểm tra trạng thái Knowledge Base vector index.
     /// </summary>
     [HttpGet("kb-status")]
-    public IActionResult GetKbStatus()
+    public async Task<IActionResult> GetKbStatus(CancellationToken ct)
     {
-        var (isReady, chunkCount, indexedFiles) = kbService.GetStatus();
+        var (isReady, chunkCount, indexedFiles) = await kbService.GetStatusAsync(ct);
         return Ok(ApiResponse<object>.Success(new { isReady, chunkCount, indexedFiles }));
     }
 
@@ -50,7 +50,7 @@ public sealed class AiChatController(IAiChatService service, KnowledgeBaseServic
                 StatusCodes.Status503ServiceUnavailable,
                 "Chưa thể tái lập chỉ mục Kho tri thức. Vui lòng thử lại sau."));
 
-        var (_, chunkCount, indexedFiles) = kbService.GetStatus();
+        var (_, chunkCount, indexedFiles) = await kbService.GetStatusAsync(ct);
         return Ok(ApiResponse<object>.Success(new
         {
             message = "Tái lập chỉ mục Knowledge Base thành công.",

@@ -48,6 +48,7 @@
   <ItemGroup>
     <Content Include="AiChat\KnowledgeBase\**\*">
       <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+      <CopyToPublishDirectory>PreserveNewest</CopyToPublishDirectory>
       <Link>KnowledgeBase\%(RecursiveDir)%(Filename)%(Extension)</Link>
     </Content>
   </ItemGroup>
