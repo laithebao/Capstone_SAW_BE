@@ -3,12 +3,18 @@ using System.Text;
 using System.Text.Json;
 using System.Text.Json.Nodes;
 using FluentAssertions;
+using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging.Abstractions;
+using Moq;
+using SAW.Application.Features.AiChat;
+using SAW.Application.Features.DistributorOrders;
 using SAW.Infrastructure.AiChat;
+using SAW.Infrastructure.AiChat.Rag;
 using SAW.Infrastructure.AiForecast;
 using SAW.Infrastructure.Extensions;
+using SAW.Infrastructure.Persistence;
 using Xunit;
 
 namespace SAW.Test.Infrastructure.AiChat;
@@ -72,12 +78,13 @@ public sealed class MafOpenAIIntegrationTests
         initial["input"]!.AsArray().Should().Contain(item => item!["role"]!.GetValue<string>() == "assistant");
         var tools = initial["tools"]!.AsArray();
         tools.Select(item => item!["name"]!.GetValue<string>()).Should()
-            .BeEquivalentTo("GetBatchSummary", "GetBatchQcReport", "GetStorageAdvice", "SearchKnowledgeBase");
+            .BeEquivalentTo("GetBatchSummary", "GetBatchQcReport", "SearchSaleLots", "GetStorageAdvice", "SearchKnowledgeBase");
         foreach (var tool in tools)
         {
             tool!["strict"]!.GetValue<bool>().Should().BeTrue();
             tool["parameters"]!["additionalProperties"]!.GetValue<bool>().Should().BeFalse();
-            tool["parameters"]!["properties"]!.AsObject().Count.Should().Be(1);
+            tool["parameters"]!["properties"]!.AsObject().Count.Should()
+                .Be(tool["name"]!.GetValue<string>() == "SearchSaleLots" ? 3 : 1);
         }
 
         var replay = handler.Requests[1]["input"]!.AsArray();
@@ -86,6 +93,48 @@ public sealed class MafOpenAIIntegrationTests
         var output = replay.Single(item => item?["type"]?.GetValue<string>() == "function_call_output")!;
         output["call_id"]!.GetValue<string>().Should().Be("call_qc");
         output["output"]!.GetValue<string>().Should().Be("""{"qcResult":"PASS"}""");
+    }
+
+    [Theory]
+    [InlineData(false, 8891)]
+    [InlineData(true, 8892)]
+    public async Task Chat_QueriesLiveSaleCatalogForMostExpensiveMatchingLot(bool useMaf, int accountId)
+    {
+        using var handler = new ResponsesHandler(Response("""
+            [{"type":"function_call","id":"fc_sale","call_id":"call_sale","status":"completed",
+              "name":"SearchSaleLots","arguments":"{\"search\":\"xoài\",\"sort\":\"price_desc\",\"page\":1}"}]
+            """, responseId: "resp_sale"), TextResponse("Lô XOAI-01 có giá 1.500.000 đồng/cả lô."));
+        using var http = new HttpClient(handler) { BaseAddress = new Uri("https://api.openai.com/v1/") };
+        IAiChatModelClient client = useMaf
+            ? new MafAiChatClient(http, Options, NullLogger<MafAiChatClient>.Instance)
+            : new OpenAIChatClient(http, Options, NullLogger<OpenAIChatClient>.Instance);
+        var repository = new Mock<IDistributorOrderRepository>(MockBehavior.Strict);
+        var query = new DistributorQuery(Search: "xoài");
+        var lot = new CatalogLot(42, "XOAI-01", "Xoài cát", "Xoài", "Nhà cung cấp", "Đồng Tháp", "A",
+            new DateOnly(2026, 11, 1), null, 100m, 1_500_000m);
+        repository.Setup(r => r.CatalogAsync(accountId, query, It.IsAny<CancellationToken>(), CatalogSort.PriceDescending))
+            .ReturnsAsync(new DistributorPage<CatalogLot>([lot], 1, 1, 10));
+
+        await using var db = new AppDbContext(new DbContextOptionsBuilder<AppDbContext>().Options);
+        var chatOptions = new AiChatOptions();
+        var embedder = new OpenAIEmbeddingService(Mock.Of<IHttpClientFactory>(), Options, NullLogger<OpenAIEmbeddingService>.Instance);
+        var kb = new KnowledgeBaseService(embedder, [], chatOptions, NullLogger<KnowledgeBaseService>.Instance);
+        var executor = new AiToolExecutor(db, NullLogger<AiToolExecutor>.Instance, kb, new DistributorOrderService(repository.Object));
+        var service = new AiChatService(client, executor, chatOptions);
+
+        var result = await service.SendMessageAsync(accountId, new AiChatRequest("Lô xoài nào đắt nhất?"), default);
+
+        result.IsError.Should().BeFalse();
+        result.Reply.Should().Contain("XOAI-01");
+        repository.Verify(r => r.CatalogAsync(accountId, query, It.IsAny<CancellationToken>(), CatalogSort.PriceDescending), Times.Once);
+        var output = handler.Requests[1]["input"]!.AsArray()
+            .Single(item => item?["type"]?.GetValue<string>() == "function_call_output")!;
+        var data = JsonNode.Parse(output["output"]!.GetValue<string>())!;
+        data["totalCount"]!.GetValue<int>().Should().Be(1);
+        data["currency"]!.GetValue<string>().Should().Be("VND");
+        var item = data["items"]!.AsArray().Should().ContainSingle().Subject!;
+        item["batchCode"]!.GetValue<string>().Should().Be("XOAI-01");
+        item["wholeLotPrice"]!.GetValue<decimal>().Should().Be(1_500_000m);
     }
 
     [Fact]

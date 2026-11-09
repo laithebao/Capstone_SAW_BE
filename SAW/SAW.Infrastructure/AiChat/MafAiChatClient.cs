@@ -1,4 +1,5 @@
 using System.ClientModel;
+using System.ComponentModel;
 using System.Text.Json;
 using System.Text.Json.Nodes;
 using Microsoft.Agents.AI;
@@ -130,6 +131,12 @@ public sealed class MafAiChatClient(HttpClient http, OpenAIOptions options, ILog
             executeTool(nameof(GetBatchSummary), new JsonObject { ["batchCode"] = batchCode }, ct);
         Task<string> GetBatchQcReport(string batchCode, CancellationToken ct) =>
             executeTool(nameof(GetBatchQcReport), new JsonObject { ["batchCode"] = batchCode }, ct);
+        Task<string> SearchSaleLots(
+            [Description("Tên nông sản, tên sản phẩm hoặc mã lô. Dùng chuỗi rỗng để tìm trong toàn bộ danh mục.")] string search,
+            [Description("newest: mới cập nhật; price_asc: giá cả lô tăng dần; price_desc: giá cả lô giảm dần.")] string sort,
+            [Description("Số trang bắt đầu từ 1. Mỗi trang có tối đa 10 lô.")] int page,
+            CancellationToken ct) => executeTool(nameof(SearchSaleLots),
+                new JsonObject { ["search"] = search, ["sort"] = sort, ["page"] = page }, ct);
         Task<string> GetStorageAdvice(int cropTypeId, CancellationToken ct) =>
             executeTool(nameof(GetStorageAdvice), new JsonObject { ["cropTypeId"] = cropTypeId }, ct);
         Task<string> SearchKnowledgeBase(string query, CancellationToken ct) =>
@@ -140,6 +147,8 @@ public sealed class MafAiChatClient(HttpClient http, OpenAIOptions options, ILog
                 "Tra cứu thông tin tổng quan thực tế của lô theo Mã lô (BatchCode), gồm nguồn gốc, ngày thu hoạch, hạn dùng, trạng thái và bảo quản."),
             Tool(GetBatchQcReport, nameof(GetBatchQcReport),
                 "Tra cứu báo cáo kiểm định đã hoàn tất theo Mã lô (BatchCode), gồm hạng chất lượng, cảm quan, hóa nghiệm và tiêu chí."),
+            Tool(SearchSaleLots, nameof(SearchSaleLots),
+                "Tra cứu danh mục lô nông sản đang mở bán trên SAW: liệt kê, tìm theo nông sản hoặc mã lô, đếm lô và so sánh giá cả lô. Sắp xếp toàn bộ kết quả phù hợp trước khi phân trang."),
             Tool(GetStorageAdvice, nameof(GetStorageAdvice),
                 "Tra cứu thông số nhiệt độ, độ ẩm và hạn bảo quản theo ID của loại nông sản."),
             Tool(SearchKnowledgeBase, nameof(SearchKnowledgeBase),

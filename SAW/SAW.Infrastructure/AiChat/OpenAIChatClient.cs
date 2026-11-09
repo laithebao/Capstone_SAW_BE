@@ -54,6 +54,22 @@ public sealed class OpenAIChatClient(HttpClient http, OpenAIOptions options, ILo
         "strict": true
       },
       {
+        "name": "SearchSaleLots",
+        "description": "Tra cứu danh mục lô nông sản đang mở bán trên SAW. Dùng để liệt kê, tìm theo nông sản hoặc mã lô, đếm lô và so sánh giá cả lô. Sắp xếp toàn bộ kết quả phù hợp trước khi phân trang.",
+        "parameters": {
+          "type": "object",
+          "properties": {
+            "search": { "type": "string", "description": "Tên nông sản, tên sản phẩm hoặc mã lô. Dùng chuỗi rỗng để tìm trong toàn bộ danh mục." },
+            "sort": { "type": "string", "enum": ["newest", "price_asc", "price_desc"], "description": "Lô mới cập nhật, giá cả lô tăng dần hoặc giá cả lô giảm dần." },
+            "page": { "type": "integer", "description": "Số trang bắt đầu từ 1. Mỗi trang có tối đa 10 lô." }
+          },
+          "required": ["search", "sort", "page"],
+          "additionalProperties": false
+        },
+        "type": "function",
+        "strict": true
+      },
+      {
         "name": "GetStorageAdvice",
         "description": "Lấy thông số kỹ thuật bảo quản và hạn sử dụng ước tính cho một loại nông sản cụ thể: dải nhiệt độ, độ ẩm, hạn bảo quản thông thường, lưu ý đặc biệt.",
         "parameters": {
@@ -170,7 +186,7 @@ public sealed class OpenAIChatClient(HttpClient http, OpenAIOptions options, ILo
                     var name = ReadString(call["name"]);
                     var arguments = ReadArguments(ReadString(call["arguments"]));
                     var result = """{"error":"Tham số công cụ không hợp lệ hoặc công cụ không được hỗ trợ."}""";
-                    if (name is "GetBatchSummary" or "GetBatchQcReport" or "GetStorageAdvice" or "SearchKnowledgeBase"
+                    if (name is "GetBatchSummary" or "GetBatchQcReport" or "SearchSaleLots" or "GetStorageAdvice" or "SearchKnowledgeBase"
                         && arguments is not null)
                     {
                         logger.LogInformation("OpenAI tool {Tool}, vòng {Round}.", name, round);

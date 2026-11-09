@@ -3,6 +3,7 @@ using Microsoft.EntityFrameworkCore;
 using System.Text.Json.Nodes;
 using Microsoft.Extensions.Logging.Abstractions;
 using SAW.Application.Features.AiChat;
+using SAW.Application.Features.DistributorOrders;
 using SAW.Infrastructure.AiChat;
 using SAW.Infrastructure.AiChat.Rag;
 using SAW.Infrastructure.Persistence;
@@ -34,7 +35,8 @@ public sealed class AiChatServiceTests
         var openAI = new OpenAIOptions { ApiKey = "test-key" };
         var embedder = new OpenAIEmbeddingService(httpFactoryMock.Object, openAI, NullLogger<OpenAIEmbeddingService>.Instance);
         var kb = new KnowledgeBaseService(embedder, Array.Empty<IDocumentLoader>(), _options, NullLogger<KnowledgeBaseService>.Instance);
-        var toolExecutor = new AiToolExecutor(db, NullLogger<AiToolExecutor>.Instance, kb);
+        var toolExecutor = new AiToolExecutor(db, NullLogger<AiToolExecutor>.Instance, kb,
+            Moq.Mock.Of<IDistributorOrderService>());
         var http = new HttpClient(new MockHttpMessageHandler(handleRequest))
         {
             BaseAddress = new Uri("https://api.openai.com/v1/")
@@ -150,7 +152,7 @@ public sealed class AiChatServiceTests
         result.IsError.Should().BeFalse();
         result.Reply.Should().Be("Kho tri thức đang khởi tạo.");
         requests.Should().HaveCount(2);
-        requests[0]["tools"]!.AsArray().Should().HaveCount(4);
+        requests[0]["tools"]!.AsArray().Should().HaveCount(5);
         var replay = requests[1]["input"]!.AsArray();
         replay.Should().HaveCount(4);
         replay[1]!["encrypted_content"]!.GetValue<string>().Should().Be("opaque");

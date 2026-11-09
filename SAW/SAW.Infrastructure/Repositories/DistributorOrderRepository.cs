@@ -83,7 +83,8 @@ public sealed class DistributorOrderRepository(DbContextOptions<AppDbContext> op
         return new(items, total, query.Page, query.PageSize);
     }
 
-    public async Task<DistributorPage<CatalogLot>> CatalogAsync(int accountId, DistributorQuery query, CancellationToken ct)
+    public async Task<DistributorPage<CatalogLot>> CatalogAsync(int accountId, DistributorQuery query, CancellationToken ct,
+        CatalogSort sort = CatalogSort.Newest)
     {
         await using var db = Context();
         await OwnerAsync(db, accountId, ct);
@@ -91,7 +92,13 @@ public sealed class DistributorOrderRepository(DbContextOptions<AppDbContext> op
         if (!string.IsNullOrWhiteSpace(query.Search)) rows = rows.Where(o => o.ProductBatch.BatchCode.Contains(query.Search)
             || o.ProductBatch.ProductName.Contains(query.Search) || o.ProductBatch.CropType.CropName.Contains(query.Search));
         var total = await rows.CountAsync(ct);
-        var items = await rows.OrderByDescending(o => o.UpdatedAt).ThenByDescending(o => o.ProductBatchId)
+        var sorted = sort switch
+        {
+            CatalogSort.PriceAscending => rows.OrderBy(o => o.WholeLotPrice),
+            CatalogSort.PriceDescending => rows.OrderByDescending(o => o.WholeLotPrice),
+            _ => rows.OrderByDescending(o => o.UpdatedAt)
+        };
+        var items = await sorted.ThenByDescending(o => o.ProductBatchId)
             .Skip((query.Page - 1) * query.PageSize).Take(query.PageSize)
             .Select(o => new CatalogLot(o.ProductBatchId, o.ProductBatch.BatchCode, o.ProductBatch.ProductName,
                 o.ProductBatch.CropType.CropName, o.ProductBatch.Supplier.SupplierName, o.ProductBatch.GrowingArea.AreaName,

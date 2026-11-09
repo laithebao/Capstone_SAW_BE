@@ -2,17 +2,20 @@ using System.Text.Json;
 using System.Text.Json.Nodes;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Logging;
+using SAW.Application.Features.DistributorOrders;
 using SAW.Infrastructure.Persistence;
 
 namespace SAW.Infrastructure.AiChat;
 
 /// <summary>
 /// Executes AI tool calls by querying the real database.
-/// All queries filter by the authenticated distributor's accountId to prevent data leakage.
+/// Batch and catalog lookups use the authenticated distributor's accountId for access checks.
 /// </summary>
-public sealed class AiToolExecutor(AppDbContext db, ILogger<AiToolExecutor> logger, KnowledgeBaseService knowledgeBase)
+public sealed class AiToolExecutor(AppDbContext db, ILogger<AiToolExecutor> logger, KnowledgeBaseService knowledgeBase,
+    IDistributorOrderService distributorOrders)
 {
     private static readonly JsonSerializerOptions JsonOpts = new() { WriteIndented = true };
+    private const int CatalogPageSize = 10;
 
     public async Task<string> ExecuteAsync(string toolName, JsonNode? args, int accountId, CancellationToken ct)
     {
@@ -23,6 +26,7 @@ public sealed class AiToolExecutor(AppDbContext db, ILogger<AiToolExecutor> logg
             {
                 "GetBatchSummary" => await GetBatchSummaryAsync(GetBatchIdentifier(args), accountId, ct),
                 "GetBatchQcReport" => await GetBatchQcReportAsync(GetBatchIdentifier(args), accountId, ct),
+                "SearchSaleLots" => await SearchSaleLotsAsync(args, accountId, ct),
                 "GetStorageAdvice" => await GetStorageAdviceAsync(GetCropTypeId(args), ct),
                 "SearchKnowledgeBase" => await knowledgeBase.SearchAsync(GetQuery(args), ct),
                 _ => JsonSerializer.Serialize(new { error = $"Tool '{toolName}' không được hỗ trợ." })
@@ -41,6 +45,48 @@ public sealed class AiToolExecutor(AppDbContext db, ILogger<AiToolExecutor> logg
             logger.LogWarning("Tool {Tool} không xử lý được ({ErrorType}).", toolName, ex.GetType().Name);
             return """{"error":"Không thể tra cứu dữ liệu lúc này. Vui lòng thử lại sau."}""";
         }
+    }
+
+    private async Task<string> SearchSaleLotsAsync(JsonNode? args, int accountId, CancellationToken ct)
+    {
+        if (args is not JsonObject obj
+            || obj["search"] is not JsonValue searchValue || !searchValue.TryGetValue<string>(out var search)
+            || search.Length > 100 || search.Any(char.IsControl)
+            || obj["page"] is not JsonValue pageValue || !pageValue.TryGetValue<int>(out var page)
+            || page < 1 || page - 1 > int.MaxValue / CatalogPageSize)
+            throw new ToolArgumentException("Từ khóa hoặc số trang tra cứu lô đang bán không hợp lệ.");
+
+        var sort = obj["sort"] is JsonValue sortValue && sortValue.TryGetValue<string>(out var order)
+            ? order switch
+            {
+                "newest" => CatalogSort.Newest,
+                "price_asc" => CatalogSort.PriceAscending,
+                "price_desc" => CatalogSort.PriceDescending,
+                _ => throw new ToolArgumentException("Thứ tự tra cứu lô đang bán không hợp lệ.")
+            }
+            : throw new ToolArgumentException("Thiếu thứ tự tra cứu lô đang bán.");
+
+        var result = await distributorOrders.CatalogAsync(accountId,
+            new DistributorQuery(Search: search.Trim(), Page: page, PageSize: CatalogPageSize), ct, sort);
+
+        return JsonSerializer.Serialize(new
+        {
+            totalCount = result.TotalCount,
+            page = result.Page,
+            pageSize = result.PageSize,
+            currency = "VND",
+            items = result.Items.Select(lot => new
+            {
+                batchCode = lot.BatchCode,
+                productName = lot.ProductName,
+                cropName = lot.CropName,
+                origin = lot.Origin,
+                qualityGrade = lot.QualityGrade,
+                expiryDate = lot.ExpiryDate,
+                weightKg = lot.WeightKg,
+                wholeLotPrice = lot.WholeLotPrice
+            })
+        });
     }
 
     // ── Tool: GetBatchSummary ─────────────────────────────────────────

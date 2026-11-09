@@ -246,6 +246,36 @@ public sealed class DistributorOrderSqlTests : IClassFixture<DistributorSqlFixtu
     }
 
     [ReceivingSqlFact]
+    public async Task Catalog_PriceSortRanksAllMatchingSaleableLotsBeforePaging()
+    {
+        var buyer = await BuyerAsync();
+        var expensive = await LotAsync(2_000_000m);
+        var cheap = await LotAsync(1_000_000m);
+        var unpublished = await LotAsync(3_000_000m);
+        var otherProduct = await LotAsync(4_000_000m);
+        await using (var db = fixture.Context())
+        {
+            foreach (var lot in new[] { expensive, cheap, unpublished })
+                (await db.ProductBatches.FindAsync(lot.BatchId))!.ProductName = "Xoài thử sắp xếp";
+            (await db.BatchSaleOffers.FindAsync(unpublished.BatchId))!.IsPublished = false;
+            await db.SaveChangesAsync();
+        }
+
+        var repo = Repository();
+        var query = new DistributorQuery(Search: "Xoài thử sắp xếp", PageSize: 1);
+        var first = await repo.CatalogAsync(buyer, query, default, CatalogSort.PriceDescending);
+        var second = await repo.CatalogAsync(buyer, query with { Page = 2 }, default, CatalogSort.PriceDescending);
+        var lowest = await repo.CatalogAsync(buyer, query, default, CatalogSort.PriceAscending);
+
+        Assert.Equal(2, first.TotalCount);
+        Assert.Equal(expensive.BatchId, Assert.Single(first.Items).BatchId);
+        Assert.Equal(cheap.BatchId, Assert.Single(second.Items).BatchId);
+        Assert.Equal(cheap.BatchId, Assert.Single(lowest.Items).BatchId);
+        Assert.Equal(otherProduct.BatchId, Assert.Single((await repo.CatalogAsync(buyer,
+            new DistributorQuery(Search: otherProduct.BatchCode), default, CatalogSort.PriceDescending)).Items).BatchId);
+    }
+
+    [ReceivingSqlFact]
     public async Task WarehousePublishesReceivedLot_ThenDistributorCatalogShowsIt()
     {
         var buyer = await BuyerAsync();
