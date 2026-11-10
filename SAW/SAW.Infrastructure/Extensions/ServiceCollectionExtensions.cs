@@ -23,6 +23,8 @@ using SAW.Application.Features.SupplyContracts;
 using SAW.Infrastructure.Notifications;
 using SAW.Infrastructure.AiChat;
 using SAW.Application.Features.AiChat;
+using SAW.Application.Features.SpoilageForecast;
+using SAW.Infrastructure.AiForecast;
 
 namespace SAW.Infrastructure.Extensions;
 
@@ -86,22 +88,47 @@ public static class ServiceCollectionExtensions
         services.AddHostedService<QrCodeGenerationWorker>();
         services.AddHostedService<SupplyContractDeliveryReminderWorker>();
 
-        // ── AI Chat (Gemini) ───────────────────────────────────────────────
-        var geminiOptions = configuration.GetSection("GeminiAI").Get<GeminiOptions>() ?? new GeminiOptions();
-        services.AddSingleton(geminiOptions);
+        // AI Chat (OpenAI)
+        var aiChatOptions = configuration.GetSection("AiChat").Get<AiChatOptions>() ?? new AiChatOptions();
+        var aiExecution = configuration.GetSection("AiExecution").Get<AiExecutionOptions>() ?? new AiExecutionOptions();
+        var openAIOptions = configuration.GetSection("OpenAI").Get<OpenAIOptions>() ?? new OpenAIOptions();
+        var qdrantOptions = configuration.GetSection("Qdrant").Get<QdrantOptions>() ?? new QdrantOptions();
+        services.AddSingleton(aiChatOptions);
+        services.AddSingleton(openAIOptions);
+        services.AddSingleton(aiExecution);
 
-        // Chat API client (HttpClient typed)
-        services.AddHttpClient<GeminiApiClient>(client =>
+        services.AddHttpClient<OpenAIChatClient>(client =>
         {
-            // 120s: đủ cho Gemini Flash cả khi mạng chậm hoặc tải cao
-            client.Timeout = TimeSpan.FromSeconds(120);
-        });
+            client.BaseAddress = OpenAIHttp.BaseAddress;
+            client.Timeout = TimeSpan.FromSeconds(Math.Clamp(openAIOptions.ChatRequestTimeoutSeconds, 1, 120));
+        }).RedactLoggedHeaders(new[] { "Authorization" });
 
-        // Embedding API client (named, dùng bởi GeminiEmbeddingService — Singleton)
-        services.AddHttpClient(GeminiEmbeddingService.HttpClientName, client =>
+        services.AddHttpClient<MafAiChatClient>(client =>
         {
-            client.Timeout = TimeSpan.FromSeconds(30);
-        });
+            client.Timeout = TimeSpan.FromSeconds(Math.Clamp(openAIOptions.ChatRequestTimeoutSeconds, 1, 120));
+        }).RedactLoggedHeaders(new[] { "Authorization" });
+        services.AddScoped<IAiChatModelClient>(sp => aiExecution.UseMafForChat
+            ? sp.GetRequiredService<MafAiChatClient>()
+            : sp.GetRequiredService<OpenAIChatClient>());
+
+        services.AddHttpClient(OpenAIEmbeddingService.HttpClientName, client =>
+        {
+            client.BaseAddress = OpenAIHttp.BaseAddress;
+            client.Timeout = TimeSpan.FromSeconds(Math.Clamp(openAIOptions.EmbeddingRequestTimeoutSeconds, 1, 120));
+        }).RedactLoggedHeaders(new[] { "Authorization" });
+
+        services.AddSingleton(qdrantOptions);
+        services.AddHttpClient(QdrantKnowledgeStore.HttpClientName, client =>
+        {
+            client.Timeout = TimeSpan.FromSeconds(15);
+            if (qdrantOptions.IsConfigured)
+            {
+                client.BaseAddress = qdrantOptions.EndpointUri;
+                client.DefaultRequestHeaders.Add("api-key", qdrantOptions.ApiKey.Trim());
+            }
+        })
+        .ConfigurePrimaryHttpMessageHandler(() => new HttpClientHandler { AllowAutoRedirect = false })
+        .RedactLoggedHeaders(new[] { "api-key" });
 
         // Document loaders — mỗi loader hỗ trợ một định dạng file
         services.AddSingleton<IDocumentLoader, MarkdownTextLoader>();
@@ -110,18 +137,29 @@ public static class ServiceCollectionExtensions
         services.AddSingleton<IDocumentLoader, WordDocumentLoader>();
 
         // RAG core services
-        services.AddSingleton<GeminiEmbeddingService>();
+        services.AddSingleton<OpenAIEmbeddingService>();
+        services.AddSingleton<QdrantKnowledgeStore>();
         services.AddSingleton<KnowledgeBaseService>();
 
-        // Background service: xây dựng vector index sau khi server khởi động
+        // Seed or refresh the collection during startup.
         services.AddHostedService<KnowledgeBaseIndexingService>();
 
         services.AddScoped<AiToolExecutor>();
         services.AddScoped<IAiChatService, AiChatService>();
 
-        // ── AI Spoilage Forecast ───────────────────────────────────────────
-        services.AddScoped<SAW.Infrastructure.AiForecast.ForecastInputCollector>();
-        services.AddScoped<SAW.Application.Features.SpoilageForecast.ISpoilageForecastService, SAW.Infrastructure.AiForecast.SpoilageForecastGeminiService>();
+        // AI Spoilage Forecast (OpenAI)
+        services.AddHttpClient<OpenAIForecastClient>(client =>
+        {
+            client.BaseAddress = OpenAIHttp.BaseAddress;
+            client.Timeout = Timeout.InfiniteTimeSpan;
+        }).RedactLoggedHeaders(new[] { "Authorization" });
+        services.AddHttpClient<MafForecastClient>(client => client.Timeout = Timeout.InfiniteTimeSpan)
+            .RedactLoggedHeaders(new[] { "Authorization" });
+        services.AddScoped<IForecastModelClient>(sp => aiExecution.UseMafForForecast
+            ? sp.GetRequiredService<MafForecastClient>()
+            : sp.GetRequiredService<OpenAIForecastClient>());
+        services.AddScoped<ForecastInputCollector>();
+        services.AddScoped<ISpoilageForecastService, SpoilageForecastService>();
 
         return services;
     }

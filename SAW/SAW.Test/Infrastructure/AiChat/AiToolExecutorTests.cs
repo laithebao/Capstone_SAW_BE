@@ -2,6 +2,8 @@ using System.Text.Json.Nodes;
 using FluentAssertions;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Logging.Abstractions;
+using Moq;
+using SAW.Application.Features.DistributorOrders;
 using SAW.Infrastructure.AiChat;
 using SAW.Infrastructure.AiChat.Rag;
 using SAW.Infrastructure.Persistence;
@@ -21,12 +23,14 @@ public sealed class AiToolExecutorTests
         var kbLogger = NullLogger<KnowledgeBaseService>.Instance;
 
         // Khởi tạo dummy KnowledgeBaseService
-        var kbOptions = new GeminiOptions();
+        var kbOptions = new AiChatOptions();
         var httpFactoryMock = new Moq.Mock<IHttpClientFactory>();
-        var embedder = new GeminiEmbeddingService(httpFactoryMock.Object, kbOptions, NullLogger<GeminiEmbeddingService>.Instance);
-        var kb = new KnowledgeBaseService(embedder, Array.Empty<IDocumentLoader>(), kbOptions, kbLogger);
+        var openAI = new OpenAIOptions { ApiKey = "test-key" };
+        var embedder = new OpenAIEmbeddingService(httpFactoryMock.Object, openAI, NullLogger<OpenAIEmbeddingService>.Instance);
+        var store = new QdrantKnowledgeStore(httpFactoryMock.Object, new QdrantOptions());
+        var kb = new KnowledgeBaseService(embedder, [], kbOptions, openAI, store, kbLogger);
 
-        _executor = new AiToolExecutor(db, logger, kb);
+        _executor = new AiToolExecutor(db, logger, kb, Mock.Of<IDistributorOrderService>());
     }
 
     [Fact]
@@ -40,8 +44,7 @@ public sealed class AiToolExecutorTests
         var result = await _executor.ExecuteAsync(unknownTool, args, accountId: 1, CancellationToken.None);
 
         // Assert
-        result.Should().Contain("không được hỗ trợ");
-        result.Should().Contain(unknownTool);
+        ExtractError(result).Should().Contain("không được hỗ trợ").And.Contain(unknownTool);
     }
 
     [Fact]
@@ -108,6 +111,17 @@ public sealed class AiToolExecutorTests
         // Assert
         result.Should().NotBeNullOrWhiteSpace();
         result.Should().Contain("error");
+    }
+
+    [Theory]
+    [InlineData("""{"search":"xoài","sort":"price_desc","page":0}""")]
+    [InlineData("""{"search":"xoài","sort":"price_desc","page":2147483647}""")]
+    [InlineData("""{"search":"xoài","sort":"unknown","page":1}""")]
+    public async Task ExecuteAsync_SearchSaleLots_RejectsInvalidArguments(string args)
+    {
+        var result = await _executor.ExecuteAsync("SearchSaleLots", JsonNode.Parse(args), 1, CancellationToken.None);
+
+        ExtractError(result).Should().Contain("tra cứu lô đang bán không hợp lệ");
     }
 
     private static string ExtractError(string json)

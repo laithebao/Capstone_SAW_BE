@@ -192,6 +192,25 @@ dotnet run --project SAW.API
 ```
 API sẽ chạy tại: `https://localhost:7xxx` | Swagger UI: `https://localhost:7xxx/swagger`
 
+#### Kho tri thức AI Chat trên Qdrant Cloud
+
+Tạo cluster Qdrant Cloud và Database API key có quyền **Manage** để backend tạo collection và cập nhật alias.
+Đặt các biến môi trường sau khi chạy local, hoặc thêm chúng vào **Environment variables** của Azure App Service.
+
+| Biến | Giá trị |
+|---|---|
+| `Qdrant__Endpoint` | URL HTTPS của cluster, dạng `https://<cluster>.<region>.<provider>.cloud.qdrant.io` |
+| `Qdrant__ApiKey` | Database API key của cluster, lưu trong cấu hình bí mật của backend |
+| `Qdrant__CollectionAlias` | Tên riêng cho từng môi trường, tối đa 64 ký tự gồm chữ, số, `-` hoặc `_`. Mặc định là `saw-knowledge-base`. |
+| `OPENAI_API_KEY` | API key OpenAI dùng cho chat và tạo embedding |
+
+Ở môi trường Development, backend kiểm tra thư mục `KnowledgeBase` khi khởi động và đồng bộ trong nền nếu có thay đổi.
+Sau khi thêm, sửa hoặc xóa tài liệu trong lúc backend đang chạy, khởi động lại backend hoặc gọi reindex thủ công. Dùng `GET /api/distributor/ai-chat/kb-status` để kiểm tra.
+Với môi trường khác, backend nạp kho lần đầu. Sau khi deploy tài liệu mới hoặc thay đổi cấu hình embedding, gọi `POST /api/distributor/ai-chat/kb-reindex` với token Distributor.
+Đặt `AiChat__KnowledgeBaseAutoSync=true` để đồng bộ khi khởi động ở môi trường có một backend chịu trách nhiệm cập nhật alias. Đặt `false` để tắt.
+Backend giữ collection đang phục vụ cho đến khi collection mới được ghi đầy đủ, kể cả khi thư mục rỗng hoặc lần đồng bộ gặp lỗi. Nếu tài liệu và cấu hình embedding giống bản đang dùng, reindex dùng lại collection hiện tại.
+Các collection cũ được giữ để có thể khôi phục. Có thể dọn các bản cũ không còn cần qua Qdrant Dashboard sau khi kiểm tra alias đang trỏ tới đâu.
+
 ### 5. Chạy tests
 ```bash
 dotnet test SAW.Test

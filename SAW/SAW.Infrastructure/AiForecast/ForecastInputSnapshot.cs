@@ -20,5 +20,6 @@ public sealed record ForecastInputSnapshot(
     WarehouseLocation? CurrentLocation,
     int DaysFromHarvest,
     int? DaysUntilExpiry,
-    decimal? ShelfLifeConsumedPct
+    decimal? ShelfLifeConsumedPct,
+    decimal QuantityOnHandKg
 );

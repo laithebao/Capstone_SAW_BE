@@ -1,37 +1,33 @@
 using Microsoft.Extensions.Hosting;
-using Microsoft.Extensions.Logging;
 
 namespace SAW.Infrastructure.AiChat;
 
 /// <summary>
-/// Background service chạy ngay sau khi server khởi động để xây dựng RAG vector index.
-/// Việc indexing diễn ra ở background — không block startup, không block request.
-/// Trong thời gian indexing, <see cref="KnowledgeBaseService.SearchAsync"/> sẽ trả về
-/// thông báo "đang khởi tạo" thay vì kết quả.
+/// Seeds or refreshes the Qdrant index during startup.
 /// </summary>
 public sealed class KnowledgeBaseIndexingService(
     KnowledgeBaseService knowledgeBase,
-    ILogger<KnowledgeBaseIndexingService> logger) : BackgroundService
+    AiChatOptions options,
+    IHostEnvironment environment) : BackgroundService
 {
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
     {
-        // Chờ 3 giây sau khi server ready để không tranh resource với các DI init khác
+        if (!knowledgeBase.IsConfigured)
+            return;
+
         await Task.Delay(TimeSpan.FromSeconds(3), stoppingToken);
+        var autoSync = options.KnowledgeBaseAutoSync ?? environment.IsDevelopment();
 
-        logger.LogInformation("[KnowledgeBase] Bắt đầu xây dựng RAG vector index...");
+        for (var attempt = 1; attempt <= 3; attempt++)
+        {
+            var ready = autoSync
+                ? await knowledgeBase.BuildIndexAsync(stoppingToken)
+                : await knowledgeBase.EnsureIndexAsync(stoppingToken);
+            if (ready)
+                return;
 
-        try
-        {
-            await knowledgeBase.BuildIndexAsync(stoppingToken);
-        }
-        catch (OperationCanceledException)
-        {
-            logger.LogInformation("[KnowledgeBase] Indexing bị dừng do server shutdown.");
-        }
-        catch (Exception ex)
-        {
-            logger.LogError(ex, "[KnowledgeBase] Lỗi không mong đợi khi xây dựng index. " +
-                "SearchKnowledgeBase sẽ không hoạt động cho đến khi server restart.");
+            if (attempt < 3)
+                await Task.Delay(TimeSpan.FromMinutes(attempt), stoppingToken);
         }
     }
 }

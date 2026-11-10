@@ -203,7 +203,7 @@ namespace SAW.Infrastructure.Migrations
                         .HasColumnType("int")
                         .HasColumnName("SafeStorageRemainingDays");
 
-                    b.Property<decimal>("SpoilageRiskScore")
+                    b.Property<decimal?>("SpoilageRiskScore")
                         .HasPrecision(6, 2)
                         .HasColumnType("decimal(6,2)")
                         .HasColumnName("SpoilageRiskScore");

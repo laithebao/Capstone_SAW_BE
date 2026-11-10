@@ -13,21 +13,24 @@ public sealed class SpoilageForecastController(ISpoilageForecastService forecast
 {
     /// <summary>
     /// POST api/warehouse/spoilage-forecast
-    /// Tạo mới hoặc lấy cache phân tích dự báo hao hụt bằng Gemini AI cho một lô hàng.
+    /// Tạo dự báo hao hụt cho toàn bộ lô hàng đang lưu kho còn tồn.
     /// </summary>
     [HttpPost]
-    public async Task<IActionResult> GenerateForecast([FromBody] SpoilageForecastRequest request, CancellationToken ct)
+    public async Task<IActionResult> GenerateForecasts(CancellationToken ct)
     {
-        if (request.ProductBatchId <= 0)
-        {
-            return BadRequest(ApiResponse.BadRequest("Mã định danh lô hàng (ProductBatchId) không hợp lệ."));
-        }
+        ActorId();
+        var (forecasts, error) = await forecastService.GenerateForecastsAsync(ct);
+        return error is null
+            ? Ok(ApiResponse.Success(forecasts))
+            : StatusCode(StatusCodes.Status502BadGateway,
+                ApiResponse<object>.Failure(StatusCodes.Status502BadGateway, error));
+    }
 
-        var accountId = ActorId();
-        var response = await forecastService.GenerateForecastAsync(accountId, request, ct);
-
-        // Luôn trả 200 kèm flag IsError trong response để client xử lý mượt mà, không throw network error.
-        return Ok(ApiResponse<SpoilageForecastResponse>.Success(response));
+    [HttpGet]
+    public async Task<IActionResult> GetLatestForecasts(CancellationToken ct)
+    {
+        var forecasts = await forecastService.GetLatestForecastsAsync(ct);
+        return Ok(ApiResponse.Success(forecasts));
     }
 
     /// <summary>

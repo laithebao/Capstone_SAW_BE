@@ -8,7 +8,6 @@ public sealed record SpoilageForecastResponse(
     string? QualityGrade,
     
     // Kết quả dự báo
-    decimal SpoilageRiskScore,           // 0 - 100
     decimal? PredictedLossPercent,       // % hao hụt dự kiến
     int? SafeStorageRemainingDays,      // Số ngày lưu kho an toàn còn lại
     string RiskLevel,                    // LOW | MEDIUM | HIGH | CRITICAL
@@ -22,9 +21,5 @@ public sealed record SpoilageForecastResponse(
     // Metadata
     DateTimeOffset GeneratedAt,
     bool IsFromCache,
-    string ModelVersion,
-    
-    // Xử lý lỗi an toàn
-    bool IsError = false,
-    string? ErrorMessage = null
+    string ModelVersion
 );
