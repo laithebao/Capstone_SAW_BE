@@ -15,6 +15,33 @@ public sealed class GoodsReceiptContractTests
     private static GoodsReceiptDetail Detail() => new(7, "GR-7", 3, "B-3", "Rice", 4, "Supplier", 10, "Box", 100,
         2, "Zone", new DateOnly(2026, 1, 2), "DRAFT", null, "Before", "Staff", Version);
 
+    [Theory]
+    [InlineData(0)]
+    [InlineData(-1)]
+    public async Task EligibleBatchLookupRejectsInvalidSupplierBeforeAccessingDatabase(int supplierId)
+    {
+        await Assert.ThrowsAsync<BadRequestException>(() => Service().EligibleAsync(supplierId, null, 1, 20, default));
+        _read.VerifyNoOtherCalls(); _write.VerifyNoOtherCalls();
+    }
+
+    [Theory]
+    [InlineData(0, 20)]
+    [InlineData(1, 101)]
+    [InlineData(int.MaxValue, 100)]
+    public async Task EligibleBatchLookupRejectsInvalidOrOverflowingPagination(int page, int size)
+    {
+        await Assert.ThrowsAsync<BadRequestException>(() => Service().EligibleAsync(4, null, page, size, default));
+        _read.VerifyNoOtherCalls(); _write.VerifyNoOtherCalls();
+    }
+
+    [Fact]
+    public async Task StaleReceiptConfirmationRemainsAConflictAndNeverReadsBackSuccess()
+    {
+        _write.Setup(r => r.ConfirmAsync(7, Version, 9, default)).ThrowsAsync(new ConflictException("Receipt changed"));
+        await Assert.ThrowsAsync<ConflictException>(() => Service().ConfirmAsync(7, new(Version), 9, default));
+        _read.VerifyNoOtherCalls();
+    }
+
     [Fact]
     public async Task Search_normalizes_and_passes_server_filters_sort_and_page()
     {

@@ -11,6 +11,7 @@ public sealed class DeliveryRefusalRulesTests
 
     [Theory]
     [InlineData("PENDING")][InlineData("APPROVED")][InlineData("PARTIALLY_ISSUED")][InlineData("DELIVERY_REFUSED")][InlineData("RETURNED")]
+    [InlineData("RESERVED")][InlineData("PARTIALLY_PICKED")][InlineData("PICKED")][InlineData("CANCELLED")][InlineData("REJECTED")]
     public void BlocksOrdersNotFullyShippedOrAlreadyClosed(string status) =>
         Assert.Throws<ConflictException>(() => DeliveryRefusalRules.EnsureEligible(status));
 
@@ -26,4 +27,21 @@ public sealed class DeliveryRefusalRulesTests
         Assert.Equal("image/jpeg", DeliveryRefusalRules.ImageType(new byte[] {255,216,255,0}, ".jpeg").ContentType);
         Assert.Equal("image/webp", DeliveryRefusalRules.ImageType("RIFF1234WEBP"u8, ".webp").ContentType);
     }
+
+    [Fact]
+    public void ReasonPreservesReadableLineBreaksButRejectsHiddenControlCharacters()
+    {
+        Assert.Equal("Hư hỏng\nNiêm phong rách", DeliveryRefusalRules.ValidateReason(" Hư hỏng\nNiêm phong rách "));
+        Assert.Equal(1000, DeliveryRefusalRules.ValidateReason(new string('x', 1000)).Length);
+        Assert.Throws<BadRequestException>(() => DeliveryRefusalRules.ValidateReason("Hư\0hỏng"));
+        Assert.Throws<BadRequestException>(() => DeliveryRefusalRules.ValidateReason("Hư\u001bhỏng"));
+    }
+
+    [Theory]
+    [InlineData(".png")]
+    [InlineData(".webp")]
+    [InlineData(".svg")]
+    [InlineData(".exe")]
+    public void ValidJpegHeaderCannotMasqueradeAsAnotherFileExtension(string extension) =>
+        Assert.Throws<BadRequestException>(() => DeliveryRefusalRules.ImageType(new byte[] { 255, 216, 255, 0 }, extension));
 }

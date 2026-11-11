@@ -23,9 +23,10 @@ public class SupplierProfileCompletionTests
             .ReturnsAsync(() => new SupplierProfileResponse { AccountId = 1, SupplierId = 2, ProfileStatus = supplier.ProfileStatus });
     }
 
-    private static UpdateSupplierProfileRequest Request(string? phone = "0901234567") => new()
+    private UpdateSupplierProfileRequest Request(string? phone = "0901234567") => new()
     {
-        SupplierName = "Test cooperative", TaxCode = "TEST-TAX", Address = "Test address",
+        SupplierName = "Test cooperative", TaxCode = supplier.ProfileStatus == "PENDING_REVIEW" && supplier.TaxCode.StartsWith("GOOGLE-")
+            && supplier.Account.Username.StartsWith("google_") ? "TEST-TAX" : supplier.TaxCode, Address = "Test address",
         ContactPerson = "Test contact", LegalRepresentative = "Test representative", PhoneNumber = phone,
         Email = "supplier@test.invalid", CropTypeIds = [3]
     };

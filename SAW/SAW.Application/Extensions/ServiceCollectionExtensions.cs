@@ -19,6 +19,7 @@ using SAW.Application.Features.GoodsReceipts.Interfaces;
 using SAW.Application.Features.GoodsReceipts.Services;
 using SAW.Application.Features.WarehouseInventory;
 using SAW.Application.Features.SupplyContracts;
+using SAW.Application.Features.UserProfiles;
 
 namespace SAW.Application.Extensions;
 
@@ -34,6 +35,7 @@ public static class ServiceCollectionExtensions
         services.AddScoped<IAuthCommandService, AuthCommandService>();
         services.AddScoped<ICropTypeService, CropTypeService>();
         services.AddScoped<IUserAccessService, UserAccessService>();
+        services.AddScoped<IUserProfileService, UserProfileService>();
         services.AddScoped<IAdminDashboardService, AdminDashboardService>();
         services.AddScoped<IInspectionStandardService, InspectionStandardService>();
         services.AddScoped<IAuditLogService, AuditLogService>();

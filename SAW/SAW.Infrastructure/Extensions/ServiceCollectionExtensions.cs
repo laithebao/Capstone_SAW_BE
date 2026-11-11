@@ -10,6 +10,7 @@ using SAW.Infrastructure.Authentication;
 using SAW.Infrastructure.Repositories;
 using SAW.Application.Features.CropTypes;
 using SAW.Application.Features.UserAccess;
+using SAW.Application.Features.UserProfiles;
 using SAW.Application.Features.AdminDashboard;
 using SAW.Application.Features.InspectionStandards;
 using SAW.Application.Features.AuditLogs;
@@ -52,6 +53,7 @@ public static class ServiceCollectionExtensions
         services.AddScoped<IAuthRepository, AuthRepository>();
         services.AddScoped<ICropTypeRepository, CropTypeRepository>();
         services.AddScoped<IUserAccessRepository, UserAccessRepository>();
+        services.AddScoped<IUserProfileRepository, UserProfileRepository>();
         services.AddScoped<IAdminDashboardRepository, AdminDashboardRepository>();
         services.AddScoped<IInspectionStandardRepository, InspectionStandardRepository>();
         services.AddScoped<IAuditLogRepository, AuditLogRepository>();

@@ -2,6 +2,7 @@ using SAW.Application.Exceptions;
 using SAW.Application.Features.Suppliers.DTOs;
 using SAW.Application.Repositories.Suppliers;
 using SAW.Domain.Entities;
+using SAW.Domain.Common;
 
 namespace SAW.Application.Features.Suppliers.Commands;
 
@@ -143,8 +144,8 @@ public class SupplierBatchCommandService(IProductBatchRepository batches, ISuppl
         b.CropTypeId = r.CropTypeId; b.GrowingAreaId = r.GrowingAreaId; b.ProductName = r.ProductName.Trim();
         b.HarvestDate = r.HarvestDate; b.DeclaredQuantity = r.DeclaredQuantity; b.Unit = r.Unit.Trim(); b.WeightInKg = weight;
         b.PackagingType = Clean(r.PackagingType); b.PackageCount = r.PackageCount; b.PackageUnitWeightKg = r.PackageUnitWeightKg;
-        b.ExpectedMinTempC = r.ExpectedMinTempC; b.ExpectedMaxTempC = r.ExpectedMaxTempC;
-        b.ExpectedMinHumidityPct = r.ExpectedMinHumidityPct; b.ExpectedMaxHumidityPct = r.ExpectedMaxHumidityPct;
+        b.ExpectedMinTempC = MeasurementRounding.Round(r.ExpectedMinTempC); b.ExpectedMaxTempC = MeasurementRounding.Round(r.ExpectedMaxTempC);
+        b.ExpectedMinHumidityPct = MeasurementRounding.Round(r.ExpectedMinHumidityPct); b.ExpectedMaxHumidityPct = MeasurementRounding.Round(r.ExpectedMaxHumidityPct);
         b.ExpectedDeliveryDate = r.ExpectedDeliveryDate; b.ExpiryDate = r.ExpiryDate; b.Note = Clean(r.Note);
     }
     private static string? Clean(string? s) => string.IsNullOrWhiteSpace(s) ? null : s.Trim();
