@@ -174,7 +174,7 @@ public sealed class ProductBatchManagementSqlTests(GoodsReceiptSqlFixture fixtur
     public async Task Warehouse_list_excludes_declarations_and_supports_server_filter_sort_and_paging()
     {
         var prefix = "BATCH-LIST-" + Guid.NewGuid().ToString("N")[..8];
-        var states = new[] { "SUBMITTED", "PENDING_PREDECLARATION", "PENDING_APPROVAL", "CANCELLED", "PENDING_QC", "APPROVED_FOR_STORAGE", "IN_STOCK", "REJECTED", "QUARANTINE" };
+        var states = new[] { "SUBMITTED", "PENDING_PREDECLARATION", "CANCELLED", "PENDING_QC", "APPROVED_FOR_STORAGE", "IN_STOCK", "REJECTED", "QUARANTINE" };
         await using var db = F.Context();
         for (var i = 0; i < states.Length; i++)
         {

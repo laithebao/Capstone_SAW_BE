@@ -627,12 +627,21 @@ public sealed class GoodsReceiptSqlTests(GoodsReceiptSqlFixture fixture) : IClas
         string Token(string role) => new JwtSecurityTokenHandler().WriteToken(new JwtSecurityToken("uc28-test", "uc28-test",
             [new Claim("account_id", F.ActorId.ToString()), new Claim(ClaimTypes.Role, role)], expires: DateTime.UtcNow.AddMinutes(10),
             signingCredentials: new SigningCredentials(new SymmetricSecurityKey(Encoding.UTF8.GetBytes(ReceivingSqlFixture.JwtKey)), SecurityAlgorithms.HmacSha256)));
-        foreach (var role in new[] { "SUPPLIER", "QC_STAFF", "ADMINISTRATOR" })
+        foreach (var role in new[] { "SUPPLIER", "QC_STAFF" })
         {
             client.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", Token(role));
             Assert.Equal(HttpStatusCode.Forbidden, (await client.GetAsync("/api/operation/goods-receipts")).StatusCode);
             Assert.Equal(HttpStatusCode.Forbidden, (await client.PostAsJsonAsync("/api/operation/goods-receipts", new { })).StatusCode);
             Assert.Equal(HttpStatusCode.Forbidden, (await client.PutAsJsonAsync("/api/operation/goods-receipts/1/draft", new { })).StatusCode);
+        }
+        // Controller policy permits management reads, while all writes remain staff-only.
+        foreach (var role in new[] { "WAREHOUSE_MANAGER", "ADMINISTRATOR" })
+        {
+            client.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", Token(role));
+            Assert.Equal(HttpStatusCode.OK, (await client.GetAsync("/api/operation/goods-receipts")).StatusCode);
+            Assert.Equal(HttpStatusCode.Forbidden, (await client.PostAsJsonAsync("/api/operation/goods-receipts", new { })).StatusCode);
+            Assert.Equal(HttpStatusCode.Forbidden, (await client.PutAsJsonAsync("/api/operation/goods-receipts/1/draft", new { })).StatusCode);
+            Assert.Equal(HttpStatusCode.Forbidden, (await client.PutAsJsonAsync("/api/operation/goods-receipts/1/confirm", new { })).StatusCode);
         }
         client.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", Token("OPERATION_STAFF"));
         var created = await client.PostAsJsonAsync("/api/operation/goods-receipts", new { productBatchId = batch.ProductBatchId,
