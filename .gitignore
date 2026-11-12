@@ -15,6 +15,9 @@
 !docs/SetDistributorLotPrice.sql
 !docs/SeedDistributorDemo.sql
 !docs/SeedDistributorLotPrices.sql
+!SAW/SAW.Test/Infrastructure/Picking/PickingSchema.sql
+!SAW/SAW.Test/Infrastructure/GoodsIssues/GoodsIssueSchema.sql
+!SAW/SAW.Test/Infrastructure/StockAdjustments/StockAdjustmentSchema.sql
 **/App_Data/SupplierFiles/
 *.sqlproj.user
 *.bak
