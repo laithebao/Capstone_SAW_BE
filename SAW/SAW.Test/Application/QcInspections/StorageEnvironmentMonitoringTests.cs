@@ -13,6 +13,30 @@ public sealed class StorageEnvironmentMonitoringTests
 
     private QcInspectionService CreateService() => new(_repo.Object);
 
+    [Theory]
+    [InlineData("25.678", "25.68")]
+    [InlineData("1.005", "1.01")]
+    [InlineData("-1.005", "-1.01")]
+    public async Task StoredEnvironmentLogAndResponseUseTwoDecimalMeasurements(string input, string expected)
+    {
+        _repo.Setup(r => r.GetBatchAsync(1, It.IsAny<CancellationToken>())).ReturnsAsync(new ProductBatch { ProductBatchId = 1 });
+        var temperature = decimal.Parse(input, System.Globalization.CultureInfo.InvariantCulture);
+        var rounded = decimal.Parse(expected, System.Globalization.CultureInfo.InvariantCulture);
+        var result = await CreateService().CreateEnvironmentLogAsync(new(1, null, null, temperature, 55.555m, "MANUAL", null, DateTime.UtcNow, null), 7, default);
+        Assert.Equal(rounded, result.TemperatureC); Assert.Equal(55.56m, result.HumidityPct);
+        _repo.Verify(r => r.AddEnvironmentLog(It.Is<EnvironmentLog>(log => log.TemperatureC == rounded && log.HumidityPct == 55.56m)), Times.Once);
+    }
+
+    [Theory]
+    [InlineData("9999.995")]
+    [InlineData("-9999.995")]
+    public async Task EnvironmentMeasurementThatOverflowsAfterRoundingIsRejectedBeforeWrite(string input)
+    {
+        var temperature = decimal.Parse(input, System.Globalization.CultureInfo.InvariantCulture);
+        await Assert.ThrowsAsync<SAW.Application.Exceptions.BadRequestException>(() => CreateService().CreateEnvironmentLogAsync(new(1, null, null, temperature, null, "MANUAL", null, DateTime.UtcNow, null), 7, default));
+        _repo.Verify(r => r.AddEnvironmentLog(It.IsAny<EnvironmentLog>()), Times.Never);
+    }
+
     [Fact]
     public async Task GetInStorageBatchesWithEnvAsync_DetectsOutOfRangeAndHoursSinceLog()
     {

@@ -1,6 +1,7 @@
 using SAW.Application.Features.Suppliers.DTOs;
 using SAW.Application.Repositories.Suppliers;
 using SAW.Domain.Entities;
+using SAW.Domain.Common;
 using System.Text.Json;
 
 namespace SAW.Application.Features.Suppliers.Commands;
@@ -43,6 +44,8 @@ public class SupplierCommandService : ISupplierCommandService
             throw new InvalidOperationException("Hồ sơ nhà cung cấp đã tồn tại.");
         }
 
+        ValidateContact(request);
+
         var isTaxCodeExists = await _supplierRepository.IsTaxCodeExistsAsync(request.TaxCode, cancellationToken);
         if (isTaxCodeExists)
         {
@@ -60,7 +63,7 @@ public class SupplierCommandService : ISupplierCommandService
             TaxCode = request.TaxCode.Trim(),
             Address = fullAddress,
             ContactPerson = BuildContactPerson(request.ContactPerson, request.LegalRepresentative),
-            PhoneNumber = request.PhoneNumber?.Trim(),
+            PhoneNumber = ContactValidation.NormalizePhone(request.PhoneNumber),
             Email = request.Email?.Trim(),
             ProfileStatus = "ACTIVE",
             Note = request.SupplierType,
@@ -91,8 +94,15 @@ public class SupplierCommandService : ISupplierCommandService
             throw new KeyNotFoundException("Không tìm thấy thông tin nhà cung cấp.");
         }
 
-        var isTaxCodeExists = await _supplierRepository.IsTaxCodeExistsExceptCurrentAsync(request.TaxCode, supplier.SupplierId, cancellationToken);
-        if (isTaxCodeExists)
+        var canCompleteTaxCode = supplier.ProfileStatus == "PENDING_REVIEW"
+            && supplier.TaxCode.StartsWith("GOOGLE-", StringComparison.Ordinal)
+            && supplier.Account?.Username.StartsWith("google_", StringComparison.Ordinal) == true;
+        var taxCode = request.TaxCode?.Trim() ?? string.Empty;
+        if (string.IsNullOrWhiteSpace(taxCode)) throw new ArgumentException("Mã số thuế không được để trống.");
+        if (!canCompleteTaxCode && !string.Equals(taxCode, supplier.TaxCode, StringComparison.Ordinal))
+            throw new ArgumentException("Mã số thuế đã đăng ký không thể thay đổi trong hồ sơ.");
+        ValidateContact(request);
+        if (canCompleteTaxCode && await _supplierRepository.IsTaxCodeExistsExceptCurrentAsync(taxCode, supplier.SupplierId, cancellationToken))
         {
             throw new ArgumentException("Mã số thuế này đã được đăng ký.");
         }
@@ -109,10 +119,10 @@ public class SupplierCommandService : ISupplierCommandService
         });
 
         supplier.SupplierName = request.SupplierName.Trim();
-        supplier.TaxCode = request.TaxCode.Trim();
+        if (canCompleteTaxCode) supplier.TaxCode = taxCode;
         supplier.Address = request.Address?.Trim() ?? string.Empty;
         supplier.ContactPerson = BuildContactPerson(request.ContactPerson, request.LegalRepresentative);
-        supplier.PhoneNumber = request.PhoneNumber?.Trim();
+        supplier.PhoneNumber = ContactValidation.NormalizePhone(request.PhoneNumber);
         supplier.Email = request.Email?.Trim();
         supplier.Note = request.SupplierType;
 
@@ -139,6 +149,14 @@ public class SupplierCommandService : ISupplierCommandService
     }
 
     #region Helper Methods
+    private static void ValidateContact(DeclareSupplierProfileRequest request)
+    {
+        if (request.PhoneNumber?.Trim().Length > 20 || !ContactValidation.IsVietnamPhone(request.PhoneNumber))
+            throw new ArgumentException("Số điện thoại Việt Nam không hợp lệ. Nhập 10 chữ số bắt đầu bằng 0 hoặc +84 và 9 chữ số.");
+        if (request.Email?.Trim().Length > 150 || !ContactValidation.IsEmail(request.Email))
+            throw new ArgumentException("Email liên hệ không đúng định dạng hoặc vượt quá 150 ký tự.");
+    }
+
     private static string BuildFullAddress(string? address, string? ward, string? district, string? province)
     {
         var parts = new[] { address?.Trim(), ward?.Trim(), district?.Trim(), province?.Trim() }

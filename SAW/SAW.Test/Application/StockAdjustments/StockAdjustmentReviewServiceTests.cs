@@ -33,4 +33,13 @@ public sealed class StockAdjustmentReviewServiceTests
         repo.Verify(r=>r.ReviewAsync(1,It.Is<ReviewStockAdjustmentRequest>(x=>x.ReviewNote==expected&&x.Decision==decision&&x.RequestId==request.RequestId),2,default),Times.Once);
         repo.Verify(r=>r.GetReviewAsync(1,default),Times.Once);
     }
+
+    [Fact]
+    public async Task StaleReviewSnapshot_IsAConflictAndDoesNotReadBackACompletedReview()
+    {
+        var repo = new Mock<IStockAdjustmentRepository>(MockBehavior.Strict); var request = Input();
+        repo.Setup(r => r.ReviewAsync(1, request, 7, default)).ThrowsAsync(new ConflictException("Inventory changed"));
+        await Assert.ThrowsAsync<ConflictException>(() => new StockAdjustmentReviewService(repo.Object).ReviewAsync(1, request, 7, default));
+        repo.Verify(r => r.GetReviewAsync(It.IsAny<long>(), It.IsAny<CancellationToken>()), Times.Never);
+    }
 }

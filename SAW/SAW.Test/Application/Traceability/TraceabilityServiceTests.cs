@@ -75,6 +75,7 @@ public sealed class TraceabilityServiceTests
     [InlineData("REJECTED", true, "COMPLETED", "PASS", "A", "A")]
     [InlineData("QUARANTINE", true, "COMPLETED", "PASS", "D", "D")]
     [InlineData("CANCELLED", true, "COMPLETED", "PASS", "A", "A")]
+    [InlineData("DISPOSED", true, "COMPLETED", "PASS", "A", "A")]
     [InlineData("SUBMITTED", true, "COMPLETED", "PASS", "A", "A")]
     [InlineData("PENDING_QC", true, "COMPLETED", "PASS", "A", "A")]
     [InlineData("IN_STOCK", false, "COMPLETED", "PASS", "A", "A")]

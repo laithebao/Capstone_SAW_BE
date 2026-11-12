@@ -1,6 +1,7 @@
 using SAW.Application.Exceptions;
 using SAW.Application.Repositories;
 using SAW.Domain.Entities;
+using SAW.Domain.Common;
 
 namespace SAW.Application.Features.QcInspections;
 
@@ -388,6 +389,9 @@ public sealed class QcInspectionService(IQcInspectionRepository repository) : IQ
         CancellationToken ct)
     {
         // Validate
+        var temperature = MeasurementRounding.Round(request.TemperatureC);
+        if (temperature is <= -10000m or >= 10000m)
+            throw new BadRequestException("Nhiệt độ vượt quá giới hạn lưu trữ decimal(6,2).");
         if (!ValidSourceTypes.Contains(request.SourceType))
             throw new BadRequestException(
                 $"SourceType '{request.SourceType}' không hợp lệ. Cho phép: MANUAL, IOT_SENSOR, IMPORT.");
@@ -446,8 +450,8 @@ public sealed class QcInspectionService(IQcInspectionRepository repository) : IQ
             WarehouseLocationId  = effectiveLocationId,
             QcInspectionId       = request.QcInspectionId,
             RecordedByAccountId  = actorAccountId,
-            TemperatureC         = request.TemperatureC,
-            HumidityPct          = request.HumidityPct,
+            TemperatureC         = temperature,
+            HumidityPct          = MeasurementRounding.Round(request.HumidityPct),
             SourceType           = request.SourceType.ToUpperInvariant(),
             SensorIdentifier     = request.SensorIdentifier?.Trim(),
             RecordedAt           = recordedAtUtc,
