@@ -131,6 +131,43 @@ dotnet test SAW.Test --filter 'FullyQualifiedName~Infrastructure.AiChat|FullyQua
 
 Nhóm AI chạy unit test và test giao thức với phản hồi HTTP giả lập cho OpenAI và Qdrant. Các test SQL của chatbot và dự báo dùng cơ sở dữ liệu riêng do fixture tạo và xóa. Đặt `SAW_TEST_SQL_CONNECTION` trỏ tới SQL Server dành cho kiểm thử để chạy các ca này. xUnit báo bỏ qua nếu chưa có cấu hình.
 
+### SQL test xuất kho, soạn hàng và điều chỉnh tồn
+
+`GoodsIssueSqlFixture`, `PickingSqlFixture` và `StockAdjustmentSqlFixture` dùng server/tài khoản từ
+`SAW_TEST_SQL_CONNECTION` để tạo và xóa database riêng có tên
+`SAW_UC28_Test_<GUID>`. Với ba fixture này, phần `Database` của chuỗi kết nối
+có thể là `master`: chúng không đọc trigger/check từ database nguồn.
+
+Schema kiểm thử dùng các trigger/check đã được kiểm chứng, đóng gói trong
+`PickingSchema.sql`, `GoodsIssueSchema.sql` và `StockAdjustmentSchema.sql` của project test.
+Fixture xuất kho áp dụng SQL của migration `FixGoodsIssueWorkflowTriggers` như trước;
+fixture điều chỉnh tồn vẫn chạy chuỗi EF migration thật trước khi cài các định nghĩa
+workflow cũ. Tất cả chạy trong database test. Không thay đổi migration history hoặc
+dữ liệu database ứng dụng.
+Khi thay đổi schema nghiệp vụ, cần review các tài nguyên này cùng các test liên quan.
+
+Chạy riêng test rollback audit từ thư mục `SAW`, sau khi đã đặt biến SQL:
+
+```powershell
+dotnet test SAW.Test/SAW.Test.csproj -c Release --filter "FullyQualifiedName=SAW.Test.Infrastructure.GoodsIssues.GoodsIssueSqlTests.Failed_audit_rolls_back_commit_inventory_reservations_order_batch_and_history"
+```
+
+Test vẫn phải kiểm tra lỗi audit được phát sinh và toàn bộ phiếu, tồn kho,
+giữ hàng, trạng thái đơn/lô, lịch sử và thông báo được rollback. Không giảm
+assertion, không đổi kết quả mong đợi và không bỏ qua test khi thiếu trigger nguồn.
+Các fixture khác có thể vẫn đọc định nghĩa từ database nguồn; quy tắc dùng
+`master` ở trên chỉ áp dụng cho ba fixture vừa nêu.
+
+Hai script FE `tests/distributor-orders-browser.mjs` và
+`tests/stock-adjustment-order-resolution-browser.mjs` khởi tạo phiên test qua
+`localStorage` theo cơ chế đăng nhập hiện tại của FE. Chúng cần `SAW_TEST_BROWSER=1`,
+FE đã cài dependencies và `EDGE_PATH` trỏ đến file Chrome/Edge thực thi.
+Chạy từ thư mục `SAW` với cùng cấu hình SQL:
+
+```powershell
+dotnet test SAW.Test/SAW.Test.csproj -c Release --filter "FullyQualifiedName~Browser_Catalog_Create_List_Detail_Cancel_AndRoleGuards|FullyQualifiedName~Customer_accept_then_manager_finalizes_same_order_80kg_price_8500000_and_can_pick_issue_receive|FullyQualifiedName~Browser_staff_manager_customer_disposal_decline_and_accept_use_real_API_and_SQL"
+```
+
 ---
 
 ## 📦 Dependencies
