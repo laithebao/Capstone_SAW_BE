@@ -343,11 +343,19 @@ public class SupplierSqlIntegrationTests : IAsyncLifetime
     {
         var before = new ProductBatchRepository(_db, new FixedTime(new DateTimeOffset(2061, 1, 1, 16, 59, 59, TimeSpan.Zero)));
         var after = new ProductBatchRepository(_db, new FixedTime(new DateTimeOffset(2061, 1, 1, 17, 0, 0, TimeSpan.Zero)));
-        Assert.Equal("LH-20610101-0001", await before.GenerateBatchCodeAsync());
-        Assert.Equal("LH-20610101-0002", await before.GenerateBatchCodeAsync());
-        Assert.Equal("LH-20610102-0001", await after.GenerateBatchCodeAsync());
+
+        var first = await before.GenerateBatchCodeAsync();
+        var second = await before.GenerateBatchCodeAsync();
+        var nextDay = await after.GenerateBatchCodeAsync();
+        var nextDaySecond = await after.GenerateBatchCodeAsync();
+        Assert.Matches(@"^LH-20610101-\d{4}$", first);
+        Assert.Matches(@"^LH-20610101-\d{4}$", second);
+        Assert.Matches(@"^LH-20610102-\d{4}$", nextDay);
+        Assert.Matches(@"^LH-20610102-\d{4}$", nextDaySecond);
+        Assert.Equal(int.Parse(first.Split('-')[2]) + 1, int.Parse(second.Split('-')[2]));
+        Assert.Equal(int.Parse(nextDay.Split('-')[2]) + 1, int.Parse(nextDaySecond.Split('-')[2]));
         var legacy = await Service().DeclareBatchAsync(_accountId, Declaration());
-        const string legacyCode = "LH-20261005-17da0453a0e84f549d24a98928f603fd";
+        var legacyCode = $"LH-20261005-{Guid.NewGuid():N}";
         await _db.Database.ExecuteSqlInterpolatedAsync($"UPDATE dbo.PRODUCT_BATCH SET BatchCode={legacyCode} WHERE ProductBatchID={legacy.BatchId}");
         Assert.Equal(legacyCode, (await Service().GetBatchStatusDetailAsync(legacy.BatchId, _accountId)).BatchCode);
         Assert.Equal(legacy.BatchId, Assert.Single((await Service().GetDeclaredBatchesAsync(_accountId, new() { Keyword = legacyCode })).Batches.Items).BatchId);

@@ -28,11 +28,11 @@ public sealed class StockAdjustmentMigrationTests
             const string target="20261016163023_AddStockAdjustmentRequestScope";await db.GetService<IMigrator>().MigrateAsync(target);
             var id=await db.StockAdjustments.Where(a=>a.AdjustmentCode=="LEGACY-ADJUSTMENT").Select(a=>a.StockAdjustmentId).SingleAsync();
             var repo=new StockAdjustmentRepository(new DbContextOptionsBuilder<SAW.Infrastructure.Persistence.AppDbContext>().UseSqlServer(f.ConnectionString).Options,new Microsoft.AspNetCore.Http.HttpContextAccessor(),new CloudinaryQrImageStorage(new HttpClient(),new CloudinaryOptions()));
-            var detail=await repo.GetAsync(id,default);Assert.Equal("COUNT",detail.Summary.RequestKind);Assert.Equal(-5,detail.Summary.DifferenceQuantity);Assert.Null(Assert.Single(detail.Lines).ReservedQuantity);Assert.Empty(detail.Images);
+            await db.GetService<IMigrator>().MigrateAsync(); var detail=await repo.GetAsync(id,default);Assert.Equal("COUNT",detail.Summary.RequestKind);Assert.Equal(-5,detail.Summary.DifferenceQuantity);Assert.Null(Assert.Single(detail.Lines).ReservedQuantity);Assert.Empty(detail.Images);
             await db.GetService<IMigrator>().MigrateAsync(target);Assert.Equal(1,await db.StockAdjustments.CountAsync());Assert.Equal(100,await db.Inventories.Where(i=>i.InventoryId==stock.InventoryId).Select(i=>i.QuantityOnHand).SingleAsync());
             await db.GetService<IMigrator>().MigrateAsync("20261016153240_FixGoodsIssueWorkflowTriggers");
             Assert.Equal(before,await db.Database.SqlQueryRaw<decimal>("SELECT DifferenceQuantity AS Value FROM STOCK_ADJUSTMENT WHERE AdjustmentCode='LEGACY-ADJUSTMENT'").SingleAsync());
-            await db.GetService<IMigrator>().MigrateAsync(target);Assert.Equal("Legacy reason",(await repo.GetAsync(id,default)).Reason);
+            await db.GetService<IMigrator>().MigrateAsync();Assert.Equal("Legacy reason",(await repo.GetAsync(id,default)).Reason);
         }
         finally{await f.DisposeAsync();}
     }

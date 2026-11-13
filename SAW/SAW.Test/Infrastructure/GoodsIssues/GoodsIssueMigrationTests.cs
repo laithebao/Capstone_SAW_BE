@@ -16,7 +16,7 @@ namespace SAW.Test.Infrastructure.GoodsIssues;
 
 public sealed class GoodsIssueMigrationTests
 {
-    private const string Previous = "20261007134920_NormalizePurchaseOrderHistoryUtc";
+    private const string Previous = "20261016072210_AddSupplyContractChangeAndCancellation";
     private const string Target = "20261016153240_FixGoodsIssueWorkflowTriggers";
     private static string Canonical(string sql) => Regex.Replace(sql, @"\s+", "").ToUpperInvariant()
         .Replace("CREATEORALTERTRIGGER", "CREATETRIGGER").Replace("ALTERTRIGGER", "CREATETRIGGER");

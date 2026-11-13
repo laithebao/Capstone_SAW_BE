@@ -630,7 +630,7 @@ public sealed class GoodsReceiptSqlTests(GoodsReceiptSqlFixture fixture) : IClas
         foreach (var role in new[] { "SUPPLIER", "QC_STAFF", "ADMINISTRATOR" })
         {
             client.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", Token(role));
-            Assert.Equal(HttpStatusCode.Forbidden, (await client.GetAsync("/api/operation/goods-receipts")).StatusCode);
+            Assert.Equal(role == "ADMINISTRATOR" ? HttpStatusCode.OK : HttpStatusCode.Forbidden, (await client.GetAsync("/api/operation/goods-receipts")).StatusCode);
             Assert.Equal(HttpStatusCode.Forbidden, (await client.PostAsJsonAsync("/api/operation/goods-receipts", new { })).StatusCode);
             Assert.Equal(HttpStatusCode.Forbidden, (await client.PutAsJsonAsync("/api/operation/goods-receipts/1/draft", new { })).StatusCode);
         }

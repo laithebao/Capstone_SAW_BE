@@ -45,7 +45,17 @@ public sealed class QrCodeSqlTests(ReceivingSqlFixture fixture) : IClassFixture<
         QrCodeGenerationWorker Worker() => new(provider.GetRequiredService<IServiceScopeFactory>(),
             new QrCodeOptions { PublicFrontendBaseUrl = "https://saw.test.invalid", IntervalSeconds = 5, BatchSize = 100 },
             workerLog);
-        using (var paused = Worker()) { await paused.StartAsync(default); await paused.StopAsync(default); }
+        using (var paused = Worker())
+        {
+            await paused.StartAsync(default);
+            try
+            {
+                using var deadline = new CancellationTokenSource(TimeSpan.FromSeconds(10));
+                while (!workerLog.Messages.Any(text => text.Contains("worker paused: configure")))
+                    await Task.Delay(25, deadline.Token);
+            }
+            finally { await paused.StopAsync(default); }
+        }
         Assert.Contains(workerLog.Messages, text => text.Contains("worker paused: configure"));
         repo.Verify(r => r.GetCandidatesAsync(It.IsAny<long>(), It.IsAny<int>(), It.IsAny<CancellationToken>()), Times.Never);
         await using (var check = fixture.Context()) Assert.False(await check.QrCodes.AnyAsync(q => q.ProductBatchId == batch.ProductBatchId));
