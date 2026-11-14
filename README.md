@@ -1,5 +1,7 @@
 # 🌾 Smart Agri Warehouse (SAW) – Backend
 
+**Thành viên mới: [thiết lập và chạy test từ đầu trên Windows/macOS/Linux](docs/Testing.md).**
+
 Backend API cho hệ thống **Quản lý Kho Nông sản Thông minh (Smart Agri Warehouse)**, xây dựng theo kiến trúc **Clean Architecture** trên nền tảng **.NET 8**.
 
 ---

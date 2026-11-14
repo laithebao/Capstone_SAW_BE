@@ -7,7 +7,8 @@ using SAW.Test.Infrastructure.ProductBatches;
 
 namespace SAW.Test.Infrastructure.Picking;
 
-public sealed class ReceivingSqlTheoryAttribute : TheoryAttribute
+[Xunit.Sdk.TraitDiscoverer("SAW.Test.SqlTraitDiscoverer", "SAW.Test")]
+public sealed class ReceivingSqlTheoryAttribute : TheoryAttribute, Xunit.Sdk.ITraitAttribute
 {
     public ReceivingSqlTheoryAttribute()
     {

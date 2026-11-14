@@ -24,7 +24,7 @@ public sealed class StockAdjustmentSqlFixture : IAsyncLifetime
             var staff = await db.Accounts.SingleAsync(a => a.AccountId == Database.ActorId); staff.RoleId = staffRole.RoleId; await db.SaveChangesAsync();
             Assert.Contains("20261016163023_AddStockAdjustmentRequestScope", await db.Database.GetAppliedMigrationsAsync());
         }
-        catch { await Database.DisposeAsync(); throw; }
+        catch (Exception error) { await Database.CleanupAfterInitializationFailureAsync(error); throw; }
     }
     public Task DisposeAsync() => Database.DisposeAsync();
 }

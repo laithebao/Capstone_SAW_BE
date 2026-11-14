@@ -1,0 +1,57 @@
+name: Browser and external tests
+on:
+  workflow_dispatch:
+    inputs:
+      frontend_repository:
+        description: 'Frontend repository, owner/Capstone_SAW_FE'
+        required: true
+        type: string
+      profile:
+        description: 'browser needs no cloud secrets; all includes real Cloudinary'
+        type: choice
+        options: [browser, all]
+        default: browser
+      frontend_ref:
+        description: 'Optional FE branch, tag or commit SHA (empty uses its default branch)'
+        required: false
+        type: string
+permissions:
+  contents: read
+jobs:
+  test:
+    timeout-minutes: 30
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          path: Capstone_SAW_BE
+      - uses: actions/checkout@v4
+        with:
+          repository: ${{ inputs.frontend_repository }}
+          ref: ${{ inputs.frontend_ref }}
+          token: ${{ secrets.SAW_REPOS_READ_TOKEN || github.token }}
+          path: Capstone_SAW_FE
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: 8.0.x
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: Initialize local test configuration
+        working-directory: Capstone_SAW_BE
+        run: dotnet run --project tools/SAW.Testing -- init
+      - name: Prepare SQL and browser dependencies
+        working-directory: Capstone_SAW_BE
+        run: dotnet run --project tools/SAW.Testing -- setup --docker --profile browser
+      - name: Run selected profile
+        working-directory: Capstone_SAW_BE
+        env:
+          SAW_TEST_CLOUD_NAME: ${{ secrets.SAW_TEST_CLOUD_NAME }}
+          SAW_TEST_CLOUD_KEY: ${{ secrets.SAW_TEST_CLOUD_KEY }}
+          SAW_TEST_CLOUD_SECRET: ${{ secrets.SAW_TEST_CLOUD_SECRET }}
+        run: dotnet run --project tools/SAW.Testing -- test --profile ${{ inputs.profile }}
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: ${{ inputs.profile }}-results
+          path: Capstone_SAW_BE/test-results/

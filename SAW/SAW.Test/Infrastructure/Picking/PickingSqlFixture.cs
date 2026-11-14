@@ -30,7 +30,7 @@ public sealed class PickingSqlFixture : IAsyncLifetime
             // tables/triggers. SAW_TEST_SQL_CONNECTION only supplies server/login (master is valid).
             await WarehouseWorkflowTestSchema.InstallAsync(db, "SAW.Test.Infrastructure.Picking.PickingSchema.sql");
         }
-        catch { await Database.DisposeAsync(); throw; }
+        catch (Exception error) { await Database.CleanupAfterInitializationFailureAsync(error); throw; }
     }
     public Task DisposeAsync() => Database.DisposeAsync();
 }

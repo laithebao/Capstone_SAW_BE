@@ -19,7 +19,8 @@ using SAW.Infrastructure.QrCodes;
 
 namespace SAW.Test.Infrastructure.DistributorOrders;
 
-public sealed class DistributorBrowserFactAttribute : FactAttribute
+[Xunit.Sdk.TraitDiscoverer("SAW.Test.BrowserTraitDiscoverer", "SAW.Test")]
+public sealed class DistributorBrowserFactAttribute : FactAttribute, Xunit.Sdk.ITraitAttribute
 {
     public DistributorBrowserFactAttribute()
     {
