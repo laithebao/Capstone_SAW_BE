@@ -46,7 +46,7 @@ public sealed class GoodsIssueMigrationTests
         public async Task CreateAsync()
         {
             var builder = new SqlConnectionStringBuilder(Environment.GetEnvironmentVariable("SAW_TEST_SQL_CONNECTION")) { InitialCatalog = "master" };
-            master = builder.ConnectionString;
+            master = new SqlConnectionStringBuilder(builder.ConnectionString) { Pooling = false }.ConnectionString;
             await using var connection = new SqlConnection(master); await connection.OpenAsync();
             await using var command = connection.CreateCommand(); command.CommandText = $"CREATE DATABASE [{name}]"; await command.ExecuteNonQueryAsync();
             builder.InitialCatalog = name; ConnectionString = builder.ConnectionString;
@@ -55,7 +55,11 @@ public sealed class GoodsIssueMigrationTests
         {
             if (master.Length == 0) return;
             Assert.Matches("^SAW_GoodsIssueMigration_Test_[a-f0-9]{32}$", name);
-            SqlConnection.ClearAllPools();
+            if (ConnectionString.Length > 0)
+            {
+                using var pool = new SqlConnection(ConnectionString);
+                SqlConnection.ClearPool(pool);
+            }
             await using var connection = new SqlConnection(master); await connection.OpenAsync();
             await using var command = connection.CreateCommand();
             command.CommandText = $"IF DB_ID('{name}') IS NOT NULL BEGIN ALTER DATABASE [{name}] SET SINGLE_USER WITH ROLLBACK IMMEDIATE; DROP DATABASE [{name}]; END";

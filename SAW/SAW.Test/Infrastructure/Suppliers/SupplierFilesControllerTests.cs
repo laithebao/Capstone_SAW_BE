@@ -25,10 +25,9 @@ public sealed class SupplierFilesControllerTests
         public string Root { get; }
         public Fixture(bool failSave = false)
         {
-            var ancestor = new DirectoryInfo(AppContext.BaseDirectory);
-            while (ancestor is not null && !Directory.Exists(Path.Combine(ancestor.FullName, "Capstone_SAW_BE"))) ancestor = ancestor.Parent;
-            var artifacts = Path.Combine(ancestor?.FullName ?? throw new InvalidOperationException("Workspace root not found"), "CodexDocs", "TestResults", "SupplierFiles");
-            Root = Path.GetFullPath(Path.Combine(artifacts, Guid.NewGuid().ToString("N")));
+            // Unit tests must also work in a standalone checkout or a CI directory named /work.
+            // Do not create the directory yet: rejected uploads must leave no storage behind.
+            Root = Path.GetFullPath(Path.Combine(Path.GetTempPath(), "saw-supplier-files-" + Guid.NewGuid().ToString("N")));
             var options = new DbContextOptionsBuilder<AppDbContext>().UseInMemoryDatabase(Guid.NewGuid().ToString());
             if (failSave) options.AddInterceptors(new FailedSave());
             Db = new AppDbContext(options.Options);

@@ -25,7 +25,7 @@ public sealed class GoodsIssueSqlFixture : IAsyncLifetime
                 await db.Database.ExecuteSqlRawAsync(operation.Sql);
             await transaction.CommitAsync();
         }
-        catch { await Picking.DisposeAsync(); throw; }
+        catch (Exception error) { await Picking.Database.CleanupAfterInitializationFailureAsync(error); throw; }
     }
     public Task DisposeAsync() => Picking.DisposeAsync();
 }
