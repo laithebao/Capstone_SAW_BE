@@ -1,156 +1,119 @@
+using System.Text.Json.Nodes;
 using FluentAssertions;
-using Microsoft.EntityFrameworkCore;
-using Microsoft.Extensions.Logging.Abstractions;
+using Moq;
 using SAW.Application.Features.AiChat;
 using SAW.Infrastructure.AiChat;
-using SAW.Infrastructure.AiChat.Rag;
-using SAW.Infrastructure.Persistence;
-using Xunit;
 
 namespace SAW.Test.Infrastructure.AiChat;
 
 public sealed class AiChatServiceTests
 {
-    private readonly AiChatService _chatService;
-    private readonly GeminiOptions _options;
+    private static int _nextAccountId = 100_000;
+    private static int NewAccountId() => Interlocked.Increment(ref _nextAccountId);
 
-    public AiChatServiceTests()
-    {
-        _options = new GeminiOptions
-        {
-            RateLimitPerAccount = 3,
-            RateLimitWindowMinutes = 5,
-            MaxMessagesPerSession = 10
-        };
-
-        var dbOptions = new DbContextOptionsBuilder<AppDbContext>().Options;
-        var db = new AppDbContext(dbOptions);
-        var httpFactoryMock = new Moq.Mock<IHttpClientFactory>();
-        var embedder = new GeminiEmbeddingService(httpFactoryMock.Object, _options, NullLogger<GeminiEmbeddingService>.Instance);
-        var kb = new KnowledgeBaseService(embedder, Array.Empty<IDocumentLoader>(), _options, NullLogger<KnowledgeBaseService>.Instance);
-        var toolExecutor = new AiToolExecutor(db, NullLogger<AiToolExecutor>.Instance, kb);
-
-        var geminiClient = new GeminiApiClient(new HttpClient(), _options, NullLogger<GeminiApiClient>.Instance);
-
-        _chatService = new AiChatService(geminiClient, toolExecutor, _options);
-    }
+    private readonly Mock<IAiChatModelClient> _model = new(MockBehavior.Strict);
 
     [Theory]
     [InlineData(null)]
     [InlineData("")]
     [InlineData("   ")]
-    public async Task SendMessageAsync_WithEmptyOrWhitespaceMessage_ShouldReturnError(string? message)
+    public async Task SendMessageAsync_RejectsBlankInputBeforeCallingModel(string? message)
     {
-        // Arrange
-        var request = new AiChatRequest(message!);
+        var result = await CreateService().SendMessageAsync(NewAccountId(), new(message!), default);
 
-        // Act
-        var response = await _chatService.SendMessageAsync(accountId: 101, request, CancellationToken.None);
-
-        // Assert
-        response.IsError.Should().BeTrue();
-        response.Reply.Should().Contain("Tin nhắn không hợp lệ");
+        result.IsError.Should().BeTrue();
+        result.Reply.Should().Contain("Tin nhắn không hợp lệ");
+        _model.VerifyNoOtherCalls();
     }
 
     [Fact]
-    public async Task SendMessageAsync_WithMessageExceeding2000Characters_ShouldReturnError()
+    public async Task SendMessageAsync_RejectsMessagesOver2000CharactersBeforeCallingModel()
     {
-        // Arrange: Tin nhắn 2001 ký tự
-        var longMessage = new string('A', 2001);
-        var request = new AiChatRequest(longMessage);
+        var result = await CreateService().SendMessageAsync(NewAccountId(), new(new string('A', 2001)), default);
 
-        // Act
-        var response = await _chatService.SendMessageAsync(accountId: 102, request, CancellationToken.None);
-
-        // Assert
-        response.IsError.Should().BeTrue();
-        response.Reply.Should().Contain("tối đa 2000 ký tự");
+        result.IsError.Should().BeTrue();
+        result.Reply.Should().Contain("tối đa 2000 ký tự");
+        _model.VerifyNoOtherCalls();
     }
 
     [Fact]
-    public async Task SendMessageAsync_WhenAccountExceedsRateLimit_ShouldReturnRateLimitError()
+    public async Task SendMessageAsync_EnforcesRateLimitPerAccountBeforeCallingModel()
     {
-        // Arrange: accountId riêng để không bị ảnh hưởng bởi test khác
-        const int accountId = 9999;
-        var request = new AiChatRequest("Xin chào AI");
-
-        // Act: Gửi vượt ngưỡng RateLimitPerAccount (3 lần)
-        // Vì tin nhắn hợp lệ sẽ tiến tới gọi HTTP GeminiApiClient (chưa có API key thực tế nên sẽ throw hoặc bị rate limit trước)
-        // Ta test cơ chế rate limit:
-        // Lần 1, 2, 3: count tăng lên
-        // Lần 4: Chặn ngay tại bước CheckRateLimit mà không cần gọi đến Gemini!
-        for (int i = 0; i < _options.RateLimitPerAccount; i++)
+        var modelCalls = 0;
+        ModelCall().ReturnsAsync(() =>
         {
-            try
-            {
-                await _chatService.SendMessageAsync(accountId, request, CancellationToken.None);
-            }
-            catch
-            {
-                // Bỏ qua lỗi kết nối mạng HTTP của các lần gọi hợp lệ
-            }
-        }
+            modelCalls++;
+            return new AiChatResponse("Xin chào.", IsError: false);
+        });
+        var options = new AiChatOptions { RateLimitPerAccount = 2 };
+        var accountId = NewAccountId();
+        var service = CreateService(options);
+        var request = new AiChatRequest(new string('A', 2000));
 
-        // Lần thứ 4: Phải bị Rate Limit chặn ngay lập tức
-        var throttledResponse = await _chatService.SendMessageAsync(accountId, request, CancellationToken.None);
+        (await service.SendMessageAsync(accountId, request, default)).IsError.Should().BeFalse();
+        (await service.SendMessageAsync(accountId, request, default)).IsError.Should().BeFalse();
 
-        // Assert
-        throttledResponse.IsError.Should().BeTrue();
-        throttledResponse.Reply.Should().Contain("quá");
-        throttledResponse.Reply.Should().Contain("tin nhắn");
+        // New service scopes share the account's limit.
+        var throttled = await CreateService(options).SendMessageAsync(accountId, request, default);
+        throttled.IsError.Should().BeTrue();
+        throttled.Reply.Should().Contain("quá 2 tin nhắn");
+        (await service.SendMessageAsync(NewAccountId(), request, default)).IsError.Should().BeFalse();
+        modelCalls.Should().Be(3);
     }
 
-    [Fact]
-    public async Task SendMessageAsync_WithBatchContextCode_InjectsBatchContextIntoPrompt()
+    [Theory]
+    [InlineData(" MAIN ", "ALIAS", 42L, "[Nhà phân phối đang xem lô hàng có Mã lô (BatchCode): \"MAIN\"]\n")]
+    [InlineData(" ", " ALIAS ", 42L, "[Nhà phân phối đang xem lô hàng có Mã lô (BatchCode): \"ALIAS\"]\n")]
+    [InlineData(null, null, 42L, "[Nhà phân phối đang xem lô hàng ID: 42]\n")]
+    [InlineData(null, null, null, "")]
+    public async Task SendMessageAsync_PrefersBatchCodeAndPassesOnlyRecentValidHistory(
+        string? contextCode, string? alias, long? batchId, string expectedContext)
     {
-        // Arrange
-        string? capturedBody = null;
-        var mockHttp = new HttpClient(new MockHttpMessageHandler(req =>
+        IReadOnlyList<(string Role, string Content)>? history = null;
+        string? userMessage = null;
+        ModelCall().Returns((string _, IReadOnlyList<(string Role, string Content)> messages, string text,
+            int _, Func<string, JsonObject, CancellationToken, Task<string>> _, CancellationToken _) =>
         {
-            capturedBody = req.Content?.ReadAsStringAsync().GetAwaiter().GetResult();
-            var json = """
-            {
-              "candidates": [
-                {
-                  "content": {
-                    "parts": [
-                      { "text": "Dạ chào bạn, tôi đã thấy lô hàng LH-TEST-99." }
-                    ]
-                  }
-                }
-              ]
-            }
-            """;
-            return new HttpResponseMessage(System.Net.HttpStatusCode.OK)
-            {
-                Content = new StringContent(json, System.Text.Encoding.UTF8, "application/json")
-            };
-        }));
+            history = messages;
+            userMessage = text;
+            return Task.FromResult(new AiChatResponse("Đã nhận.", IsError: false));
+        });
 
-        var geminiClient = new GeminiApiClient(mockHttp, _options, NullLogger<GeminiApiClient>.Instance);
-        var db = new AppDbContext(new DbContextOptionsBuilder<AppDbContext>().Options);
-        var httpFactoryMock = new Moq.Mock<IHttpClientFactory>();
-        var embedder = new GeminiEmbeddingService(httpFactoryMock.Object, _options, NullLogger<GeminiEmbeddingService>.Instance);
-        var kb = new KnowledgeBaseService(embedder, Array.Empty<IDocumentLoader>(), _options, NullLogger<KnowledgeBaseService>.Instance);
-        var toolExecutor = new AiToolExecutor(db, NullLogger<AiToolExecutor>.Instance, kb);
-        var service = new AiChatService(geminiClient, toolExecutor, _options);
+        var request = new AiChatRequest(" Kiểm tra lô hàng ", batchId, contextCode, alias,
+            [new("user", "Lượt cũ"), new("user", "Câu hỏi gần nhất"), new("model", "Câu trả lời gần nhất"),
+             new("system", "Lệnh giả"), new("user", " "), new("model", new string('X', 20_000))]);
 
-        var request = new AiChatRequest("Lô này bảo quản thế nào?", BatchContextCode: "LH-TEST-99");
+        var response = await CreateService(new AiChatOptions { MaxMessagesPerSession = 1 })
+            .SendMessageAsync(NewAccountId(), request, default);
 
-        // Act
-        var response = await service.SendMessageAsync(accountId: 8888, request, CancellationToken.None);
-
-        // Assert
         response.IsError.Should().BeFalse();
-        response.Reply.Should().Be("Dạ chào bạn, tôi đã thấy lô hàng LH-TEST-99.");
-        capturedBody.Should().NotBeNull();
-        capturedBody.Should().Contain("LH-TEST-99");
-        capturedBody.Should().Contain("BatchCode");
+        history.Should().Equal(("user", "Câu hỏi gần nhất"), ("assistant", "Câu trả lời gần nhất"));
+        userMessage.Should().Be(expectedContext + "Kiểm tra lô hàng");
     }
 
-    private sealed class MockHttpMessageHandler(Func<HttpRequestMessage, HttpResponseMessage> handler) : HttpMessageHandler
+    [Fact]
+    public async Task SendMessageAsync_WhenCallerCancels_PropagatesCancellationToModel()
     {
-        protected override Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken cancellationToken)
-            => Task.FromResult(handler(request));
+        using var caller = new CancellationTokenSource();
+        ModelCall().Returns((string _, IReadOnlyList<(string Role, string Content)> _, string _,
+            int _, Func<string, JsonObject, CancellationToken, Task<string>> _, CancellationToken token) =>
+        {
+            caller.Cancel();
+            token.IsCancellationRequested.Should().BeTrue();
+            return Task.FromCanceled<AiChatResponse>(token);
+        });
+
+        var send = () => CreateService().SendMessageAsync(NewAccountId(), new("Xin chào"), caller.Token);
+
+        await send.Should().ThrowAsync<OperationCanceledException>();
     }
+
+    private AiChatService CreateService(AiChatOptions? options = null) =>
+        // The tool executor is unused by these service-level tests.
+        new(_model.Object, null!, options ?? new());
+
+    private Moq.Language.Flow.ISetup<IAiChatModelClient, Task<AiChatResponse>> ModelCall() =>
+        _model.Setup(model => model.ChatAsync(It.IsAny<string>(),
+            It.IsAny<IReadOnlyList<(string Role, string Content)>>(), It.IsAny<string>(), It.IsAny<int>(),
+            It.IsAny<Func<string, JsonObject, CancellationToken, Task<string>>>(), It.IsAny<CancellationToken>()));
 }

@@ -2,36 +2,91 @@ using System.Text.Json;
 using System.Text.Json.Nodes;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Logging;
+using SAW.Application.Features.DistributorOrders;
 using SAW.Infrastructure.Persistence;
 
 namespace SAW.Infrastructure.AiChat;
 
 /// <summary>
 /// Executes AI tool calls by querying the real database.
-/// All queries filter by the authenticated distributor's accountId to prevent data leakage.
+/// Batch and catalog lookups use the authenticated distributor's accountId for access checks.
 /// </summary>
-public sealed class AiToolExecutor(AppDbContext db, ILogger<AiToolExecutor> logger, KnowledgeBaseService knowledgeBase)
+public sealed class AiToolExecutor(AppDbContext db, ILogger<AiToolExecutor> logger, KnowledgeBaseService knowledgeBase,
+    IDistributorOrderService distributorOrders)
 {
     private static readonly JsonSerializerOptions JsonOpts = new() { WriteIndented = true };
+    private const int CatalogPageSize = 10;
 
     public async Task<string> ExecuteAsync(string toolName, JsonNode? args, int accountId, CancellationToken ct)
     {
+        ct.ThrowIfCancellationRequested();
         try
         {
             return toolName switch
             {
                 "GetBatchSummary" => await GetBatchSummaryAsync(GetBatchIdentifier(args), accountId, ct),
                 "GetBatchQcReport" => await GetBatchQcReportAsync(GetBatchIdentifier(args), accountId, ct),
-                "GetStorageAdvice" => await GetStorageAdviceAsync((int)GetLong(args, "cropTypeId"), ct),
-                "SearchKnowledgeBase" => await SearchKnowledgeBaseAsync(GetString(args, "query"), ct),
-                _ => $"{{ \"error\": \"Tool '{toolName}' không được hỗ trợ.\" }}"
+                "SearchSaleLots" => await SearchSaleLotsAsync(args, accountId, ct),
+                "GetStorageAdvice" => await GetStorageAdviceAsync(GetCropTypeId(args), ct),
+                "SearchKnowledgeBase" => await knowledgeBase.SearchAsync(GetQuery(args), ct),
+                _ => JsonSerializer.Serialize(new { error = $"Tool '{toolName}' không được hỗ trợ." })
             };
+        }
+        catch (ToolArgumentException ex)
+        {
+            return JsonSerializer.Serialize(new { error = ex.Message });
+        }
+        catch (OperationCanceledException) when (ct.IsCancellationRequested)
+        {
+            throw;
         }
         catch (Exception ex)
         {
-            logger.LogWarning(ex, "Tool {Tool} failed for account {AccountId}", toolName, accountId);
-            return JsonSerializer.Serialize(new { error = ex.Message });
+            logger.LogWarning("Tool {Tool} không xử lý được ({ErrorType}).", toolName, ex.GetType().Name);
+            return """{"error":"Không thể tra cứu dữ liệu lúc này. Vui lòng thử lại sau."}""";
         }
+    }
+
+    private async Task<string> SearchSaleLotsAsync(JsonNode? args, int accountId, CancellationToken ct)
+    {
+        if (args is not JsonObject obj
+            || obj["search"] is not JsonValue searchValue || !searchValue.TryGetValue<string>(out var search)
+            || search.Length > 100 || search.Any(char.IsControl)
+            || obj["page"] is not JsonValue pageValue || !pageValue.TryGetValue<int>(out var page)
+            || page < 1 || page - 1 > int.MaxValue / CatalogPageSize)
+            throw new ToolArgumentException("Từ khóa hoặc số trang tra cứu lô đang bán không hợp lệ.");
+
+        var sort = obj["sort"] is JsonValue sortValue && sortValue.TryGetValue<string>(out var order)
+            ? order switch
+            {
+                "newest" => CatalogSort.Newest,
+                "price_asc" => CatalogSort.PriceAscending,
+                "price_desc" => CatalogSort.PriceDescending,
+                _ => throw new ToolArgumentException("Thứ tự tra cứu lô đang bán không hợp lệ.")
+            }
+            : throw new ToolArgumentException("Thiếu thứ tự tra cứu lô đang bán.");
+
+        var result = await distributorOrders.CatalogAsync(accountId,
+            new DistributorQuery(Search: search.Trim(), Page: page, PageSize: CatalogPageSize), ct, sort);
+
+        return JsonSerializer.Serialize(new
+        {
+            totalCount = result.TotalCount,
+            page = result.Page,
+            pageSize = result.PageSize,
+            currency = "VND",
+            items = result.Items.Select(lot => new
+            {
+                batchCode = lot.BatchCode,
+                productName = lot.ProductName,
+                cropName = lot.CropName,
+                origin = lot.Origin,
+                qualityGrade = lot.QualityGrade,
+                expiryDate = lot.ExpiryDate,
+                weightKg = lot.WeightKg,
+                wholeLotPrice = lot.WholeLotPrice
+            })
+        });
     }
 
     // ── Tool: GetBatchSummary ─────────────────────────────────────────
@@ -165,15 +220,6 @@ public sealed class AiToolExecutor(AppDbContext db, ILogger<AiToolExecutor> logg
         return JsonSerializer.Serialize(new { found = true, data = qc }, JsonOpts);
     }
 
-    // ── Tool: SearchKnowledgeBase ─────────────────────────────────────
-    private async Task<string> SearchKnowledgeBaseAsync(string query, CancellationToken ct)
-    {
-        logger.LogInformation("[AI-KB] SearchKnowledgeBase được gọi với query: '{Query}'", query);
-        var result = await knowledgeBase.SearchAsync(query, ct);
-        logger.LogInformation("[AI-KB] SearchKnowledgeBase trả về {Length} ký tự", result.Length);
-        return result;
-    }
-
     // ── Tool: GetStorageAdvice ────────────────────────────────────────
     private async Task<string> GetStorageAdviceAsync(int cropTypeId, CancellationToken ct)
     {
@@ -218,24 +264,44 @@ public sealed class AiToolExecutor(AppDbContext db, ILogger<AiToolExecutor> logg
                      o.OrderDetails.Any(od => od.RequestedProductBatchId == batchId)))), ct);
     }
 
-    // ── Helpers ───────────────────────────────────────────────────────
     private static string GetBatchIdentifier(JsonNode? args)
     {
-        if (args == null) throw new ArgumentException("Thiếu tham số mã lô hàng.");
-        var val = args["batchCode"] ?? args["batchId"] ?? args["code"] ?? args["id"];
-        if (val == null) throw new ArgumentException("Thiếu tham số batchCode.");
-        var str = val.ToString()?.Trim() ?? string.Empty;
-        return str.TrimStart('#');
+        if (args is not JsonObject obj)
+            throw new ToolArgumentException("Thiếu tham số mã lô hàng.");
+
+        var node = obj["batchCode"] ?? obj["batchId"] ?? obj["code"] ?? obj["id"];
+        if (node is null)
+            throw new ToolArgumentException("Thiếu tham số batchCode.");
+
+        if (node is JsonValue value)
+        {
+            if (value.TryGetValue<string>(out var text) && text.Length <= 200)
+                return text.Trim().TrimStart('#');
+            if (value.TryGetValue<long>(out var id) && id > 0)
+                return id.ToString(System.Globalization.CultureInfo.InvariantCulture);
+        }
+
+        throw new ToolArgumentException("Mã lô hàng không hợp lệ.");
     }
 
-    private static long GetLong(JsonNode? args, string key)
+    private static int GetCropTypeId(JsonNode? args)
     {
-        var val = args?[key] ?? throw new ArgumentException($"Thiếu tham số: {key}");
-        return val.GetValue<long>();
+        if ((args as JsonObject)?["cropTypeId"] is not { } node)
+            throw new ToolArgumentException("Thiếu tham số: cropTypeId");
+        if (node is not JsonValue value || !value.TryGetValue<int>(out var id) || id <= 0)
+            throw new ToolArgumentException("cropTypeId phải là số nguyên dương.");
+        return id;
     }
-    private static string GetString(JsonNode? args, string key)
+
+    private static string GetQuery(JsonNode? args)
     {
-        var val = args?[key] ?? throw new ArgumentException($"Thiếu tham số: {key}");
-        return val.GetValue<string>();
+        if ((args as JsonObject)?["query"] is not { } node)
+            throw new ToolArgumentException("Thiếu tham số: query");
+        if (node is not JsonValue value || !value.TryGetValue<string>(out var query)
+            || string.IsNullOrWhiteSpace(query) || query.Trim().Length > Rag.OpenAIEmbeddingService.MaxInputChars)
+            throw new ToolArgumentException("Nội dung tra cứu không hợp lệ.");
+        return query.Trim();
     }
+
+    private sealed class ToolArgumentException(string message) : Exception(message);
 }

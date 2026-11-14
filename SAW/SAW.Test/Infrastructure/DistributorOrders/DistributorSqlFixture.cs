@@ -56,7 +56,7 @@ public sealed class DistributorSqlFixture : IAsyncLifetime
                 END;
                 """);
         }
-        catch { await Database.DisposeAsync(); throw; }
+        catch (Exception error) { await Database.CleanupAfterInitializationFailureAsync(error); throw; }
     }
     public Task DisposeAsync() => Database.DisposeAsync();
 }

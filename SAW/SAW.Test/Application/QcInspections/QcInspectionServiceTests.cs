@@ -25,6 +25,54 @@ public sealed class QcInspectionServiceTests
 
     private QcInspectionService CreateService() => new(_repo.Object);
 
+    [Fact]
+    public async Task SaveEnvironmentCriteriaUpdatesOnlyEnvironmentResultsAndPreservesOtherGroups()
+    {
+        var environment = MakeNumberCriterion(100); environment.CriterionGroup = "ENVIRONMENT";
+        var sensory = MakeNumberCriterion(200);
+        var environmentResult = new InspectionResultDetail { InspectionCriterionId = 100, InspectionCriterion = environment, NumericValue = 1 };
+        var sensoryResult = new InspectionResultDetail { InspectionCriterionId = 200, InspectionCriterion = sensory, NumericValue = 2 };
+        var inspection = MakeInspection(details: [environmentResult, sensoryResult]);
+        _repo.Setup(r => r.GetInspectionAsync(1, It.IsAny<CancellationToken>())).ReturnsAsync(inspection);
+        var request = new SaveEnvironmentCriteriaRequest(null, [new(100, 7, " value ", true, " remark "), new(200, 99, null, null, null), new(999, 99, null, null, null)]);
+        await CreateService().SaveEnvironmentCriteriaAsync(1, request, 5, "QC_STAFF", default);
+        Assert.Equal(7, environmentResult.NumericValue); Assert.Equal("value", environmentResult.TextValue); Assert.True(environmentResult.BooleanValue); Assert.Equal("remark", environmentResult.Remarks);
+        Assert.Equal(2, sensoryResult.NumericValue); Assert.Equal(2, inspection.ResultDetails.Count);
+        _repo.Verify(r => r.SaveChangesAsync(It.IsAny<CancellationToken>()), Times.Once);
+    }
+
+    [Theory]
+    [InlineData("DRAFT")]
+    [InlineData("COMPLETED")]
+    public async Task SaveEnvironmentCriteriaCannotModifyUnstartedOrLockedInspection(string status)
+    {
+        _repo.Setup(r => r.GetInspectionAsync(1, It.IsAny<CancellationToken>())).ReturnsAsync(MakeInspection(status: status));
+        await Assert.ThrowsAsync<BadRequestException>(() => CreateService().SaveEnvironmentCriteriaAsync(1, new(null, []), 5, "QC_STAFF", default));
+        _repo.Verify(r => r.SaveChangesAsync(It.IsAny<CancellationToken>()), Times.Never);
+    }
+
+    [Fact]
+    public async Task SaveEnvironmentCriteriaRequiresExistingInspectionOwnedByQcActor()
+    {
+        await Assert.ThrowsAsync<NotFoundException>(() => CreateService().SaveEnvironmentCriteriaAsync(1, new(null, []), 5, "QC_STAFF", default));
+        _repo.Setup(r => r.GetInspectionAsync(1, It.IsAny<CancellationToken>())).ReturnsAsync(MakeInspection());
+        await Assert.ThrowsAsync<ForbiddenException>(() => CreateService().SaveEnvironmentCriteriaAsync(1, new(null, []), 99, "QC_STAFF", default));
+        _repo.Verify(r => r.SaveChangesAsync(It.IsAny<CancellationToken>()), Times.Never);
+    }
+
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task EmptyEnvironmentCriteriaDoesNotClearPreviouslySavedResults(bool nullList)
+    {
+        var detail = new InspectionResultDetail { InspectionCriterionId = 100, NumericValue = 7 };
+        var inspection = MakeInspection(details: [detail]);
+        _repo.Setup(r => r.GetInspectionAsync(1, It.IsAny<CancellationToken>())).ReturnsAsync(inspection);
+        await CreateService().SaveEnvironmentCriteriaAsync(1, new(null, nullList ? null! : []), 5, "QC_STAFF", default);
+        Assert.Equal(7, detail.NumericValue); Assert.Single(inspection.ResultDetails);
+        _repo.Verify(r => r.SaveChangesAsync(It.IsAny<CancellationToken>()), Times.Once);
+    }
+
     // ─── Factory helpers ──────────────────────────────────────────────────────
 
     private static ProductBatch MakeBatch(
@@ -411,6 +459,29 @@ public sealed class QcInspectionServiceTests
         await svc.UpdateSamplingRatioAsync(1, new UpdateSamplingRatioRequest(0.10m), 5, "ADMINISTRATOR", CancellationToken.None);
 
         Assert.Equal("IN_PROGRESS", inspection.InspectionStatus);
+    }
+
+    [Theory]
+    [InlineData(500, 1000, true)]
+    [InlineData(2000, 999, false)]
+    public async Task UC21_SamplingThresholdAndSampleSizeUseActualVerifiedWeightInsteadOfSupplierDeclaration(int declared, int verified, bool allowed)
+    {
+        var batch = MakeBatch(weight: declared); batch.VerifiedWeightInKg = verified;
+        var inspection = MakeInspection(status: "DRAFT", batch: batch);
+        _repo.Setup(r => r.GetInspectionAsync(1, It.IsAny<CancellationToken>())).ReturnsAsync(inspection);
+        if (allowed)
+        {
+            await CreateService().UpdateSamplingRatioAsync(1, new(0.03m), 5, "ADMINISTRATOR", default);
+            Assert.Equal(verified * 0.03m, inspection.SampleSize); Assert.Equal("IN_PROGRESS", inspection.InspectionStatus);
+            _repo.Verify(r => r.SaveChangesAsync(It.IsAny<CancellationToken>()), Times.Once);
+        }
+        else
+        {
+            await Assert.ThrowsAsync<BadRequestException>(() => CreateService().UpdateSamplingRatioAsync(1, new(0.03m), 5, "ADMINISTRATOR", default));
+            Assert.Equal("DRAFT", inspection.InspectionStatus); Assert.Null(inspection.SampleSize);
+            _repo.Verify(r => r.SaveChangesAsync(It.IsAny<CancellationToken>()), Times.Never);
+        }
+        Assert.Equal(declared, batch.WeightInKg); Assert.Equal(verified, batch.VerifiedWeightInKg);
     }
 
     // ═════════════════════════════════════════════════════════════════════════
@@ -956,8 +1027,10 @@ public sealed class QcInspectionServiceTests
         Assert.Null(result.QualityGrade);
     }
 
-    [Fact]
-    public async Task UC53_FinalizeAsync_GradeDOrE_BatchGoesToApprovedForStorage()
+    [Theory]
+    [InlineData(25, "D")]
+    [InlineData(35, "E")]
+    public async Task UC53_FinalizeAsync_GradeDOrE_BatchGoesToApprovedForStorage(int value, string grade)
     {
         var criterion = new InspectionCriterion
         {
@@ -973,10 +1046,11 @@ public sealed class QcInspectionServiceTests
                 new CriterionGradeRule { Grade = "A", MinValue = 0m, MaxValue = 5m, IsFailRule = false },
                 new CriterionGradeRule { Grade = "B", MinValue = 6m, MaxValue = 10m, IsFailRule = false },
                 new CriterionGradeRule { Grade = "C", MinValue = 11m, MaxValue = 20m, IsFailRule = false },
-                new CriterionGradeRule { Grade = "D", MinValue = 21m, MaxValue = 30m, IsFailRule = false }
+                new CriterionGradeRule { Grade = "D", MinValue = 21m, MaxValue = 30m, IsFailRule = false },
+                new CriterionGradeRule { Grade = "E", MinValue = 31m, MaxValue = 40m, IsFailRule = false }
             ]
         };
-        var detail = new InspectionResultDetail { InspectionCriterionId = 100, NumericValue = 25m }; // grade D
+        var detail = new InspectionResultDetail { InspectionCriterionId = 100, NumericValue = value };
         var inspection = BuildFinalizeInspection([(criterion, detail)]);
         _repo.Setup(r => r.GetInspectionDetailAsync(1, It.IsAny<CancellationToken>())).ReturnsAsync(inspection);
         _repo.Setup(r => r.SaveChangesAsync(It.IsAny<CancellationToken>())).Returns(Task.CompletedTask);
@@ -985,8 +1059,102 @@ public sealed class QcInspectionServiceTests
         var result = await svc.FinalizeAsync(1, 5, "ADMINISTRATOR", CancellationToken.None);
 
         Assert.Equal("PASS", result.QcResult);
-        Assert.Equal("D", result.QualityGrade);
+        Assert.Equal(grade, result.QualityGrade);
         Assert.Equal("APPROVED_FOR_STORAGE", result.NewBatchStatus);
+        Assert.Equal("COMPLETED", inspection.InspectionStatus);
+        Assert.Equal(grade, inspection.ProductBatch.QualityGrade);
+        Assert.NotNull(inspection.CompletedAt);
+        _repo.Verify(r => r.SaveChangesAsync(It.IsAny<CancellationToken>()), Times.Once);
+    }
+
+    [Theory]
+    [InlineData(0, "A")]
+    [InlineData(10, "A")]
+    [InlineData(11, "B")]
+    [InlineData(20, "B")]
+    public async Task UC52_FinalizeAsync_NumberIntervalBoundariesAreInclusive(int value, string expected)
+    {
+        var criterion = MakeNumberCriterion(100);
+        var detail = new InspectionResultDetail { NumericValue = value };
+        var inspection = BuildFinalizeInspection([(criterion, detail)]);
+        _repo.Setup(r => r.GetInspectionDetailAsync(1, It.IsAny<CancellationToken>())).ReturnsAsync(inspection);
+        var result = await CreateService().FinalizeAsync(1, 5, "ADMINISTRATOR", default);
+        Assert.Equal(expected, detail.EvaluatedGrade); Assert.True(detail.IsPassed);
+        Assert.Equal(expected, result.QualityGrade); Assert.Equal("PASS", result.QcResult);
+    }
+
+    [Theory]
+    [InlineData(false, "PASS", "APPROVED_FOR_STORAGE")]
+    [InlineData(true, "FAIL", "REJECTED")]
+    public async Task UC52_FinalizeAsync_IntervalGapUsesAdjacentWorseGradeAndRespectsCriticalGate(bool critical, string outcome, string status)
+    {
+        var criterion = MakeNumberCriterion(100, isCritical: critical);
+        var detail = new InspectionResultDetail { NumericValue = 10.5m };
+        var inspection = BuildFinalizeInspection([(criterion, detail)]);
+        _repo.Setup(r => r.GetInspectionDetailAsync(1, It.IsAny<CancellationToken>())).ReturnsAsync(inspection);
+        var result = await CreateService().FinalizeAsync(1, 5, "ADMINISTRATOR", default);
+        Assert.Equal("B", detail.EvaluatedGrade); Assert.Contains("Hạng B", detail.Remarks);
+        Assert.Equal(!critical, detail.IsPassed); Assert.Equal(outcome, result.QcResult);
+        Assert.Equal(status, inspection.ProductBatch.BatchStatus);
+        if (critical) { Assert.Null(result.QualityGrade); Assert.Contains(criterion.CriterionCode, inspection.ProductBatch.RejectionReason); }
+    }
+
+    [Theory]
+    [InlineData("NUMBER")]
+    [InlineData("TEXT")]
+    [InlineData("BOOLEAN")]
+    public async Task UC52_FinalizeAsync_MissingRequiredTypedValue_DoesNotMutateOrSave(string type)
+    {
+        var criterion = type == "NUMBER" ? MakeNumberCriterion() : type == "TEXT" ? MakeTextCriterion() : MakeBooleanCriterion();
+        var inspection = BuildFinalizeInspection([(criterion, new InspectionResultDetail())]);
+        _repo.Setup(r => r.GetInspectionDetailAsync(1, It.IsAny<CancellationToken>())).ReturnsAsync(inspection);
+        var error = await Assert.ThrowsAsync<BadRequestException>(() => CreateService().FinalizeAsync(1, 5, "ADMINISTRATOR", default));
+        Assert.Contains(criterion.CriterionCode, error.Message);
+        Assert.Equal("IN_PROGRESS", inspection.InspectionStatus); Assert.Null(inspection.CompletedAt);
+        _repo.Verify(r => r.SaveChangesAsync(It.IsAny<CancellationToken>()), Times.Never);
+    }
+
+    [Fact]
+    public async Task UC53_FinalizeAsync_PassingBooleanOnly_DefaultsToAAndPreservesAllBatchQuantities()
+    {
+        var detail = new InspectionResultDetail { BooleanValue = true };
+        var inspection = BuildFinalizeInspection([(MakeBooleanCriterion(), detail)]);
+        var batch = inspection.ProductBatch;
+        batch.DeclaredQuantity = 11; batch.WeightInKg = 110; batch.VerifiedQuantity = 10; batch.VerifiedWeightInKg = 97;
+        _repo.Setup(r => r.GetInspectionDetailAsync(1, It.IsAny<CancellationToken>())).ReturnsAsync(inspection);
+        var result = await CreateService().FinalizeAsync(1, 5, "ADMINISTRATOR", default);
+        Assert.Equal("PASS", result.QcResult); Assert.Equal("A", result.QualityGrade);
+        Assert.Null(detail.EvaluatedGrade); Assert.True(detail.IsPassed);
+        Assert.Equal(11, batch.DeclaredQuantity); Assert.Equal(110, batch.WeightInKg);
+        Assert.Equal(10, batch.VerifiedQuantity); Assert.Equal(97, batch.VerifiedWeightInKg);
+        Assert.Equal("APPROVED_FOR_STORAGE", batch.BatchStatus);
+    }
+
+    [Theory]
+    [InlineData("NUMBER")]
+    [InlineData("TEXT")]
+    public async Task UC52_FinalizeAsync_MissingOptionalMeasurementDoesNotFailTheBatch(string type)
+    {
+        var optional = type == "NUMBER" ? MakeNumberCriterion(101, isRequired: false) : MakeTextCriterion(301);
+        optional.IsRequired = false;
+        var inspection = BuildFinalizeInspection([(optional, new InspectionResultDetail()), (MakeBooleanCriterion(), new InspectionResultDetail { BooleanValue = true })]);
+        _repo.Setup(r => r.GetInspectionDetailAsync(1, It.IsAny<CancellationToken>())).ReturnsAsync(inspection);
+        var result = await CreateService().FinalizeAsync(1, 5, "ADMINISTRATOR", default);
+        Assert.Equal("A", result.QualityGrade); Assert.Equal("PASS", result.QcResult);
+        Assert.True(inspection.ResultDetails.First().IsPassed);
+    }
+
+    [Fact]
+    public async Task UC52_FinalizeAsync_CriticalValueOutsideAllIntervals_RejectsWithoutInventingGrade()
+    {
+        var criterion = MakeNumberCriterion(isCritical: true);
+        var detail = new InspectionResultDetail { NumericValue = 999 };
+        var inspection = BuildFinalizeInspection([(criterion, detail)]);
+        _repo.Setup(r => r.GetInspectionDetailAsync(1, It.IsAny<CancellationToken>())).ReturnsAsync(inspection);
+        var result = await CreateService().FinalizeAsync(1, 5, "ADMINISTRATOR", default);
+        Assert.Null(detail.EvaluatedGrade); Assert.False(detail.IsPassed); Assert.NotNull(detail.Remarks);
+        Assert.Equal("FAIL", result.QcResult); Assert.Null(result.QualityGrade);
+        Assert.Equal("REJECTED", inspection.ProductBatch.BatchStatus);
     }
 
     [Fact]

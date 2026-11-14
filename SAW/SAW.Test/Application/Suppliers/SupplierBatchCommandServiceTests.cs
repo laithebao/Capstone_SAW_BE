@@ -43,6 +43,24 @@ public class SupplierBatchCommandServiceTests
     };
 
     [Fact]
+    public async Task DeclareAndUpdateRoundOnlyTemperatureAndHumidityBeforePersisting()
+    {
+        var declaration = Declaration(); declaration.ExpectedMinTempC = -1.005m; declaration.ExpectedMaxTempC = 25.678m;
+        declaration.ExpectedMinHumidityPct = 12.345m; declaration.ExpectedMaxHumidityPct = 89.995m;
+        declaration.DeclaredQuantity = 250.123m;
+        await Service.DeclareBatchAsync(1, declaration);
+        _batches.Verify(r => r.AddProductBatchAsync(It.Is<ProductBatch>(b => b.ExpectedMinTempC == -1.01m && b.ExpectedMaxTempC == 25.68m
+            && b.ExpectedMinHumidityPct == 12.35m && b.ExpectedMaxHumidityPct == 90m && b.DeclaredQuantity == 250.123m && b.WeightInKg == 250.123m),
+            It.IsAny<BatchStatusHistory>(), It.IsAny<List<string>?>(), It.IsAny<CancellationToken>()), Times.Once);
+        var update = Request(); update.ExpectedMinTempC = -1.005m; update.ExpectedMaxTempC = 25.678m;
+        update.ExpectedMinHumidityPct = 12.345m; update.ExpectedMaxHumidityPct = 89.995m; update.DeclaredQuantity = 250.123m;
+        await Service.UpdateDeclaredBatchAsync(5, 1, update);
+        _batches.Verify(r => r.UpdateProductBatchAsync(It.Is<ProductBatch>(b => b.ExpectedMinTempC == -1.01m && b.ExpectedMaxTempC == 25.68m
+            && b.ExpectedMinHumidityPct == 12.35m && b.ExpectedMaxHumidityPct == 90m && b.WeightInKg == 250.123m),
+            It.IsAny<BatchStatusHistory>(), _created, null, It.IsAny<List<string>?>(), It.IsAny<CancellationToken>()), Times.Once);
+    }
+
+    [Fact]
     public async Task DeclareRequiresAContract()
     {
         var error = await Assert.ThrowsAsync<ArgumentException>(() =>
@@ -196,7 +214,7 @@ public class SupplierBatchCommandServiceTests
     [InlineData("QUARANTINE")]
     [InlineData("REJECTED")]
     [InlineData("PENDING_QC")]
-    public async Task SupplierDetailStopsAtWarehouseEntryWithoutChangingWarehouseState(string warehouseStatus)
+    public async Task SupplierDetailPreservesWarehouseEntryMilestoneAndCompleteHistory(string warehouseStatus)
     {
         var batch = Batch(warehouseStatus);
         batch.QualityGrade = "C";
@@ -208,17 +226,18 @@ public class SupplierBatchCommandServiceTests
             InspectionStatus = "COMPLETED", CompletedAt = _created.AddDays(4), QcResult = "FAIL", QualityGrade = "C" });
         SetupDetail(batch);
         _batches.Setup(r => r.GetBatchStatusHistoryAsync(5, It.IsAny<CancellationToken>())).ReturnsAsync([
-            new() { BatchStatusHistoryId = 3, OldStatus = "IN_STOCK", NewStatus = warehouseStatus, ChangedAt = _created.AddDays(3) },
+            new() { BatchStatusHistoryId = 1, OldStatus = "PENDING_QC", NewStatus = "APPROVED_FOR_STORAGE", ChangedAt = _created.AddDays(1) },
             new() { BatchStatusHistoryId = 2, OldStatus = "APPROVED_FOR_STORAGE", NewStatus = "IN_STOCK", ChangedAt = _created.AddDays(2) },
-            new() { BatchStatusHistoryId = 1, OldStatus = "PENDING_QC", NewStatus = "APPROVED_FOR_STORAGE", ChangedAt = _created.AddDays(1) }
+            new() { BatchStatusHistoryId = 3, OldStatus = "IN_STOCK", NewStatus = warehouseStatus, ChangedAt = _created.AddDays(3) }
         ]);
         var result = await Service.GetBatchStatusDetailAsync(5, 1);
         Assert.Equal("IN_STOCK", result.CurrentStatus);
         Assert.Equal("Đã nhập kho", result.StatusDisplayName);
         Assert.Equal("PASS", result.QcResult); Assert.Equal("A", result.QualityGrade);
         Assert.Null(result.RejectionReason);
-        Assert.Equal(2, result.StatusHistory.Count);
-        Assert.DoesNotContain(result.StatusHistory, item => item.OldStatus == "IN_STOCK");
+        Assert.Equal(new[] { warehouseStatus, "IN_STOCK", "APPROVED_FOR_STORAGE" },
+            result.StatusHistory.Select(item => item.NewStatus));
+        Assert.Equal(_created.AddDays(2), result.WarehousedAt);
         Assert.Equal(warehouseStatus, batch.BatchStatus);
     }
 
@@ -234,7 +253,7 @@ public class SupplierBatchCommandServiceTests
         var result = await Service.GetBatchStatusDetailAsync(5, 1);
         Assert.Equal("IN_STOCK", result.CurrentStatus);
         Assert.Equal(_created.AddDays(2), result.WarehousedAt);
-        Assert.Single(result.StatusHistory);
+        Assert.Equal(new[] { "QUARANTINE", "IN_STOCK" }, result.StatusHistory.Select(item => item.NewStatus));
     }
 
     [Fact]
@@ -243,5 +262,51 @@ public class SupplierBatchCommandServiceTests
         SetupDetail(Batch(supplierId: 99));
         await Assert.ThrowsAsync<UnauthorizedAccessException>(() => Service.GetBatchStatusDetailAsync(5, 1));
         _batches.Verify(r => r.GetBatchStatusHistoryAsync(It.IsAny<long>(), It.IsAny<CancellationToken>()), Times.Never);
+    }
+
+    [Fact]
+    public async Task DeclareRejectsIneligibleContractBeforeGeneratingBatchIdentityOrWritingHistory()
+    {
+        _batches.Setup(r => r.IsSupplyContractEligibleForBatchAsync(2, 9, 3, It.IsAny<DateOnly>(), It.IsAny<DateOnly>(), It.IsAny<CancellationToken>())).ReturnsAsync(false);
+        await Assert.ThrowsAsync<ArgumentException>(() => Service.DeclareBatchAsync(1, Declaration()));
+        _batches.Verify(r => r.GenerateBatchCodeAsync(It.IsAny<CancellationToken>()), Times.Never);
+        _batches.Verify(r => r.AddProductBatchAsync(It.IsAny<ProductBatch>(), It.IsAny<BatchStatusHistory>(), It.IsAny<List<string>?>(), It.IsAny<CancellationToken>()), Times.Never);
+    }
+
+    [Fact]
+    public async Task UpdatingDeclarationCannotReplaceItsExistingContractOrServerIdentity()
+    {
+        var batch = Batch(); batch.SupplyContractId = 9;
+        _batches.Setup(r => r.GetBatchByIdAsync(5, It.IsAny<CancellationToken>())).ReturnsAsync(batch);
+        var request = Request(); request.SupplyContractId = 99;
+        await Service.UpdateDeclaredBatchAsync(5, 1, request);
+        Assert.Equal(9, batch.SupplyContractId); Assert.Equal(5, batch.ProductBatchId);
+        Assert.Equal("LH-TEST", batch.BatchCode); Assert.Equal(2, batch.SupplierId); Assert.Equal(_created, batch.CreatedAt);
+        _batches.Verify(r => r.GenerateBatchCodeAsync(It.IsAny<CancellationToken>()), Times.Never);
+    }
+
+    [Theory]
+    [InlineData("PENDING_REVIEW")]
+    [InlineData("INACTIVE")]
+    [InlineData("SUSPENDED")]
+    public async Task InactiveSupplierCannotDeclareEditCancelOrReadBatchDetail(string status)
+    {
+        _suppliers.Setup(r => r.GetEntityByAccountIdAsync(1, It.IsAny<CancellationToken>())).ReturnsAsync(new Supplier { SupplierId = 2, ProfileStatus = status });
+        await Assert.ThrowsAsync<UnauthorizedAccessException>(() => Service.DeclareBatchAsync(1, Declaration()));
+        await Assert.ThrowsAsync<UnauthorizedAccessException>(() => Service.UpdateDeclaredBatchAsync(5, 1, Request()));
+        await Assert.ThrowsAsync<UnauthorizedAccessException>(() => Service.CancelBatchAsync(5, 1, new() { ExpectedCreatedAt = _created }));
+        await Assert.ThrowsAsync<UnauthorizedAccessException>(() => Service.GetBatchStatusDetailAsync(5, 1));
+        _batches.VerifyNoOtherCalls();
+    }
+
+    [Fact]
+    public async Task MissingLoadedVersionPreventsEditAndCancelBeforeMutation()
+    {
+        var batch = Batch(); _batches.Setup(r => r.GetBatchByIdAsync(5, It.IsAny<CancellationToken>())).ReturnsAsync(batch);
+        var request = Request(); request.ExpectedCreatedAt = null;
+        await Assert.ThrowsAsync<ArgumentException>(() => Service.UpdateDeclaredBatchAsync(5, 1, request));
+        await Assert.ThrowsAsync<ArgumentException>(() => Service.CancelBatchAsync(5, 1, new()));
+        Assert.Equal("SUBMITTED", batch.BatchStatus);
+        _batches.Verify(r => r.UpdateProductBatchAsync(It.IsAny<ProductBatch>(), It.IsAny<BatchStatusHistory>(), It.IsAny<DateTime>(), It.IsAny<DateTime?>(), It.IsAny<List<string>?>(), It.IsAny<CancellationToken>()), Times.Never);
     }
 }

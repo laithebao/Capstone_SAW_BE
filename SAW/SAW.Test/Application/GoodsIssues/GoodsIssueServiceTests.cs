@@ -81,4 +81,80 @@ public sealed class GoodsIssueServiceTests
         json = json[..^1] + ",\"" + name + "\":" + value + "}";
         Assert.Throws<JsonException>(() => JsonSerializer.Deserialize<CreateGoodsIssueRequest>(json, new JsonSerializerOptions(JsonSerializerDefaults.Web)));
     }
+
+    private static GoodsIssueDetail Detail(string status = "DRAFT") => new(
+        new(99, "GI-99", 1, "PO-1", "Distributor", 10, Today, "Staff", status), "Receiver", "Saved note",
+        status == "COMMITTED" ? DateTime.UtcNow : null, new string('B', 64), status == "DRAFT", null, [], []);
+
+    [Fact]
+    public async Task UpdateDraft_NormalizesTextAndPreservesTheLoadedSnapshotBeforeReloadingSavedResult()
+    {
+        var repository = new Mock<IGoodsIssueRepository>(MockBehavior.Strict);
+        var request = new UpdateGoodsIssueDraftRequest(Guid.NewGuid(), new string('A', 64), Today, " Receiver ", " Note ", [new(1, 10)]);
+        var expected = Detail(); var sequence = new MockSequence();
+        repository.InSequence(sequence).Setup(r => r.UpdateDraftAsync(99, It.Is<UpdateGoodsIssueDraftRequest>(x =>
+            x.RequestId == request.RequestId && x.ExpectedSnapshot == request.ExpectedSnapshot && x.Lines == request.Lines
+            && x.ReceiverName == "Receiver" && x.Note == "Note"), 7, default)).Returns(Task.CompletedTask);
+        repository.InSequence(sequence).Setup(r => r.GetAsync(99, default)).ReturnsAsync(expected);
+        Assert.Same(expected, await new GoodsIssueService(repository.Object).UpdateDraftAsync(99, request, 7, default));
+        repository.VerifyAll();
+    }
+
+    [Fact]
+    public async Task Confirm_RequiresSnapshotAndReturnsThePersistedCommittedResult()
+    {
+        var repository = new Mock<IGoodsIssueRepository>(MockBehavior.Strict);
+        var request = new ConfirmGoodsIssueRequest(Guid.NewGuid(), new string('A', 64));
+        var expected = Detail("COMMITTED"); var sequence = new MockSequence();
+        repository.InSequence(sequence).Setup(r => r.ConfirmAsync(99, request, 7, default)).Returns(Task.CompletedTask);
+        repository.InSequence(sequence).Setup(r => r.GetAsync(99, default)).ReturnsAsync(expected);
+        var result = await new GoodsIssueService(repository.Object).ConfirmAsync(99, request, 7, default);
+        Assert.Same(expected, result); Assert.False(result.CanEdit); Assert.NotNull(result.CommittedAt);
+        repository.VerifyAll();
+    }
+
+    [Theory]
+    [InlineData("create")]
+    [InlineData("update")]
+    [InlineData("confirm")]
+    public async Task ConcurrentWarehouseChange_PropagatesConflictWithoutReloadOrRetryingTheWrite(string action)
+    {
+        var repository = new Mock<IGoodsIssueRepository>(MockBehavior.Strict);
+        var conflict = new ConflictException("Snapshot changed"); var service = new GoodsIssueService(repository.Object);
+        Task Operation() => action switch
+        {
+            "create" => service.CreateAsync(Draft(), 7, default),
+            "update" => service.UpdateDraftAsync(99, new(Guid.NewGuid(), new string('A', 64), Today, null, null, [new(1, 10)]), 7, default),
+            _ => service.ConfirmAsync(99, new(Guid.NewGuid(), new string('A', 64)), 7, default)
+        };
+        repository.Setup(r => r.CreateAsync(It.IsAny<CreateGoodsIssueRequest>(), 7, default)).ThrowsAsync(conflict);
+        repository.Setup(r => r.UpdateDraftAsync(99, It.IsAny<UpdateGoodsIssueDraftRequest>(), 7, default)).ThrowsAsync(conflict);
+        repository.Setup(r => r.ConfirmAsync(99, It.IsAny<ConfirmGoodsIssueRequest>(), 7, default)).ThrowsAsync(conflict);
+        Assert.Same(conflict, await Assert.ThrowsAsync<ConflictException>(Operation));
+        repository.Verify(r => r.GetAsync(It.IsAny<long>(), It.IsAny<CancellationToken>()), Times.Never);
+        Assert.Single(repository.Invocations);
+    }
+
+    [Theory]
+    [InlineData("get")]
+    [InlineData("order")]
+    public async Task InvalidReadIds_AreRejectedBeforeRepository(string action)
+    {
+        var repository = new Mock<IGoodsIssueRepository>(MockBehavior.Strict);
+        var service = new GoodsIssueService(repository.Object);
+        await Assert.ThrowsAsync<BadRequestException>(() => action == "get" ? (Task)service.GetAsync(0, default) : service.OrderAsync(-1, default));
+        repository.VerifyNoOtherCalls();
+    }
+
+    [Theory]
+    [InlineData("")]
+    [InlineData("wrong")]
+    [InlineData("ZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZ")]
+    public async Task NonHexOrMissingSnapshot_PreventsBothEditAndCommit(string snapshot)
+    {
+        var repository = new Mock<IGoodsIssueRepository>(MockBehavior.Strict); var service = new GoodsIssueService(repository.Object);
+        await Assert.ThrowsAsync<BadRequestException>(() => service.UpdateDraftAsync(99, new(Guid.NewGuid(), snapshot, Today, null, null, [new(1, 1)]), 7, default));
+        await Assert.ThrowsAsync<BadRequestException>(() => service.ConfirmAsync(99, new(Guid.NewGuid(), snapshot), 7, default));
+        repository.VerifyNoOtherCalls();
+    }
 }

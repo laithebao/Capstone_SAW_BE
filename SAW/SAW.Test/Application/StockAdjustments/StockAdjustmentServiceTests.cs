@@ -45,4 +45,75 @@ public sealed class StockAdjustmentServiceTests
         Assert.Throws<BadRequestException>(()=>StockAdjustmentRepository.ValidateImage([137,80,78,71,13,10,26,10,0,0]));
         Assert.Throws<BadRequestException>(()=>StockAdjustmentRepository.ValidateImage(new byte[10485761]));
     }
+
+    [Fact]
+    public async Task Create_PreservesActorSnapshotAndReplacementId_AndNormalizesEvidenceBeforeSaving()
+    {
+        var repository = new Mock<IStockAdjustmentRepository>(MockBehavior.Strict);
+        var first = Guid.Parse("00000000-0000-0000-0000-000000000001");
+        var second = Guid.Parse("00000000-0000-0000-0000-000000000002");
+        var request = Input() with { ImageIds = new[] { second, first }, ReplacesStockAdjustmentId = 8 };
+        var expected = new AdjustmentDetail(new(99, "ADJ-99", "COUNT", "COUNTING_ERROR", 1, "B-1", "Rice", "A", 100, 95, -5, "PENDING", "Staff", DateTime.UtcNow), "Counted", null, null, null, [], []);
+        var sequence = new MockSequence();
+        repository.InSequence(sequence).Setup(r => r.CreateAsync(It.Is<CreateStockAdjustmentRequest>(x => x.RequestId == request.RequestId
+            && x.ExpectedSnapshot == request.ExpectedSnapshot && x.ReplacesStockAdjustmentId == 8 && x.Reason == "Counted"
+            && x.ImageIds.SequenceEqual(new[] { first, second }) && x.ActualQuantityKg == 95), 7, default)).ReturnsAsync(99);
+        repository.InSequence(sequence).Setup(r => r.GetAsync(99, default)).ReturnsAsync(expected);
+        var result = await new StockAdjustmentService(repository.Object).CreateAsync(request, 7, default);
+        Assert.Same(expected, result); Assert.Equal("PENDING", result.Summary.Status);
+        Assert.Equal(new[] { second, first }, request.ImageIds);
+        repository.VerifyAll();
+    }
+
+    [Fact]
+    public async Task StaleScope_CreateConflictDoesNotReadBackAFalseSuccess()
+    {
+        var repository = new Mock<IStockAdjustmentRepository>(MockBehavior.Strict);
+        repository.Setup(r => r.CreateAsync(It.IsAny<CreateStockAdjustmentRequest>(), 7, default)).ThrowsAsync(new ConflictException("Scope changed"));
+        await Assert.ThrowsAsync<ConflictException>(() => new StockAdjustmentService(repository.Object).CreateAsync(Input(), 7, default));
+        repository.Verify(r => r.GetAsync(It.IsAny<long>(), It.IsAny<CancellationToken>()), Times.Never);
+    }
+
+    [Theory]
+    [InlineData(0)]
+    [InlineData(-1)]
+    public async Task EvidenceOperations_RejectMissingActorBeforeAccessingStorage(int actor)
+    {
+        var repository = new Mock<IStockAdjustmentRepository>(MockBehavior.Strict); var service = new StockAdjustmentService(repository.Object);
+        await Assert.ThrowsAsync<UnauthorizedAccessException>(() => service.UploadAsync([1], actor, default));
+        await Assert.ThrowsAsync<UnauthorizedAccessException>(() => service.RemoveUploadAsync(Guid.NewGuid(), actor, default));
+        repository.VerifyNoOtherCalls();
+    }
+
+    [Fact]
+    public async Task InvalidEvidenceSizeAndEmptyImageId_NeverReachStorage()
+    {
+        var repository = new Mock<IStockAdjustmentRepository>(MockBehavior.Strict); var service = new StockAdjustmentService(repository.Object);
+        await Assert.ThrowsAsync<BadRequestException>(() => service.UploadAsync([], 7, default));
+        await Assert.ThrowsAsync<BadRequestException>(() => service.UploadAsync(new byte[10485761], 7, default));
+        await Assert.ThrowsAsync<BadRequestException>(() => service.RemoveUploadAsync(Guid.Empty, 7, default));
+        repository.VerifyNoOtherCalls();
+    }
+
+    [Theory]
+    [InlineData("COUNT", null)]
+    [InlineData("COUNT", 2L)]
+    [InlineData("DISPOSAL", null)]
+    public async Task ValidScopeRetainsRequestKindAndSelectedInventory(string kind, long? inventoryId)
+    {
+        var repository = new Mock<IStockAdjustmentRepository>();
+        await new StockAdjustmentService(repository.Object).ScopeAsync(1, kind, inventoryId, default);
+        repository.Verify(r => r.ScopeAsync(1, kind, inventoryId, default), Times.Once);
+    }
+
+    [Theory]
+    [InlineData("DISPOSAL", 2L)]
+    [InlineData("COUNT", 0L)]
+    [InlineData("DISPOSE", null)]
+    public async Task InvalidScopeNeverQueriesInventory(string kind, long? inventoryId)
+    {
+        var repository = new Mock<IStockAdjustmentRepository>(MockBehavior.Strict);
+        await Assert.ThrowsAsync<BadRequestException>(() => new StockAdjustmentService(repository.Object).ScopeAsync(1, kind, inventoryId, default));
+        repository.VerifyNoOtherCalls();
+    }
 }

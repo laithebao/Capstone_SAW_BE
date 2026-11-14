@@ -16,7 +16,7 @@ namespace SAW.Test.Infrastructure.GoodsIssues;
 
 public sealed class GoodsIssueMigrationTests
 {
-    private const string Previous = "20261007134920_NormalizePurchaseOrderHistoryUtc";
+    private const string Previous = "20261016072210_AddSupplyContractChangeAndCancellation";
     private const string Target = "20261016153240_FixGoodsIssueWorkflowTriggers";
     private static string Canonical(string sql) => Regex.Replace(sql, @"\s+", "").ToUpperInvariant()
         .Replace("CREATEORALTERTRIGGER", "CREATETRIGGER").Replace("ALTERTRIGGER", "CREATETRIGGER");
@@ -46,7 +46,7 @@ public sealed class GoodsIssueMigrationTests
         public async Task CreateAsync()
         {
             var builder = new SqlConnectionStringBuilder(Environment.GetEnvironmentVariable("SAW_TEST_SQL_CONNECTION")) { InitialCatalog = "master" };
-            master = builder.ConnectionString;
+            master = new SqlConnectionStringBuilder(builder.ConnectionString) { Pooling = false }.ConnectionString;
             await using var connection = new SqlConnection(master); await connection.OpenAsync();
             await using var command = connection.CreateCommand(); command.CommandText = $"CREATE DATABASE [{name}]"; await command.ExecuteNonQueryAsync();
             builder.InitialCatalog = name; ConnectionString = builder.ConnectionString;
@@ -55,7 +55,11 @@ public sealed class GoodsIssueMigrationTests
         {
             if (master.Length == 0) return;
             Assert.Matches("^SAW_GoodsIssueMigration_Test_[a-f0-9]{32}$", name);
-            SqlConnection.ClearAllPools();
+            if (ConnectionString.Length > 0)
+            {
+                using var pool = new SqlConnection(ConnectionString);
+                SqlConnection.ClearPool(pool);
+            }
             await using var connection = new SqlConnection(master); await connection.OpenAsync();
             await using var command = connection.CreateCommand();
             command.CommandText = $"IF DB_ID('{name}') IS NOT NULL BEGIN ALTER DATABASE [{name}] SET SINGLE_USER WITH ROLLBACK IMMEDIATE; DROP DATABASE [{name}]; END";
@@ -64,6 +68,9 @@ public sealed class GoodsIssueMigrationTests
     }
     private static async Task BootstrapLegacySchemaAsync(AppDbContext db)
     {
+        // Seed against the actual predecessor of the trigger migration. Contract
+        // migrations inserted earlier in the shared chain must be present too.
+        Assert.Equal(Previous, db.Database.GetMigrations().TakeWhile(m => m != Target).Last());
         // InitialCreate.Up is empty in the shared history: an exported legacy schema is required.
         // For an empty, isolated fixture generate that legacy physical schema from its own target
         // model, then run ALL real EF migrations. No history rows are inserted by test code.

@@ -86,7 +86,7 @@ public sealed class PickingServiceTests
         Assert.Equal("WAREHOUSE_MANAGER", typeof(WarehouseOrdersController).GetCustomAttributes(typeof(AuthorizeAttribute),false).Cast<AuthorizeAttribute>().Single().Roles);
     }
     [Theory]
-    [InlineData("REJECTED")] [InlineData("QUARANTINE")] [InlineData("CANCELLED")] [InlineData("ISSUED")]
+    [InlineData("REJECTED")] [InlineData("QUARANTINE")] [InlineData("CANCELLED")] [InlineData("ISSUED")] [InlineData("DISPOSED")]
     public void Blocked_batch_states_are_independent_of_grade(string status) => Assert.NotNull(PickingRules.BatchLockReason(status,null));
     [Fact]
     public void Expiry_today_is_usable_but_yesterday_is_not()
@@ -95,4 +95,19 @@ public sealed class PickingServiceTests
         Assert.Null(PickingRules.BatchLockReason("IN_STOCK",today));
         Assert.NotNull(PickingRules.BatchLockReason("IN_STOCK",today.AddDays(-1)));
     }
+
+    [Fact]
+    public async Task Confirm_StalePickedQuantityConflictDoesNotReloadOrReportSuccess()
+    {
+        var repo = new Mock<IPickingRepository>(MockBehavior.Strict);
+        repo.Setup(r => r.ConfirmAsync(1, It.IsAny<ConfirmPickingRequest>(), 7, default)).ThrowsAsync(new ConflictException("Reservation changed"));
+        await Assert.ThrowsAsync<ConflictException>(() => new PickingService(repo.Object).ConfirmAsync(1, Request(), 7, default));
+        repo.Verify(r => r.GetAsync(It.IsAny<long>(), It.IsAny<CancellationToken>()), Times.Never);
+    }
+
+    [Theory]
+    [InlineData("IN_STOCK")]
+    [InlineData("RESERVED")]
+    [InlineData("PARTIALLY_ISSUED")]
+    public void ExistingWarehouseWorkStatesRemainUsableWithoutExpiry(string status) => Assert.Null(PickingRules.BatchLockReason(status, null));
 }

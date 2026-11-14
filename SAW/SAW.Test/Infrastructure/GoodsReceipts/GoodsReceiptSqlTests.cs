@@ -28,7 +28,8 @@ using SAW.Test.Infrastructure.ProductBatches;
 
 namespace SAW.Test.Infrastructure.GoodsReceipts;
 
-public sealed class GoodsReceiptBrowserFactAttribute : FactAttribute
+[Xunit.Sdk.TraitDiscoverer("SAW.Test.BrowserTraitDiscoverer", "SAW.Test")]
+public sealed class GoodsReceiptBrowserFactAttribute : FactAttribute, Xunit.Sdk.ITraitAttribute
 {
     public GoodsReceiptBrowserFactAttribute()
     {
@@ -49,14 +50,6 @@ public sealed class GoodsReceiptSqlFixture : IAsyncLifetime
         if (string.IsNullOrEmpty(source)) return;
         try
         {
-            await using var live = new SqlConnection(source);
-            await live.OpenAsync();
-            await using var command = live.CreateCommand();
-            command.CommandText = "SELECT OBJECT_DEFINITION(object_id) FROM sys.triggers WHERE name IN ('TR_GOODS_RECEIPT_COMMITTED_IMMUTABLE','TR_PRODUCT_BATCH_STATUS_HISTORY','TR_BATCH_STATUS_HISTORY_IMMUTABLE')";
-            var definitions = new List<string>();
-            await using (var reader = await command.ExecuteReaderAsync())
-                while (await reader.ReadAsync()) definitions.Add(reader.GetString(0));
-            Assert.Equal(3, definitions.Count); // Test actual DB trigger bodies, not approximations.
             await using var db = Database.Context();
             await db.Database.ExecuteSqlRawAsync("""
                 ALTER TABLE INVENTORY DROP COLUMN AvailableQuantity;
@@ -67,9 +60,9 @@ public sealed class GoodsReceiptSqlFixture : IAsyncLifetime
                 ALTER TABLE GOODS_RECEIPT ADD CONSTRAINT CK_GOODS_RECEIPT_Quantity CHECK (ReceivedQuantity>0 AND WeightInKg>0);
                 CREATE INDEX IX_GOODS_RECEIPT_Batch_Date ON GOODS_RECEIPT(ProductBatchID, ReceivedAt);
                 """);
-            foreach (var definition in definitions) await db.Database.ExecuteSqlRawAsync(definition);
+            await WarehouseWorkflowTestSchema.InstallAsync(db, "SAW.Test.Infrastructure.GoodsReceipts.GoodsReceiptSchema.sql");
         }
-        catch { await Database.DisposeAsync(); throw; }
+        catch (Exception error) { await Database.CleanupAfterInitializationFailureAsync(error); throw; }
     }
     public Task DisposeAsync() => Database.DisposeAsync();
 }
@@ -627,12 +620,21 @@ public sealed class GoodsReceiptSqlTests(GoodsReceiptSqlFixture fixture) : IClas
         string Token(string role) => new JwtSecurityTokenHandler().WriteToken(new JwtSecurityToken("uc28-test", "uc28-test",
             [new Claim("account_id", F.ActorId.ToString()), new Claim(ClaimTypes.Role, role)], expires: DateTime.UtcNow.AddMinutes(10),
             signingCredentials: new SigningCredentials(new SymmetricSecurityKey(Encoding.UTF8.GetBytes(ReceivingSqlFixture.JwtKey)), SecurityAlgorithms.HmacSha256)));
-        foreach (var role in new[] { "SUPPLIER", "QC_STAFF", "ADMINISTRATOR" })
+        foreach (var role in new[] { "SUPPLIER", "QC_STAFF" })
         {
             client.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", Token(role));
             Assert.Equal(HttpStatusCode.Forbidden, (await client.GetAsync("/api/operation/goods-receipts")).StatusCode);
             Assert.Equal(HttpStatusCode.Forbidden, (await client.PostAsJsonAsync("/api/operation/goods-receipts", new { })).StatusCode);
             Assert.Equal(HttpStatusCode.Forbidden, (await client.PutAsJsonAsync("/api/operation/goods-receipts/1/draft", new { })).StatusCode);
+        }
+        // Controller policy permits management reads, while all writes remain staff-only.
+        foreach (var role in new[] { "WAREHOUSE_MANAGER", "ADMINISTRATOR" })
+        {
+            client.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", Token(role));
+            Assert.Equal(HttpStatusCode.OK, (await client.GetAsync("/api/operation/goods-receipts")).StatusCode);
+            Assert.Equal(HttpStatusCode.Forbidden, (await client.PostAsJsonAsync("/api/operation/goods-receipts", new { })).StatusCode);
+            Assert.Equal(HttpStatusCode.Forbidden, (await client.PutAsJsonAsync("/api/operation/goods-receipts/1/draft", new { })).StatusCode);
+            Assert.Equal(HttpStatusCode.Forbidden, (await client.PutAsJsonAsync("/api/operation/goods-receipts/1/confirm", new { })).StatusCode);
         }
         client.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", Token("OPERATION_STAFF"));
         var created = await client.PostAsJsonAsync("/api/operation/goods-receipts", new { productBatchId = batch.ProductBatchId,

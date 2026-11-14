@@ -7,6 +7,7 @@
 .env
 .env.*
 !.env.example
+!.env.test.example
 
 # Database scripts and local database exports
 *.sql
@@ -15,6 +16,10 @@
 !docs/SetDistributorLotPrice.sql
 !docs/SeedDistributorDemo.sql
 !docs/SeedDistributorLotPrices.sql
+!SAW/SAW.Test/Infrastructure/Picking/PickingSchema.sql
+!SAW/SAW.Test/Infrastructure/GoodsIssues/GoodsIssueSchema.sql
+!SAW/SAW.Test/Infrastructure/StockAdjustments/StockAdjustmentSchema.sql
+!SAW/SAW.Test/Infrastructure/GoodsReceipts/GoodsReceiptSchema.sql
 **/App_Data/SupplierFiles/
 *.sqlproj.user
 *.bak

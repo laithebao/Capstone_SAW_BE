@@ -522,7 +522,8 @@ public sealed class InspectionStandardServiceTests
     [Fact]
     public async Task UC13_CreateVersionAsync_WithInvalidCriteria_ThrowsBadRequest()
     {
-        _repo.Setup(r => r.GetByIdAsync(1, It.IsAny<CancellationToken>())).ReturnsAsync(MakeActiveSet());
+        var set = MakeActiveSet();
+        _repo.Setup(r => r.GetByIdAsync(1, It.IsAny<CancellationToken>())).ReturnsAsync(set);
         _repo.Setup(r => r.GetMaxVersionNoAsync(1, It.IsAny<CancellationToken>())).ReturnsAsync(1);
         var svc = CreateService();
         var request = ValidVersionRequest(criteria:
@@ -532,5 +533,42 @@ public sealed class InspectionStandardServiceTests
 
         await Assert.ThrowsAsync<BadRequestException>(
             () => svc.CreateVersionAsync(1, request, CancellationToken.None));
+        Assert.Single(set.Versions);
+        _repo.Verify(r => r.SaveChangesAsync(It.IsAny<CancellationToken>()), Times.Never);
+    }
+
+    [Fact]
+    public async Task GetByIdAsync_ReturnsNewestVersionFirstAndGradeRulesInAtoEOrder()
+    {
+        var set = MakeActiveSet(); set.CropType = new CropType { CropName = "Rice" };
+        var criterion = new InspectionCriterion { InspectionCriterionId = 4, CriterionCode = "MOISTURE", CriterionName = "Moisture", DataType = "NUMBER", CriterionGroup = "LAB", IsCritical = true };
+        criterion.GradeRules.Add(new CriterionGradeRule { Grade = "B", MinValue = 11, MaxValue = 20, IsFailRule = true });
+        criterion.GradeRules.Add(new CriterionGradeRule { Grade = "A", MinValue = 0, MaxValue = 10 });
+        set.Versions.Add(new InspectionStandardVersion { InspectionStandardVersionId = 12, VersionNo = 2, VersionStatus = "PUBLISHED", Criteria = [criterion] });
+        _repo.Setup(r => r.GetByIdAsync(1, It.IsAny<CancellationToken>())).ReturnsAsync(set);
+        var result = await CreateService().GetByIdAsync(1, default);
+        Assert.Equal(new[] { 2, 1 }, result.Versions.Select(v => v.VersionNo));
+        var dto = Assert.Single(result.Versions[0].Criteria);
+        Assert.Equal(new[] { "A", "B" }, dto.GradeRules.Select(r => r.Grade));
+        Assert.True(dto.GradeRules[1].IsFailRule);
+        Assert.Equal(11, dto.GradeRules[1].MinValue);
+        _repo.Verify(r => r.SaveChangesAsync(It.IsAny<CancellationToken>()), Times.Never);
+    }
+
+    [Fact]
+    public async Task UC13_CreateVersionAsync_PreservesPreviousCriteriaAndPublishesNextVersionFromStoredMaximum()
+    {
+        var set = MakeActiveSet(); var previous = Assert.Single(set.Versions);
+        var previousCriterion = new InspectionCriterion { CriterionCode = "OLD", CriterionName = "Previous" };
+        previous.Criteria.Add(previousCriterion);
+        _repo.Setup(r => r.GetByIdAsync(1, It.IsAny<CancellationToken>())).ReturnsAsync(set);
+        _repo.Setup(r => r.GetMaxVersionNoAsync(1, It.IsAny<CancellationToken>())).ReturnsAsync(9);
+        await CreateService().CreateVersionAsync(1, ValidVersionRequest(), default);
+        Assert.Equal("RETIRED", previous.VersionStatus);
+        Assert.Same(previousCriterion, Assert.Single(previous.Criteria));
+        var published = Assert.Single(set.Versions, v => v.VersionNo == 10);
+        Assert.Equal("PUBLISHED", published.VersionStatus);
+        Assert.NotSame(previousCriterion, Assert.Single(published.Criteria));
+        _repo.Verify(r => r.AddAuditLog(It.Is<AuditLog>(a => a.ActionType == "CREATE_INSPECTION_STANDARD_VERSION" && a.NewDataJson!.Contains("\"VersionNo\":10"))), Times.Once);
     }
 }

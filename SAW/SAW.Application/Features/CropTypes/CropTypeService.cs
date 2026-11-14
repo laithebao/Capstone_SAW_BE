@@ -1,5 +1,6 @@
 using SAW.Application.Exceptions;
 using SAW.Domain.Entities;
+using SAW.Domain.Common;
 
 namespace SAW.Application.Features.CropTypes;
 
@@ -71,10 +72,10 @@ public sealed class CropTypeService(ICropTypeRepository repository) : ICropTypeS
         entity.CropName = request.Name.Trim();
         entity.CategoryName = request.CategoryName.Trim();
         entity.Description = string.IsNullOrWhiteSpace(request.ScientificName) ? null : request.ScientificName.Trim();
-        entity.ExpectedMinTempC = request.MinTemperature;
-        entity.ExpectedMaxTempC = request.MaxTemperature;
-        entity.ExpectedMinHumidityPct = request.MinHumidity;
-        entity.ExpectedMaxHumidityPct = request.MaxHumidity;
+        entity.ExpectedMinTempC = MeasurementRounding.Round(request.MinTemperature);
+        entity.ExpectedMaxTempC = MeasurementRounding.Round(request.MaxTemperature);
+        entity.ExpectedMinHumidityPct = MeasurementRounding.Round(request.MinHumidity);
+        entity.ExpectedMaxHumidityPct = MeasurementRounding.Round(request.MaxHumidity);
         entity.ShelfLifeDays = request.ShelfLifeDays;
         entity.SafetyStockLevelKg = request.SafetyStockLevelKg;
         entity.DefaultUnit = request.DefaultUnit.Trim();

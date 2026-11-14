@@ -12,185 +12,131 @@ public sealed class ForecastResponseParserTests
     [InlineData("   ")]
     public void Parse_WithNullOrEmptyText_ShouldReturnFailure(string? rawText)
     {
-        // Act
-        var result = ForecastResponseParser.Parse(rawText!);
+        var result = ForecastResponseParser.Parse(rawText!, [1]);
 
-        // Assert
         result.IsSuccess.Should().BeFalse();
         result.ErrorMessage.Should().Contain("rỗng");
         result.Data.Should().BeNull();
     }
 
     [Fact]
-    public void Parse_WithValidPlainJson_ShouldReturnSuccessWithCorrectData()
+    public void Parse_WithValidForecasts_ShouldMatchResultsByBatchId()
     {
-        // Arrange
-        var rawJson = """
-        {
-          "spoilageRiskScore": 42.5,
-          "predictedLossPercent": 5.8,
-          "safeStorageRemainingDays": 6,
-          "riskLevel": "MEDIUM",
-          "forecastHorizonDays": 7,
-          "recommendation": "Lô hàng ổn định nhưng cần lưu ý dải nhiệt.",
-          "actions": [
+        var result = ForecastResponseParser.Parse("""
             {
-              "priority": "URGENT",
-              "category": "ENVIRONMENT",
-              "action": "Hạ nhiệt độ kho về 4 độ C",
-              "reason": "Nhiệt độ hiện tại đang cao hơn ngưỡng",
-              "deadline": "Trong 2 giờ"
+              "forecasts": [
+                {
+                  "productBatchId": 2,
+                  "predictedLossPercent": 5.8,
+                  "safeStorageRemainingDays": 6,
+                  "riskLevel": "MEDIUM",
+                  "forecastHorizonDays": 7,
+                  "recommendation": "Cần lưu ý dải nhiệt.",
+                  "actions": [
+                    {"priority":"URGENT","category":"TEMPERATURE","action":"Hạ nhiệt độ kho","reason":"Nhiệt độ cao","deadline":null}
+                  ],
+                  "analysisNotes": "Chưa có kết quả QC"
+                },
+                {
+                  "productBatchId": 1,
+                  "predictedLossPercent": null,
+                  "safeStorageRemainingDays": null,
+                  "riskLevel": "LOW",
+                  "actions": []
+                }
+              ]
             }
-          ],
-          "analysisNotes": "Ghi chú phân tích chi tiết"
-        }
-        """;
+            """, [1, 2]);
 
-        // Act
-        var result = ForecastResponseParser.Parse(rawJson);
-
-        // Assert
         result.IsSuccess.Should().BeTrue();
-        result.Data.Should().NotBeNull();
-        result.Data!.SpoilageRiskScore.Should().Be(42.5m);
-        result.Data.PredictedLossPercent.Should().Be(5.8m);
-        result.Data.SafeStorageRemainingDays.Should().Be(6);
-        result.Data.RiskLevel.Should().Be("MEDIUM");
-        result.Data.ForecastHorizonDays.Should().Be(7);
-        result.Data.Recommendation.Should().Be("Lô hàng ổn định nhưng cần lưu ý dải nhiệt.");
-        result.Data.AnalysisNotes.Should().Be("Ghi chú phân tích chi tiết");
-        result.Data.Actions.Should().HaveCount(1);
-        result.Data.Actions[0].Action.Should().Be("Hạ nhiệt độ kho về 4 độ C");
-        result.Data.Actions[0].Priority.Should().Be("URGENT");
+        var data = result.Data!;
+        data[1].RiskLevel.Should().Be("LOW");
+        data[1].PredictedLossPercent.Should().BeNull();
+        data[1].SafeStorageRemainingDays.Should().BeNull();
+        data[2].PredictedLossPercent.Should().Be(5.8m);
+        data[2].SafeStorageRemainingDays.Should().Be(6);
+        data[2].RiskLevel.Should().Be("MEDIUM");
+        data[2].ForecastHorizonDays.Should().Be(7);
+        data[2].Recommendation.Should().Be("Cần lưu ý dải nhiệt.");
+        data[2].AnalysisNotes.Should().Be("Chưa có kết quả QC");
+        var action = data[2].Actions.Should().ContainSingle().Subject;
+        action.Priority.Should().Be("URGENT");
+        action.Deadline.Should().BeNull();
+    }
+
+    [Theory]
+    [InlineData("""{}""")]
+    [InlineData("""{"forecasts":[]}""")]
+    [InlineData("""{"forecasts":[{"productBatchId":1,"riskLevel":"LOW"}]}""")]
+    [InlineData("""{"forecasts":[{"productBatchId":1,"riskLevel":"LOW"},{"productBatchId":1,"riskLevel":"HIGH"}]}""")]
+    [InlineData("""{"forecasts":[{"productBatchId":1,"riskLevel":"LOW"},{"productBatchId":3,"riskLevel":"HIGH"}]}""")]
+    [InlineData("""{"forecasts":[{"productBatchId":1,"riskLevel":"LOW"},{"productBatchId":2,"riskLevel":"INVALID"}]}""")]
+    [InlineData("""{"forecasts":[{"productBatchId":1,"riskLevel":"LOW"},{"productBatchId":2}]}""")]
+    public void Parse_WithoutOneValidForecastPerBatch_ShouldRejectRun(string json)
+    {
+        var result = ForecastResponseParser.Parse(json, [1, 2]);
+
+        result.IsSuccess.Should().BeFalse();
+        result.Data.Should().BeNull();
     }
 
     [Fact]
     public void Parse_WithMarkdownCodeFence_ShouldStripMarkdownAndParse()
     {
-        // Arrange
-        var markdownText = """
-        Dưới đây là kết quả phân tích:
-        ```json
-        {
-          "spoilageRiskScore": 30.0,
-          "predictedLossPercent": 3.0,
-          "safeStorageRemainingDays": 10,
-          "riskLevel": "MEDIUM",
-          "forecastHorizonDays": 7,
-          "recommendation": "Chất lượng tốt"
-        }
-        ```
-        Xin cảm ơn!
-        """;
+        var result = ForecastResponseParser.Parse("""
+            Kết quả dự báo
+            ```json
+            {"forecasts":[{"productBatchId":1,"riskLevel":"MEDIUM","safeStorageRemainingDays":10}]}
+            ```
+            """, [1]);
 
-        // Act
-        var result = ForecastResponseParser.Parse(markdownText);
-
-        // Assert
         result.IsSuccess.Should().BeTrue();
-        result.Data.Should().NotBeNull();
-        result.Data!.SpoilageRiskScore.Should().Be(30.0m);
-        result.Data.SafeStorageRemainingDays.Should().Be(10);
+        result.Data![1].SafeStorageRemainingDays.Should().Be(10);
     }
 
     [Fact]
-    public void Parse_WithScoresOutOfRange_ShouldClampScoresTo0And100()
+    public void Parse_WithEstimatesOutOfRange_ShouldClampEstimates()
     {
-        // Arrange
-        var rawJson = """
-        {
-          "spoilageRiskScore": 145.0,
-          "predictedLossPercent": -15.5,
-          "safeStorageRemainingDays": -3,
-          "forecastHorizonDays": 0
-        }
-        """;
+        var result = ForecastResponseParser.Parse("""
+            {"forecasts":[
+                {"productBatchId":1,"riskLevel":"HIGH","predictedLossPercent":-15.5,"safeStorageRemainingDays":-3,"forecastHorizonDays":0},
+                {"productBatchId":2,"riskLevel":"CRITICAL","predictedLossPercent":120}
+            ]}
+            """, [1, 2]);
 
-        // Act
-        var result = ForecastResponseParser.Parse(rawJson);
-
-        // Assert
         result.IsSuccess.Should().BeTrue();
-        result.Data.Should().NotBeNull();
-        result.Data!.SpoilageRiskScore.Should().Be(100m, "Điểm rủi ro phải được clamp tối đa 100");
-        result.Data.PredictedLossPercent.Should().Be(0m, "Tỷ lệ tổn thất âm phải được clamp về 0");
-        result.Data.SafeStorageRemainingDays.Should().Be(0, "Số ngày bảo quản âm phải được clamp về 0");
-        result.Data.ForecastHorizonDays.Should().Be(1, "Khung dự báo nhỏ hơn 1 phải được đưa về tối thiểu 1");
-    }
-
-    [Theory]
-    [InlineData(15.0, "LOW")]
-    [InlineData(25.0, "LOW")]
-    [InlineData(35.0, "MEDIUM")]
-    [InlineData(50.0, "MEDIUM")]
-    [InlineData(65.0, "HIGH")]
-    [InlineData(75.0, "HIGH")]
-    [InlineData(85.0, "CRITICAL")]
-    [InlineData(99.0, "CRITICAL")]
-    public void Parse_WhenRiskLevelIsMissingOrInvalid_ShouldAutoDetermineFromScore(decimal score, string expectedLevel)
-    {
-        // Arrange: AI trả về trường riskLevel không hợp lệ hoặc không có trong enum
-        var rawJson = $$"""
-        {
-          "spoilageRiskScore": {{score}},
-          "riskLevel": "UNKNOWN_CUSTOM_LEVEL"
-        }
-        """;
-
-        // Act
-        var result = ForecastResponseParser.Parse(rawJson);
-
-        // Assert
-        result.IsSuccess.Should().BeTrue();
-        result.Data!.RiskLevel.Should().Be(expectedLevel);
+        result.Data![1].PredictedLossPercent.Should().Be(0m);
+        result.Data[1].SafeStorageRemainingDays.Should().Be(0);
+        result.Data[1].ForecastHorizonDays.Should().Be(1);
+        result.Data[2].PredictedLossPercent.Should().Be(100m);
     }
 
     [Fact]
-    public void Parse_WithMalformedJson_ShouldReturnFailureGracefullyWithoutException()
+    public void Parse_WithMalformedJson_ShouldReturnFailureGracefully()
     {
-        // Arrange
-        var badJson = "{ \"spoilageRiskScore\": 50, \"recommendation\": ";
+        var result = ForecastResponseParser.Parse("""{"forecasts":[{"productBatchId":1,"recommendation":""", [1]);
 
-        // Act
-        var result = ForecastResponseParser.Parse(badJson);
-
-        // Assert
         result.IsSuccess.Should().BeFalse();
         result.ErrorMessage.Should().Contain("Lỗi phân tích cú pháp");
-        result.Data.Should().BeNull();
     }
 
     [Fact]
     public void Parse_WithActions_ShouldFilterEmptyActionsAndDefaultUnknownPriority()
     {
-        // Arrange
-        var rawJson = """
-        {
-          "spoilageRiskScore": 55.0,
-          "actions": [
-            {
-              "priority": "NON_STANDARD_PRIORITY",
-              "category": "DISPATCH",
-              "action": "Xuất kho trước",
-              "reason": "Hạn dùng sắp tới"
-            },
-            {
-              "priority": "URGENT",
-              "category": "OTHER",
-              "action": "   ",
-              "reason": "Hành động trống"
-            }
-          ]
-        }
-        """;
+        var result = ForecastResponseParser.Parse("""
+            {"forecasts":[{
+                "productBatchId":1,
+                "riskLevel":"HIGH",
+                "actions":[
+                    {"priority":"NON_STANDARD_PRIORITY","action":"Xuất kho trước"},
+                    {"priority":"URGENT","action":"   "}
+                ]
+            }]}
+            """, [1]);
 
-        // Act
-        var result = ForecastResponseParser.Parse(rawJson);
-
-        // Assert
         result.IsSuccess.Should().BeTrue();
-        result.Data!.Actions.Should().HaveCount(1, "Hành động có trường action rỗng phải bị loại bỏ");
-        result.Data.Actions[0].Action.Should().Be("Xuất kho trước");
-        result.Data.Actions[0].Priority.Should().Be("RECOMMENDED", "Priority lạ phải tự fallback về RECOMMENDED");
+        var action = result.Data![1].Actions.Should().ContainSingle().Subject;
+        action.Action.Should().Be("Xuất kho trước");
+        action.Priority.Should().Be("RECOMMENDED");
     }
 }

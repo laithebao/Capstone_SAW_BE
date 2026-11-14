@@ -11,10 +11,20 @@
     <Folder Include="Domain\" />
   </ItemGroup>
   <ItemGroup>
+    <None Update="xunit.runner.json" CopyToOutputDirectory="PreserveNewest" />
+  </ItemGroup>
+  <ItemGroup>
+    <EmbeddedResource Include="Infrastructure\Picking\PickingSchema.sql" />
+    <EmbeddedResource Include="Infrastructure\GoodsIssues\GoodsIssueSchema.sql" />
+    <EmbeddedResource Include="Infrastructure\StockAdjustments\StockAdjustmentSchema.sql" />
+    <EmbeddedResource Include="Infrastructure\GoodsReceipts\GoodsReceiptSchema.sql" />
+  </ItemGroup>
+  <ItemGroup>
 		<PackageReference Include="coverlet.collector" Version="6.0.2" />
 		<PackageReference Include="FluentAssertions" Version="8.10.0" />
 		<PackageReference Include="Microsoft.NET.Test.Sdk" Version="17.12.0" />
 		<PackageReference Include="Moq" Version="4.20.72" />
+		<PackageReference Include="Microsoft.EntityFrameworkCore.InMemory" Version="8.0.0" />
 		<PackageReference Include="xunit" Version="2.9.2" />
 		<PackageReference Include="xunit.runner.visualstudio" Version="2.8.2" />
 		<PackageReference Include="ZXing.Net" Version="0.16.11" />
@@ -24,6 +34,7 @@
     <ProjectReference Include="..\SAW.Domain\SAW.Domain.csproj" />
     <ProjectReference Include="..\SAW.API\SAW.API.csproj" />
     <ProjectReference Include="..\SAW.Infrastructure\SAW.Infrastructure.csproj" />
+    <ProjectReference Include="..\..\tools\SAW.Testing\SAW.Testing.csproj" />
   </ItemGroup>
 
   <ItemGroup>

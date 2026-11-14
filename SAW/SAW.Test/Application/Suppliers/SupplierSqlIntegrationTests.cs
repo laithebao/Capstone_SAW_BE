@@ -23,12 +23,13 @@ using SAW.Application.Features.ProductBatches.Dtos;
 
 namespace SAW.Test.Application.Suppliers;
 
-public sealed class SupplierSqlFactAttribute : FactAttribute
+[Xunit.Sdk.TraitDiscoverer("SAW.Test.SqlTraitDiscoverer", "SAW.Test")]
+public sealed class SupplierSqlFactAttribute : FactAttribute, Xunit.Sdk.ITraitAttribute
 {
     public SupplierSqlFactAttribute()
     {
-        if (string.IsNullOrWhiteSpace(Environment.GetEnvironmentVariable("SAW_SUPPLIER_TEST_SQL")))
-            Skip = "Set SAW_SUPPLIER_TEST_SQL to a dedicated database ending in _SupplierTests.";
+        if (string.IsNullOrWhiteSpace(Environment.GetEnvironmentVariable("SAW_TEST_SQL_CONNECTION")))
+            Skip = "Set SAW_TEST_SQL_CONNECTION to run isolated SQL Server tests.";
     }
 }
 
@@ -38,6 +39,9 @@ public class SupplierSqlIntegrationTests : IAsyncLifetime
     private AppDbContext _db = null!;
     private int _accountId, _supplierId, _cropId, _areaId;
     private long _contractId;
+    private readonly string _database = "SAW_" + Guid.NewGuid().ToString("N") + "_SupplierTests";
+    private string _masterConnection = "";
+    private bool _created;
     private readonly string _storage = Path.Combine(Path.GetTempPath(), "saw-supplier-files-" + Guid.NewGuid().ToString("N"));
     private ProductBatchRepository Repository(AppDbContext? db = null) => new(db ?? _db);
     private SupplierBatchCommandService Service(AppDbContext? db = null) => new(Repository(db), new SupplierRepository(db ?? _db));
@@ -48,15 +52,19 @@ public class SupplierSqlIntegrationTests : IAsyncLifetime
 
     public async Task InitializeAsync()
     {
-        var connection = Environment.GetEnvironmentVariable("SAW_SUPPLIER_TEST_SQL");
-        if (connection is null) return;
+        var connection = Environment.GetEnvironmentVariable("SAW_TEST_SQL_CONNECTION");
+        if (string.IsNullOrWhiteSpace(connection)) return;
         var builder = new SqlConnectionStringBuilder(connection);
-        if (!builder.InitialCatalog.EndsWith("_SupplierTests", StringComparison.Ordinal))
-            throw new InvalidOperationException("Tests require an isolated database ending in _SupplierTests.");
-        _options = new DbContextOptionsBuilder<AppDbContext>().UseSqlServer(connection).Options;
+        // Only use the supplied server/login. Counters and legacy codes must start fresh
+        // for each test, including when the suite runs again against the same server.
+        _masterConnection = new SqlConnectionStringBuilder(connection)
+            { InitialCatalog = "master", Pooling = false }.ConnectionString;
+        builder.InitialCatalog = _database;
+        _options = new DbContextOptionsBuilder<AppDbContext>().UseSqlServer(builder.ConnectionString).Options;
         _db = new AppDbContext(_options);
         var creator = _db.GetService<IRelationalDatabaseCreator>();
-        if (!await creator.ExistsAsync()) await creator.CreateAsync();
+        await creator.CreateAsync();
+        _created = true;
         if (!await creator.HasTablesAsync())
         {
             // The shared model has multiple cascade paths outside Supplier. Test only Supplier
@@ -91,11 +99,26 @@ public class SupplierSqlIntegrationTests : IAsyncLifetime
         _db.ChangeTracker.Clear();
     }
 
-    public Task DisposeAsync()
+    public async Task DisposeAsync()
     {
-        _db?.Dispose();
+        if (_db is not null)
+        {
+            var connectionString = _db.Database.GetConnectionString();
+            await _db.DisposeAsync();
+            _db = null!;
+            using var pool = new SqlConnection(connectionString);
+            SqlConnection.ClearPool(pool);
+        }
         if (Directory.Exists(_storage)) Directory.Delete(_storage, true);
-        return Task.CompletedTask;
+        if (!_created) return;
+        if (!Regex.IsMatch(_database, "^SAW_[a-f0-9]{32}_SupplierTests$"))
+            throw new InvalidOperationException("Unexpected Supplier test database name.");
+        await using var master = new SqlConnection(_masterConnection);
+        await master.OpenAsync();
+        await using var command = master.CreateCommand();
+        command.CommandText = $"ALTER DATABASE [{_database}] SET SINGLE_USER WITH ROLLBACK IMMEDIATE; DROP DATABASE [{_database}]";
+        await command.ExecuteNonQueryAsync();
+        _created = false;
     }
 
     private DeclareProductBatchRequest Declaration(List<string>? documents = null) => new()

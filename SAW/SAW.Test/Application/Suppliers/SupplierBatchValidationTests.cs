@@ -13,6 +13,30 @@ public class SupplierBatchValidationTests
     };
 
     [Theory]
+    [InlineData(" TON ", "0.001", "1")]
+    [InlineData(" kg ", "0.001", "0.001")]
+    [InlineData("KILOGRAM", "999999999999999.999", "999999999999999.999")]
+    [InlineData("TẤN", "1.25", "1250")]
+    [InlineData("tan", "999999999999.999", "999999999999999")]
+    public void SupportedUnitAliasesPreserveExactDecimalWeight(string unit, string quantity, string expected)
+    {
+        var request = Valid(); request.Unit = unit;
+        request.DeclaredQuantity = decimal.Parse(quantity, System.Globalization.CultureInfo.InvariantCulture);
+        Assert.Equal(decimal.Parse(expected, System.Globalization.CultureInfo.InvariantCulture), SupplierBatchValidation.ValidateAndCalculateWeight(request, Today));
+    }
+
+    [Theory]
+    [InlineData(null)]
+    [InlineData("")]
+    [InlineData("Box")]
+    [InlineData("Litre")]
+    public void UnsupportedUnitsNeverBecomeKilogramsImplicitly(string? unit)
+    {
+        var request = Valid(); request.Unit = unit!;
+        Assert.Throws<ArgumentException>(() => SupplierBatchValidation.ValidateAndCalculateWeight(request, Today));
+    }
+
+    [Theory]
     [InlineData("Thùng", 10, 10, 100)]
     [InlineData("Bao", 20, 25, 500)]
     public void PackagesCalculateActualWeight(string unit, int count, int perPackage, int expected)
@@ -71,9 +95,21 @@ public class SupplierBatchValidationTests
         r.Note += "a";
         Assert.Throws<ArgumentException>(() => SupplierBatchValidation.ValidateAndCalculateWeight(r, Today));
         r.Note = null; r.ExpectedMinTempC = 1.234m;
-        Assert.Throws<ArgumentException>(() => SupplierBatchValidation.ValidateAndCalculateWeight(r, Today));
+        Assert.Equal(250m, SupplierBatchValidation.ValidateAndCalculateWeight(r, Today));
         r.ExpectedMinTempC = 10000m;
         Assert.Throws<ArgumentException>(() => SupplierBatchValidation.ValidateAndCalculateWeight(r, Today));
+    }
+
+    [Theory]
+    [InlineData("9999.994", true)]
+    [InlineData("9999.995", false)]
+    [InlineData("-9999.994", true)]
+    [InlineData("-9999.995", false)]
+    public void RoundedStorageMeasurementMustStillFitDecimalSixTwo(string temperature, bool valid)
+    {
+        var request = Valid(); request.ExpectedMinTempC = decimal.Parse(temperature, System.Globalization.CultureInfo.InvariantCulture);
+        if (valid) Assert.Equal(250m, SupplierBatchValidation.ValidateAndCalculateWeight(request, Today));
+        else Assert.Throws<ArgumentException>(() => SupplierBatchValidation.ValidateAndCalculateWeight(request, Today));
     }
 
     [Fact]

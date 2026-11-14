@@ -37,8 +37,9 @@ public sealed class DistributorOrderService(IDistributorOrderRepository reposito
         return request with { DeliveryAddress = address, ContactPhone = phone, Note = string.IsNullOrEmpty(note) ? null : note };
     }
 
-    public Task<DistributorPage<CatalogLot>> CatalogAsync(int accountId, DistributorQuery query, CancellationToken ct)
-    { ValidateQuery(query); return repository.CatalogAsync(accountId, query with { Search = query.Search?.Trim() }, ct); }
+    public Task<DistributorPage<CatalogLot>> CatalogAsync(int accountId, DistributorQuery query, CancellationToken ct,
+        CatalogSort sort = CatalogSort.Newest)
+    { ValidateQuery(query); return repository.CatalogAsync(accountId, query with { Search = query.Search?.Trim() }, ct, sort); }
     public Task<DistributorLotDetail> LotAsync(int accountId, long id, CancellationToken ct)
     { ValidateId(id); return repository.LotAsync(accountId, id, ct); }
     public Task<DistributorPage<DistributorOrderSummary>> ListAsync(int accountId, DistributorQuery query, CancellationToken ct)

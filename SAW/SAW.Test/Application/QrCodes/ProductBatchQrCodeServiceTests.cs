@@ -48,6 +48,7 @@ public sealed class ProductBatchQrCodeServiceTests
     [InlineData("PENDING_QC", "COMPLETED", "PASS", "A", false)]
     [InlineData("REJECTED", "COMPLETED", "PASS", "A", false)]
     [InlineData("CANCELLED", "COMPLETED", "PASS", "A", false)]
+    [InlineData("DISPOSED", "COMPLETED", "PASS", "A", false)]
     [InlineData("RESERVED", "COMPLETED", "PASS", "A", false)]
     public async Task EligibilityControlsUpload(string status, string inspectionStatus, string result, string grade, bool allowed)
     {
@@ -82,6 +83,7 @@ public sealed class ProductBatchQrCodeServiceTests
     [InlineData("REJECTED", "UNAVAILABLE")]
     [InlineData("CANCELLED", "UNAVAILABLE")]
     [InlineData("QUARANTINE", "UNAVAILABLE")]
+    [InlineData("DISPOSED", "UNAVAILABLE")]
     public async Task ReadExistingQr_HasSeparateEligibility(string status, string expected)
     {
         _snapshot.Batch.BatchStatus = status;

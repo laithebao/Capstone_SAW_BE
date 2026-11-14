@@ -1,136 +1,62 @@
-﻿# SAW.Test – Test Layer
+# SAW.Test
 
-> **Unit tests và Integration tests cho toàn bộ hệ thống.**
+**Bắt đầu tại [hướng dẫn test Windows/macOS/Linux cho cả nhóm](../../docs/Testing.md).**
 
----
+Từ thư mục backend, các lệnh giống nhau trên PowerShell, CMD, bash và zsh:
 
-## 📌 Vai trò
-
-- Kiểm thử **business logic** ở Application layer.
-- Kiểm thử **domain logic** và các common types.
-- Đảm bảo chất lượng code khi refactor hoặc thêm feature mới.
-
----
-
-## 📁 Cấu trúc thư mục
-
-```
-SAW.Test/
-├── Domain/                      ← Tests cho SAW.Domain
-│   └── Common/
-│       └── ApiResponseTests.cs  ← Test ApiResponse<T> factory methods
-│
-└── Application/                 ← Tests cho SAW.Application
-    ├── Exceptions/              ← Test custom exceptions
-    └── Features/                ← Test use case handlers / services
-        └── <Feature>/
-            └── <Feature>ServiceTests.cs
+```text
+dotnet run --project tools/SAW.Testing -- test --profile unit
+dotnet run --project tools/SAW.Testing -- init
+dotnet run --project tools/SAW.Testing -- setup --docker --profile browser
+dotnet run --project tools/SAW.Testing -- test --profile browser
 ```
 
----
-
-## 🛠️ Tech Stack
-
-| Package | Phiên bản | Mục đích |
+| Profile | Được chọn | Cần |
 |---|---|---|
-| `xUnit` | 2.9.2 | Test framework |
-| `Moq` | 4.20.72 | Mocking dependencies |
-| `FluentAssertions` | 8.10.0 | Readable assertions |
-| `coverlet.collector` | 6.0.2 | Code coverage |
+| unit | Unit/InMemory/HTTP mock | .NET 8 SDK |
+| integration | Unit + SQL/API thật | SQL Server test |
+| browser | Integration + frontend thật | SQL, FE, Node 22, Chrome/Edge |
+| all | Toàn bộ, gồm Cloudinary thật | Thêm 3 thông tin Cloudinary test |
 
----
+Runner chọn test qua trait RequiresSql/RequiresBrowser/RequiresCloudinary. Lượt có
+0 test hoặc test được chọn nhưng skipped không được chấp nhận là thành công.
+Profile browser không kiểm chứng Cloudinary thật. Test AI dùng phản hồi model giả lập,
+không cần API key AI thật. Kết quả: `test-results/<profile>/<run>/`.
 
-## 🧪 Quy ước đặt tên test
+Khi thêm test SQL/browser/Cloudinary, dùng các attribute opt-in tương ứng như
+`ReceivingSqlFact`, `ReceivingSqlTheory`, `SupplierSqlFact`, `DistributorBrowserFact`,
+`GoodsReceiptBrowserFact`, `RealCloudinaryFact`; trait của profile được gắn tự động.
 
-### File
-```
-<ClassUnderTest>Tests.cs
-```
+## Schema và dữ liệu
 
-### Method (theo pattern AAA)
-```
-<MethodName>_<Scenario>_<ExpectedResult>
+Chỉ dùng `SAW_TEST_SQL_CONNECTION`; `Database=master` là hợp lệ. Fixture chỉ lấy
+server/tài khoản, tạo database GUID riêng, tạo schema/seed và dọn đúng database sở hữu.
+Supplier dùng `SAW_<GUID>_SupplierTests` để bộ đếm không bị ảnh hưởng giữa các lượt.
+Không đọc trigger hoặc reset dữ liệu database development.
 
-// Ví dụ:
-GetById_WhenUserNotFound_ThrowsNotFoundException()
-Create_WhenEmailDuplicated_ThrowsConflictException()
-ApiResponse_Success_ShouldReturnStatusCode200()
-```
+Các định nghĩa được version trong Git và nhúng vào assembly:
 
----
+- Infrastructure/GoodsReceipts/GoodsReceiptSchema.sql
+- Infrastructure/Picking/PickingSchema.sql
+- Infrastructure/GoodsIssues/GoodsIssueSchema.sql
+- Infrastructure/StockAdjustments/StockAdjustmentSchema.sql
 
-## ✍️ Ví dụ test
+Khi sửa nghiệp vụ/schema, review các resource này cùng test. Fixture migration vẫn
+chạy migration thật trên baseline cô lập. `InitialCreate.Up` trống nên không dùng
+`dotnet ef database update` như cách tự tạo baseline, không tự chèn migration history.
 
-```csharp
-public class ApiResponseTests
-{
-    [Fact]
-    public void Success_ShouldReturn200WithData()
-    {
-        // Arrange
-        var data = new { Name = "Test" };
+`xunit.runner.json` cho các lớp chạy tuần tự; tác vụ concurrency bên trong các test
+vẫn chạy như trước. Cleanup chỉ clear pool của database sở hữu. ReceivingSqlFixture
+giữ lỗi cleanup trong `Exception.Data["SqlFixtureCleanupError"]` khi khởi tạo lỗi.
+API test tắt QR upload, AI credentials và dùng email log, không cần appsettings local.
 
-        // Act
-        var response = ApiResponse<object>.Success(data, "OK");
+## Chạy một nhóm
 
-        // Assert
-        response.StatusCode.Should().Be(200);
-        response.IsSuccess.Should().BeTrue();
-        response.Data.Should().Be(data);
-        response.Errors.Should().BeNull();
-    }
-
-    [Fact]
-    public void NotFound_ShouldReturn404()
-    {
-        var response = ApiResponse<object>.NotFound("User not found");
-
-        response.StatusCode.Should().Be(404);
-        response.IsSuccess.Should().BeFalse();
-        response.Message.Should().Be("User not found");
-    }
-}
+```text
+dotnet run --project tools/SAW.Testing -- test --profile integration --filter "FullyQualifiedName~SupplierSqlIntegrationTests"
+dotnet run --project tools/SAW.Testing -- test --profile integration --filter "FullyQualifiedName~Infrastructure.AiChat|FullyQualifiedName~Infrastructure.AiForecast"
 ```
 
-```csharp
-public class AccountServiceTests
-{
-    private readonly Mock<IAccountRepository> _repoMock = new();
-
-    [Fact]
-    public async Task GetById_WhenNotExists_ThrowsNotFoundException()
-    {
-        // Arrange
-        _repoMock.Setup(r => r.GetByIdAsync(999)).ReturnsAsync((Account?)null);
-        var service = new AccountService(_repoMock.Object);
-
-        // Act
-        var act = async () => await service.GetByIdAsync(999);
-
-        // Assert
-        await act.Should().ThrowAsync<NotFoundException>()
-            .WithMessage("*999*");
-    }
-}
-```
-
----
-
-## 🚀 Chạy tests
-
-```bash
-# Chạy tất cả tests
-dotnet test SAW.Test
-
-# Chạy với coverage report
-dotnet test SAW.Test --collect:"XPlat Code Coverage"
-
-# Chạy filter theo category
-dotnet test SAW.Test --filter "Category=Unit"
-```
-
----
-
-## 📦 Dependencies
-
-→ **Project references:** `SAW.Domain`, `SAW.Application`
+Filter bổ sung được giao với filter profile. Muốn chạy ca browser, chọn browser/all.
+Wrapper `scripts/test-local.sh` và `scripts/test-local.ps1` gọi profile all, vì vậy cần
+Node 22 và Cloudinary đã cấu hình. Dùng CLI ở trên cho các profile khác.

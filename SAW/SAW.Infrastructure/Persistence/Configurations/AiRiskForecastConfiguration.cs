@@ -12,7 +12,7 @@ public class AiRiskForecastConfiguration : IEntityTypeConfiguration<AiRiskForeca
         builder.HasKey(x => x.AiRiskForecastId);
         builder.Property(x => x.AiRiskForecastId).HasColumnName("AIRiskForecastID").UseIdentityColumn();
         builder.Property(x => x.ProductBatchId).HasColumnName("ProductBatchID").IsRequired();
-        builder.Property(x => x.SpoilageRiskScore).HasColumnName("SpoilageRiskScore").HasPrecision(6, 2).IsRequired();
+        builder.Property(x => x.SpoilageRiskScore).HasColumnName("SpoilageRiskScore").HasPrecision(6, 2);
         builder.Property(x => x.PredictedLossPercent).HasColumnName("PredictedLossPercent").HasPrecision(6, 2);
         builder.Property(x => x.SafeStorageRemainingDays).HasColumnName("SafeStorageRemainingDays");
         builder.Property(x => x.RiskLevel).HasColumnName("RiskLevel").HasMaxLength(20).IsRequired();

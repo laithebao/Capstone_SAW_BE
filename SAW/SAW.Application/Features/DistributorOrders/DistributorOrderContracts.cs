@@ -3,6 +3,7 @@ namespace SAW.Application.Features.DistributorOrders;
 public sealed record DistributorQuery(string? Search = null, string? Status = null,
     DateOnly? FromDate = null, DateOnly? ToDate = null, int Page = 1, int PageSize = 10);
 public sealed record DistributorPage<T>(IReadOnlyList<T> Items, int TotalCount, int Page, int PageSize);
+public enum CatalogSort { Newest, PriceAscending, PriceDescending }
 public sealed record CatalogLot(long BatchId, string BatchCode, string ProductName, string CropName,
     string SupplierName, string Origin, string? QualityGrade, DateOnly HarvestDate,
     DateOnly? ExpiryDate, decimal WeightKg, decimal WholeLotPrice);
@@ -32,7 +33,8 @@ public interface IDistributorOrderRepository
 {
     Task<DistributorPage<PublicCatalogLot>> PublicCatalogAsync(DistributorQuery query, CancellationToken ct);
     Task<DistributorDashboard> DashboardAsync(int accountId, CancellationToken ct);
-    Task<DistributorPage<CatalogLot>> CatalogAsync(int accountId, DistributorQuery query, CancellationToken ct);
+    Task<DistributorPage<CatalogLot>> CatalogAsync(int accountId, DistributorQuery query, CancellationToken ct,
+        CatalogSort sort = CatalogSort.Newest);
     Task<DistributorLotDetail> LotAsync(int accountId, long id, CancellationToken ct);
     Task<DistributorPage<DistributorOrderSummary>> ListAsync(int accountId, DistributorQuery query, CancellationToken ct);
     Task<DistributorOrderDetail> GetAsync(int accountId, long id, CancellationToken ct);

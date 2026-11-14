@@ -4,7 +4,6 @@ using SAW.Application.Features.SpoilageForecast;
 namespace SAW.Infrastructure.AiForecast;
 
 public sealed record ForecastParsedData(
-    decimal SpoilageRiskScore,
     decimal? PredictedLossPercent,
     int? SafeStorageRemainingDays,
     string RiskLevel,
@@ -16,17 +15,17 @@ public sealed record ForecastParsedData(
 
 public sealed record ForecastParseResult(
     bool IsSuccess,
-    ForecastParsedData? Data,
+    IReadOnlyDictionary<long, ForecastParsedData>? Data,
     string? ErrorMessage
 )
 {
-    public static ForecastParseResult Success(ForecastParsedData data) => new(true, data, null);
+    public static ForecastParseResult Success(IReadOnlyDictionary<long, ForecastParsedData> data) => new(true, data, null);
     public static ForecastParseResult Failure(string error) => new(false, null, error);
 }
 
 public static class ForecastResponseParser
 {
-    public static ForecastParseResult Parse(string rawText)
+    public static ForecastParseResult Parse(string rawText, IEnumerable<long> expectedBatchIds)
     {
         if (string.IsNullOrWhiteSpace(rawText))
             return ForecastParseResult.Failure("Phản hồi từ AI rỗng.");
@@ -38,105 +37,104 @@ public static class ForecastResponseParser
             using var doc = JsonDocument.Parse(cleanJson);
             var root = doc.RootElement;
 
-            // 1. SpoilageRiskScore
-            decimal riskScore = 0;
-            if (root.TryGetProperty("spoilageRiskScore", out var scoreEl) && scoreEl.TryGetDecimal(out var s))
+            if (root.ValueKind != JsonValueKind.Object
+                || !root.TryGetProperty("forecasts", out var forecasts)
+                || forecasts.ValueKind != JsonValueKind.Array)
+                return ForecastParseResult.Failure("Thiếu danh sách dự báo.");
+
+            var remainingIds = expectedBatchIds.ToHashSet();
+            var results = new Dictionary<long, ForecastParsedData>();
+            foreach (var item in forecasts.EnumerateArray())
             {
-                riskScore = Math.Clamp(s, 0m, 100m);
+                if (item.ValueKind != JsonValueKind.Object
+                    || !item.TryGetProperty("productBatchId", out var idEl)
+                    || idEl.ValueKind != JsonValueKind.Number
+                    || !idEl.TryGetInt64(out var batchId)
+                    || !remainingIds.Remove(batchId))
+                    return ForecastParseResult.Failure("Kết quả có mã lô không hợp lệ hoặc bị trùng.");
+
+                var riskLevel = item.TryGetProperty("riskLevel", out var levelEl) && levelEl.ValueKind == JsonValueKind.String
+                    ? levelEl.GetString()?.Trim().ToUpperInvariant()
+                    : null;
+                if (riskLevel is not ("LOW" or "MEDIUM" or "HIGH" or "CRITICAL"))
+                    return ForecastParseResult.Failure("Thiếu phân loại rủi ro hợp lệ.");
+
+                results.Add(batchId, ParseForecast(item, riskLevel));
             }
 
-            // 2. RiskLevel
-            var riskLevel = "MEDIUM";
-            if (root.TryGetProperty("riskLevel", out var levelEl) && levelEl.ValueKind == JsonValueKind.String)
-            {
-                var val = levelEl.GetString()?.Trim().ToUpperInvariant();
-                if (val is "LOW" or "MEDIUM" or "HIGH" or "CRITICAL")
-                {
-                    riskLevel = val;
-                }
-                else
-                {
-                    riskLevel = DetermineRiskLevel(riskScore);
-                }
-            }
-            else
-            {
-                riskLevel = DetermineRiskLevel(riskScore);
-            }
-
-            // 3. PredictedLossPercent
-            decimal? lossPercent = null;
-            if (root.TryGetProperty("predictedLossPercent", out var lossEl) && lossEl.TryGetDecimal(out var lp))
-            {
-                lossPercent = Math.Clamp(lp, 0m, 100m);
-            }
-
-            // 4. SafeStorageRemainingDays
-            int? safeDays = null;
-            if (root.TryGetProperty("safeStorageRemainingDays", out var daysEl) && daysEl.TryGetInt32(out var sd))
-            {
-                safeDays = Math.Max(0, sd);
-            }
-
-            // 5. ForecastHorizonDays
-            int? horizonDays = 7;
-            if (root.TryGetProperty("forecastHorizonDays", out var hEl) && hEl.TryGetInt32(out var hd))
-            {
-                horizonDays = Math.Max(1, hd);
-            }
-
-            // 6. Recommendation
-            var recommendation = "Chưa có nhận định từ hệ thống.";
-            if (root.TryGetProperty("recommendation", out var recEl) && recEl.ValueKind == JsonValueKind.String)
-            {
-                var rec = recEl.GetString()?.Trim();
-                if (!string.IsNullOrEmpty(rec)) recommendation = rec;
-            }
-
-            // 7. Actions list
-            var actions = new List<ForecastActionItem>();
-            if (root.TryGetProperty("actions", out var actionsEl) && actionsEl.ValueKind == JsonValueKind.Array)
-            {
-                foreach (var item in actionsEl.EnumerateArray())
-                {
-                    var priority = item.TryGetProperty("priority", out var pEl) ? pEl.GetString()?.Trim().ToUpperInvariant() ?? "RECOMMENDED" : "RECOMMENDED";
-                    if (priority is not ("IMMEDIATE" or "URGENT" or "RECOMMENDED" or "MONITOR"))
-                        priority = "RECOMMENDED";
-
-                    var category = item.TryGetProperty("category", out var cEl) ? cEl.GetString()?.Trim().ToUpperInvariant() ?? "OTHER" : "OTHER";
-                    var action = item.TryGetProperty("action", out var aEl) ? aEl.GetString()?.Trim() ?? "" : "";
-                    var reason = item.TryGetProperty("reason", out var rEl) ? rEl.GetString()?.Trim() ?? "" : "";
-                    var deadline = item.TryGetProperty("deadline", out var dEl) ? dEl.GetString()?.Trim() : null;
-
-                    if (!string.IsNullOrWhiteSpace(action))
-                    {
-                        actions.Add(new ForecastActionItem(priority, category, action, reason, deadline));
-                    }
-                }
-            }
-
-            // 8. AnalysisNotes
-            string? notes = null;
-            if (root.TryGetProperty("analysisNotes", out var notesEl) && notesEl.ValueKind == JsonValueKind.String)
-            {
-                notes = notesEl.GetString()?.Trim();
-            }
-
-            return ForecastParseResult.Success(new ForecastParsedData(
-                SpoilageRiskScore: riskScore,
-                PredictedLossPercent: lossPercent,
-                SafeStorageRemainingDays: safeDays,
-                RiskLevel: riskLevel,
-                ForecastHorizonDays: horizonDays,
-                Recommendation: recommendation,
-                Actions: actions,
-                AnalysisNotes: notes
-            ));
+            return remainingIds.Count == 0
+                ? ForecastParseResult.Success(results)
+                : ForecastParseResult.Failure("Thiếu kết quả dự báo cho một số lô.");
         }
-        catch (Exception ex)
+        catch (Exception ex) when (ex is JsonException or InvalidOperationException)
         {
             return ForecastParseResult.Failure($"Lỗi phân tích cú pháp kết quả JSON từ AI: {ex.Message}");
         }
+    }
+
+    private static ForecastParsedData ParseForecast(JsonElement root, string riskLevel)
+    {
+        decimal? lossPercent = null;
+        if (root.TryGetProperty("predictedLossPercent", out var lossEl) && lossEl.ValueKind == JsonValueKind.Number && lossEl.TryGetDecimal(out var lp))
+        {
+            lossPercent = Math.Clamp(lp, 0m, 100m);
+        }
+
+        int? safeDays = null;
+        if (root.TryGetProperty("safeStorageRemainingDays", out var daysEl) && daysEl.ValueKind == JsonValueKind.Number && daysEl.TryGetInt32(out var sd))
+        {
+            safeDays = Math.Max(0, sd);
+        }
+
+        int? horizonDays = 7;
+        if (root.TryGetProperty("forecastHorizonDays", out var hEl) && hEl.ValueKind == JsonValueKind.Number && hEl.TryGetInt32(out var hd))
+        {
+            horizonDays = Math.Max(1, hd);
+        }
+
+        var recommendation = "Chưa có nhận định từ hệ thống.";
+        if (root.TryGetProperty("recommendation", out var recEl) && recEl.ValueKind == JsonValueKind.String)
+        {
+            var rec = recEl.GetString()?.Trim();
+            if (!string.IsNullOrEmpty(rec)) recommendation = rec;
+        }
+
+        var actions = new List<ForecastActionItem>();
+        if (root.TryGetProperty("actions", out var actionsEl) && actionsEl.ValueKind == JsonValueKind.Array)
+        {
+            foreach (var item in actionsEl.EnumerateArray())
+            {
+                var priority = item.TryGetProperty("priority", out var pEl) ? pEl.GetString()?.Trim().ToUpperInvariant() ?? "RECOMMENDED" : "RECOMMENDED";
+                if (priority is not ("IMMEDIATE" or "URGENT" or "RECOMMENDED" or "MONITOR"))
+                    priority = "RECOMMENDED";
+
+                var category = item.TryGetProperty("category", out var cEl) ? cEl.GetString()?.Trim().ToUpperInvariant() ?? "OTHER" : "OTHER";
+                var action = item.TryGetProperty("action", out var aEl) ? aEl.GetString()?.Trim() ?? "" : "";
+                var reason = item.TryGetProperty("reason", out var rEl) ? rEl.GetString()?.Trim() ?? "" : "";
+                var deadline = item.TryGetProperty("deadline", out var dEl) ? dEl.GetString()?.Trim() : null;
+
+                if (!string.IsNullOrWhiteSpace(action))
+                {
+                    actions.Add(new ForecastActionItem(priority, category, action, reason, deadline));
+                }
+            }
+        }
+
+        string? notes = null;
+        if (root.TryGetProperty("analysisNotes", out var notesEl) && notesEl.ValueKind == JsonValueKind.String)
+        {
+            notes = notesEl.GetString()?.Trim();
+        }
+
+        return new ForecastParsedData(
+            PredictedLossPercent: lossPercent,
+            SafeStorageRemainingDays: safeDays,
+            RiskLevel: riskLevel,
+            ForecastHorizonDays: horizonDays,
+            Recommendation: recommendation,
+            Actions: actions,
+            AnalysisNotes: notes
+        );
     }
 
     private static string ExtractJsonContent(string text)
@@ -169,13 +167,4 @@ public static class ForecastResponseParser
 
         return trimmed;
     }
-
-    private static string DetermineRiskLevel(decimal score) =>
-        score switch
-        {
-            <= 25m => "LOW",
-            <= 50m => "MEDIUM",
-            <= 75m => "HIGH",
-            _ => "CRITICAL"
-        };
 }

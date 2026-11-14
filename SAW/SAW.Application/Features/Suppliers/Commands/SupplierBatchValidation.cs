@@ -1,4 +1,5 @@
 using SAW.Application.Features.Suppliers.DTOs;
+using SAW.Domain.Common;
 
 namespace SAW.Application.Features.Suppliers.Commands;
 
@@ -22,10 +23,10 @@ public static class SupplierBatchValidation
         if (r.PackageCount is <= 0)
             throw new ArgumentException("Số kiện phải là số nguyên dương.");
         ValidateDecimal(r.PackageUnitWeightKg, 18, 3, "Khối lượng mỗi kiện", true);
-        ValidateDecimal(r.ExpectedMinTempC, 6, 2, "Nhiệt độ tối thiểu");
-        ValidateDecimal(r.ExpectedMaxTempC, 6, 2, "Nhiệt độ tối đa");
-        ValidateDecimal(r.ExpectedMinHumidityPct, 6, 2, "Độ ẩm tối thiểu");
-        ValidateDecimal(r.ExpectedMaxHumidityPct, 6, 2, "Độ ẩm tối đa");
+        ValidateDecimal(MeasurementRounding.Round(r.ExpectedMinTempC), 6, 2, "Nhiệt độ tối thiểu");
+        ValidateDecimal(MeasurementRounding.Round(r.ExpectedMaxTempC), 6, 2, "Nhiệt độ tối đa");
+        ValidateDecimal(MeasurementRounding.Round(r.ExpectedMinHumidityPct), 6, 2, "Độ ẩm tối thiểu");
+        ValidateDecimal(MeasurementRounding.Round(r.ExpectedMaxHumidityPct), 6, 2, "Độ ẩm tối đa");
         if (r.ExpectedMinTempC > r.ExpectedMaxTempC || r.ExpectedMinHumidityPct > r.ExpectedMaxHumidityPct)
             throw new ArgumentException("Giá trị tối thiểu không được lớn hơn giá trị tối đa.");
         if (r.ExpectedMinHumidityPct is < 0 or > 100 || r.ExpectedMaxHumidityPct is < 0 or > 100)
