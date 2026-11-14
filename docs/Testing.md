@@ -198,7 +198,7 @@ Muốn chạy **tất cả**, điền `SAW_TEST_CLOUD_NAME`, `SAW_TEST_CLOUD_KEY
 dotnet run --project tools/SAW.Testing -- test --profile all
 ```
 
-Có thể dùng environment/CI secrets nếu các ô trong file để trống. Runner tự bật
+Có thể dùng biến môi trường nếu các ô trong file để trống. Runner tự bật
 SAW_TEST_BROWSER/SAW_TEST_REAL_CLOUDINARY theo profile. All thiếu secret sẽ dừng sớm;
 browser không chọn hai ca Cloudinary thật và không được coi là đã kiểm chứng dịch vụ
 này. Cloudinary cần Internet/quota; test xóa đúng asset GUID do nó tạo.
@@ -252,22 +252,14 @@ Chạy setup --docker để start lại. Không xóa toàn bộ Docker volumes. 
 trong file không tự đổi mật khẩu trong volume SQL cũ: khôi phục cấu hình đúng hoặc
 xử lý riêng volume test có chủ đích; công cụ không tự xóa dữ liệu.
 
-## 9. GitHub Actions và review nhóm
+## 9. Chạy test thủ công và review nhóm
 
-- Workflow **Tests** chạy khi push/PR: unit matrix Windows/macOS/Ubuntu; SQL integration
-  trên Ubuntu với Docker riêng. Không cần FE hay secret Cloudinary.
-- Workflow **Browser and external tests** chạy thủ công trong tab Actions: nhập repo
-  FE dạng owner/repository, chọn browser/all. Workflow checkout hai repo cạnh nhau,
-  có thể điền frontend_ref là branch/tag/commit FE tương thích (để trống dùng nhánh mặc định),
-  cài Node 22 và SQL mới. FE private cần secret `SAW_REPOS_READ_TOKEN` có quyền read FE.
-  All cần ba repository secrets Cloudinary cùng tên với biến local.
-- TRX/log/ảnh được lưu thành Actions artifacts kể cả khi lỗi. Không đưa secret vào YAML.
+Repo hiện không cấu hình GitHub Actions, CI/CD hoặc deploy tự động. Thành viên
+chạy test thủ công trên máy local bằng CLI ở các phần trên, chọn profile
+`unit`, `integration`, `browser` hoặc `all` theo phạm vi cần kiểm chứng.
+TRX/log/ảnh minh chứng được lưu trong `test-results/<profile>/<run-id>/`.
 
-[GitHub yêu cầu Linux runner cho Docker service/container jobs](https://docs.github.com/en/actions/tutorials/use-containerized-services/use-docker-service-containers).
-Unit kiểm tra cả ba OS; SQL CI chuẩn hóa trên Linux x64. Tạo YAML local chưa có nghĩa
-CI đã chạy: cần nhóm commit/push rồi xem kết quả Actions.
-
-Commit tool/script/schema/package/workflow/tài liệu cùng thay đổi nghiệp vụ. Không
+Commit tool/script/schema/package/tài liệu cùng thay đổi nghiệp vụ. Không
 commit .env.test.local, DB dump, node_modules, bin/obj hoặc test-results. Ghi rõ profile
 và commit BE-FE đã kiểm chứng trong PR; browser passed không thay bằng chứng all.
 
@@ -288,7 +280,7 @@ và commit BE-FE đã kiểm chứng trong PR; browser passed không thay bằng
 | Cloudinary lỗi | Kiểm tra test credentials/quota/network; browser không kiểm chứng dịch vụ này |
 | Filter không chọn được ca | Chọn đúng profile/FullyQualifiedName; runner không chấp nhận 0 test |
 
-Các lệnh được thiết kế cho ba OS; kết quả chạy trực tiếp và nền tảng chờ CI xác nhận
-được báo riêng. Máy thiếu dependency hoặc dịch vụ ngoài đang lỗi không thể được bảo đảm full passed.
+Các lệnh được thiết kế cho Windows/macOS/Linux; chỉ xác nhận môi trường và profile
+đã chạy thực tế. Máy thiếu dependency hoặc dịch vụ ngoài đang lỗi không thể được bảo đảm full passed.
 
 Xem [biên bản kiểm chứng](Testing-Verification.md) để biết những môi trường đã chạy thực tế.

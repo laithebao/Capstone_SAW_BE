@@ -47,10 +47,9 @@ test-results/team-missing-cloudinary.log
 
 ## Chưa được xác nhận
 
-Windows chưa chạy trực tiếp trong phiên này. Workflow Tests có matrix Windows,
-macOS và Ubuntu; cần commit/push rồi xem kết quả GitHub Actions. YAML local không
-thay thế bằng chứng một job Windows đã thực sự chạy. Browser trên Linux/Windows
-cũng cần được xác nhận bằng workflow hoặc máy thành viên có dependency tương ứng.
+Windows chưa chạy trực tiếp trong phiên này. Repo hiện không cấu hình CI/CD;
+các môi trường chưa được kiểm chứng, gồm Windows và browser trên Linux/Windows,
+cần được kiểm tra thủ công trên máy thành viên có dependency tương ứng.
 
 Các file ở cả hai repo BE/FE cần được commit/push trước khi thành viên khác có thể
 pull về. Không commit credential, DB dump hay các artifact test ở trên.
