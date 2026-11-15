@@ -2,6 +2,7 @@ using System.Text;
 using Microsoft.AspNetCore.Authentication.JwtBearer;
 using Microsoft.IdentityModel.Tokens;
 using Microsoft.OpenApi.Models;
+using SAW.API.Health;
 using SAW.API.Middleware;
 using SAW.Application.Extensions;
 using SAW.Infrastructure.Extensions;
@@ -80,6 +81,8 @@ namespace SAW.API
 
             builder.Services.AddApplication();
             builder.Services.AddInfrastructure(builder.Configuration);
+            builder.Services.AddHealthChecks().AddCheck<DatabaseReadinessCheck>(
+                "database", tags: ["ready"], timeout: TimeSpan.FromSeconds(3));
 
             var app = builder.Build();
 
@@ -93,7 +96,10 @@ namespace SAW.API
             // ── Exception handling phải ở đầu pipeline ────────────────────
             app.UseExceptionHandler();
 
-            app.UseHttpsRedirection();
+            // Custom containers receive HTTP behind App Service's HTTPS-only ingress.
+            // Local execution keeps the existing redirect unless explicitly disabled.
+            if (builder.Configuration.GetValue("Http:RedirectToHttps", true))
+                app.UseHttpsRedirection();
 
             app.UseCors("Frontend");
 
@@ -102,6 +108,7 @@ namespace SAW.API
 
 
             app.MapControllers();
+            app.MapOperationalHealthChecks();
 
             app.Run();
         }

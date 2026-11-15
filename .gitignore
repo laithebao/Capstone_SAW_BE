@@ -8,6 +8,7 @@
 .env.*
 !.env.example
 !.env.test.example
+!.env.container.example
 
 # Database scripts and local database exports
 *.sql
@@ -23,6 +24,7 @@
 **/App_Data/SupplierFiles/
 *.sqlproj.user
 *.bak
+/docs/SmartAgriWarehouseDB_beforeAzure_20261115
 *.bacpac
 *.dacpac
 
