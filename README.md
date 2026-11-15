@@ -6,6 +6,8 @@
 
 **Docker: [chuẩn bị và chạy backend .NET 8 trong container](docs/Docker.md).**
 
+**CI/CD: [GitHub Actions cho Web App Azure hiện tại](docs/GitHub-Actions-Azure.md).**
+
 Backend API cho hệ thống **Quản lý Kho Nông sản Thông minh (Smart Agri Warehouse)**, xây dựng theo kiến trúc **Clean Architecture** trên nền tảng **.NET 8**.
 
 ---

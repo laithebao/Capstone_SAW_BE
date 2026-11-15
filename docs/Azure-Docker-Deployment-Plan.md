@@ -256,14 +256,22 @@ Mỗi app B1 chỉ có một instance. Kế hoạch này có staging/production 
 
 ### Bước 10 — Tự động hóa CI/CD sau khi deploy thủ công đạt
 
-Tạo workflow trong **repo backend**, không tạo pipeline frontend:
+Đã chuẩn bị workflow trong **repo backend**, cho một Web App hiện có `saw-api`:
 
-| File dự kiến | Trigger | Trách nhiệm |
+| File hiện tại | Trigger | Trách nhiệm |
 |---|---|---|
-| `.github/workflows/ci.yml` | Pull request và push `main` | Restore/build/test; build Linux image; smoke container; lưu bằng chứng |
-| `.github/workflows/deploy-staging.yml` | Chỉ sau CI thành công của push `main` | Nhận đúng image đã test, push ACR, deploy staging, smoke và xuất release manifest |
-| `.github/workflows/deploy-production.yml` | `workflow_dispatch` với release đã pass staging | Xác minh release, deploy cùng digest, smoke production, ghi nhận phiên bản trước |
-| `.github/workflows/rollback.yml` | `workflow_dispatch` | Chọn release đã xác nhận tốt, deploy lại digest, kiểm tra sức khỏe |
+| `.github/workflows/backend-ci-cd.yml` | PR vào `main`, push `main`, hoặc manual trên `main` | Job CI không có quyền OIDC: unit + SQL integration, build một image, smoke. Job deploy riêng chỉ chạy cho `main` của repo chính sau CI: tải artifact đúng run, OIDC, push ACR, cập nhật sidecar `main` bằng digest, kiểm tra health đúng commit và thử rollback nếu thất bại. |
+
+Hướng dẫn cấu hình và vận hành: [GitHub Actions cho Azure](GitHub-Actions-Azure.md).
+Deployment được tuần tự hóa; commit đã bị thay thế trên `main` sẽ không cập nhật
+Web App. Migration head khác baseline đã duyệt sẽ chặn deploy để review trước.
+Workflow chưa được chạy thực tế trên GitHub trong lúc chuẩn bị file local;
+phải kiểm chứng lần chạy đầu trước khi coi CI/CD hoàn thành.
+
+Khi triển khai production thành môi trường riêng, bổ sung bước promote image
+digest đã pass staging và danh tính/quyền production riêng theo bước 9; cấu hình
+hiện tại chưa tạo môi trường production thứ hai. Rollback thủ công dùng digest
+trong deployment record, còn rollback khi phát hành lỗi được xử lý trong job deploy.
 
 Chi tiết bắt buộc khi triển khai workflow:
 
