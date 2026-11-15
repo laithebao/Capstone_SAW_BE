@@ -264,9 +264,13 @@ Mỗi app B1 chỉ có một instance. Kế hoạch này có staging/production 
 
 Hướng dẫn cấu hình và vận hành: [GitHub Actions cho Azure](GitHub-Actions-Azure.md).
 Deployment được tuần tự hóa; commit đã bị thay thế trên `main` sẽ không cập nhật
-Web App. Migration head khác baseline đã duyệt sẽ chặn deploy để review trước.
-Workflow chưa được chạy thực tế trên GitHub trong lúc chuẩn bị file local;
-phải kiểm chứng lần chạy đầu trước khi coi CI/CD hoàn thành.
+Web App. Bản cập nhật migration sinh SQL trong CI, chờ duyệt tại GitHub
+Environment `azure-release`, chạy đúng SQL đã duyệt lên Azure SQL rồi mới deploy
+API. Không còn sửa tay `APPROVED_MIGRATION_HEAD`. Mốc import trong
+`scripts/ci/database-baseline.txt` là lịch sử cố định, không cập nhật mỗi release.
+Pipeline deploy API trước đây đã chạy thành công; luồng migration có phê duyệt
+mới cần cấu hình environment, federated credential, SQL secret và quyền firewall
+theo tài liệu liên kết, rồi kiểm chứng trên GitHub trước khi coi đã vận hành.
 
 Khi triển khai production thành môi trường riêng, bổ sung bước promote image
 digest đã pass staging và danh tính/quyền production riêng theo bước 9; cấu hình
