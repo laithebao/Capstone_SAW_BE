@@ -60,10 +60,15 @@ class DeploymentTests(unittest.TestCase):
         self.directory = Path(self.temp.name)
         archive = b"test image archive"
         (self.directory / "image.tar.gz").write_bytes(archive)
-        self.build = {"commit": COMMIT, "run_id": "123", "image_name": "saw-api:ci-" + COMMIT,
+        self.build = {"commit": COMMIT, "run_id": "123", "run_attempt": "1", "image_name": "saw-api:ci-" + COMMIT,
                       "image_id": IMAGE_ID, "archive_sha256": hashlib.sha256(archive).hexdigest(),
                       "required_migration": "20261112160000_EnsurePickingHistorySync"}
         (self.directory / "build.json").write_text(json.dumps(self.build), encoding="utf-8")
+        self.database = {"status": "verified", "commit": COMMIT, "run_id": "123", "run_attempt": "1",
+                         "required_migration": self.build["required_migration"],
+                         "after": self.build["required_migration"]}
+        self.database_file = self.directory / "migration-result.json"
+        self.database_file.write_text(json.dumps(self.database), encoding="utf-8")
         self.azure = FakeAzure()
         self.verify = Mock()
         self.head = Mock(return_value=True)
@@ -71,6 +76,7 @@ class DeploymentTests(unittest.TestCase):
             "saw", "saw2026", "saw-api", COMMIT, "123", "1", directory=self.directory,
             record=self.directory / "deployment.json", runner=self.azure, verifier=self.verify,
             head_check=self.head, health_reader=lambda _: {"release": OLD_RELEASE},
+            database_record=self.database_file,
         )
 
     def test_success_deploys_digest_and_preserves_pull_identity(self):
@@ -101,10 +107,34 @@ class DeploymentTests(unittest.TestCase):
         self.assertEqual(self.azure.updates(), [])
         self.assertFalse(any(x[:3] == ["docker", "image", "push"] for x in self.azure.calls))
 
-    def test_new_migration_requires_review_before_touching_azure(self):
+    def test_image_requiring_unverified_database_never_touches_azure(self):
         self.build["required_migration"] = "20261201000000_NewSchema"
         (self.directory / "build.json").write_text(json.dumps(self.build), encoding="utf-8")
-        with self.assertRaisesRegex(ValueError, "Migration head changed"):
+        with self.assertRaisesRegex(ValueError, "database has not been verified"):
+            self.deployment.execute()
+        self.assertEqual(self.azure.calls, [])
+
+    def test_new_migration_deploys_after_actual_database_verification_without_code_marker(self):
+        head = "20261201000000_NewSchema"
+        self.build["required_migration"] = head
+        self.database.update(required_migration=head, after=head)
+        (self.directory / "build.json").write_text(json.dumps(self.build), encoding="utf-8")
+        self.database_file.write_text(json.dumps(self.database), encoding="utf-8")
+        self.deployment.execute()
+        self.assertEqual(self.deployment.record["status"], "deployed")
+
+    def test_failed_or_other_run_database_receipt_blocks_deployment(self):
+        for changes in ({"status": "failed"}, {"run_id": "999"}, {"run_attempt": "2"},
+                        {"commit": "b" * 40}, {"after": "20261201000000_OtherSchema"}):
+            with self.subTest(changes=changes):
+                self.database_file.write_text(json.dumps({**self.database, **changes}), encoding="utf-8")
+                with self.assertRaisesRegex(ValueError, "database has not been verified"):
+                    self.deployment.execute()
+                self.assertEqual(self.azure.calls, [])
+
+    def test_missing_database_receipt_blocks_deployment(self):
+        self.database_file.unlink()
+        with self.assertRaises(FileNotFoundError):
             self.deployment.execute()
         self.assertEqual(self.azure.calls, [])
 

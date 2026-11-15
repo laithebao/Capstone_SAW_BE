@@ -15,10 +15,6 @@ import time
 from urllib.request import Request, urlopen
 
 
-# Advance only after database migration and image rollback compatibility review.
-APPROVED_MIGRATION_HEAD = "20261112160000_EnsurePickingHistorySync"
-
-
 def run(command):
     result = subprocess.run(command, text=True, capture_output=True, check=False)
     if result.returncode:
@@ -71,12 +67,13 @@ def current_main(commit):
         return json.load(response)["object"]["sha"] == commit
 
 
-def read_build(directory, commit, run_id):
+def read_image(directory, commit, run_id, attempt):
     directory = Path(directory)
     build = json.loads((directory / "build.json").read_text(encoding="utf-8-sig"))
     if not re.fullmatch(r"[0-9a-f]{40}", commit):
         raise ValueError("Invalid source commit.")
-    if build.get("commit") != commit or str(build.get("run_id")) != run_id:
+    if (build.get("commit") != commit or str(build.get("run_id")) != run_id
+            or str(build.get("run_attempt")) != attempt):
         raise ValueError("Image artifact belongs to a different commit or workflow run.")
     if build.get("image_name") != f"saw-api:ci-{commit}":
         raise ValueError("Unexpected image name in artifact.")
@@ -84,9 +81,6 @@ def read_build(directory, commit, run_id):
         raise ValueError("Invalid image identity.")
     if not re.fullmatch(r"\d{14}_[A-Za-z0-9_]+", build.get("required_migration", "")):
         raise ValueError("Invalid migration metadata.")
-    if build["required_migration"] != APPROVED_MIGRATION_HEAD:
-        raise ValueError("Migration head changed. Review the database migration and rollback "
-                         "compatibility before updating APPROVED_MIGRATION_HEAD.")
     digest = hashlib.sha256()
     with (directory / "image.tar.gz").open("rb") as stream:
         for chunk in iter(lambda: stream.read(1024 * 1024), b""):
@@ -96,16 +90,28 @@ def read_build(directory, commit, run_id):
     return build
 
 
+def read_build(directory, commit, run_id, attempt, database_record="artifacts/migration-result.json"):
+    build = read_image(directory, commit, run_id, attempt)
+    record = json.loads(Path(database_record).read_text(encoding="utf-8-sig"))
+    if (record.get("status") != "verified" or record.get("commit") != commit
+            or str(record.get("run_id")) != run_id or str(record.get("run_attempt")) != attempt
+            or record.get("required_migration") != build["required_migration"]
+            or record.get("after") != build["required_migration"]):
+        raise ValueError("Azure database has not been verified for this release and workflow attempt.")
+    return build
+
+
 class Deployment:
     def __init__(self, group, registry, app, commit, run_id, attempt,
                  directory="artifacts/image", record="artifacts/deployment.json",
                  runner=run, verifier=verify_release, head_check=current_main,
-                 health_reader=fetch_health):
+                 health_reader=fetch_health, database_record="artifacts/migration-result.json"):
         self.group, self.registry, self.app = group, registry, app
         self.commit, self.run_id, self.attempt = commit, str(run_id), str(attempt)
         self.directory, self.record_path = Path(directory), Path(record)
         self.runner, self.verifier = runner, verifier
         self.head_check, self.health_reader = head_check, health_reader
+        self.database_record = database_record
         self.record = {"commit": commit, "run_id": str(run_id), "run_attempt": str(attempt),
                        "app": app, "status": "pending", "previous_image": None,
                        "new_image": None, "previous_release": None, "rollback": "not-needed"}
@@ -151,7 +157,7 @@ class Deployment:
                     raise ValueError(f"Missing GitHub variable for {name}.")
             if not self.run_id.isdigit() or not self.attempt.isdigit():
                 raise ValueError("Invalid GitHub workflow run identity.")
-            build = read_build(self.directory, self.commit, self.run_id)
+            build = read_build(self.directory, self.commit, self.run_id, self.attempt, self.database_record)
             self.record["required_migration"] = build["required_migration"]
             if not self.head_check(self.commit):
                 self.record["status"] = "superseded"
