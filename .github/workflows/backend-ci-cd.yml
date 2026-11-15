@@ -1,0 +1,161 @@
+name: Backend CI and Azure deployment
+
+on:
+  pull_request:
+    branches: [main]
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  verify:
+    name: Test and build Linux image
+    runs-on: ubuntu-24.04
+    timeout-minutes: 35
+    outputs:
+      image_artifact_id: ${{ steps.upload-image.outputs.artifact-id }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - uses: actions/setup-dotnet@0f4a354dd5547a28c70b7853dbd95d5b67886e73 # v6.1.0
+        with:
+          dotnet-version: 8.0.x
+
+      - name: Check deployment safeguards
+        run: python3 -m unittest discover -s scripts/ci -p 'test_*.py' -v
+
+      - name: Restore and build test runner
+        run: |
+          dotnet restore SAW/SAW.sln
+          dotnet build tools/SAW.Testing/SAW.Testing.csproj --configuration Release --no-restore
+
+      - name: Create isolated SQL test configuration
+        run: dotnet tools/SAW.Testing/bin/Release/net8.0/SAW.Testing.dll init --env-file .env.ci.local
+
+      - name: Start SQL Server for integration tests
+        run: dotnet tools/SAW.Testing/bin/Release/net8.0/SAW.Testing.dll setup --docker --profile integration --env-file .env.ci.local
+
+      - name: Run unit and SQL integration tests
+        run: dotnet tools/SAW.Testing/bin/Release/net8.0/SAW.Testing.dll test --profile integration --env-file .env.ci.local
+
+      - name: Build release image once
+        run: |
+          docker build --platform linux/amd64 \
+            --build-arg RELEASE_COMMIT="$GITHUB_SHA" \
+            --tag "saw-api:ci-$GITHUB_SHA" .
+
+      - name: Check container health, user, native libraries and storage
+        shell: pwsh
+        run: ./scripts/verify-container.ps1 -Image "saw-api:ci-$env:GITHUB_SHA"
+
+      - name: Export the tested image
+        if: github.ref == 'refs/heads/main' && github.event_name != 'pull_request'
+        run: |
+          mkdir -p artifacts/image
+          docker image save "saw-api:ci-$GITHUB_SHA" | gzip -1 > artifacts/image/image.tar.gz
+
+      - name: Record build identity and archive checksum
+        if: github.ref == 'refs/heads/main' && github.event_name != 'pull_request'
+        shell: pwsh
+        run: |
+          $imageName = "saw-api:ci-$env:GITHUB_SHA"
+          $imageId = docker image inspect --format '{{.Id}}' $imageName
+          if ($LASTEXITCODE -ne 0) { throw 'Cannot read image identity.' }
+          $head = Get-ChildItem SAW/SAW.Infrastructure/Migrations -Filter '*.cs' |
+            Where-Object { $_.BaseName -match '^\d{14}_' -and $_.BaseName -notlike '*.Designer' } |
+            Sort-Object BaseName | Select-Object -Last 1
+          if (-not $head) { throw 'Migration metadata is missing.' }
+          @{
+            commit = $env:GITHUB_SHA
+            run_id = $env:GITHUB_RUN_ID
+            run_attempt = $env:GITHUB_RUN_ATTEMPT
+            image_name = $imageName
+            image_id = $imageId.Trim()
+            archive_sha256 = (Get-FileHash artifacts/image/image.tar.gz -Algorithm SHA256).Hash.ToLowerInvariant()
+            required_migration = $head.BaseName
+          } | ConvertTo-Json | Set-Content artifacts/image/build.json -Encoding utf8
+
+      - name: Upload tested image for the deployment job
+        id: upload-image
+        if: github.ref == 'refs/heads/main' && github.event_name != 'pull_request'
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: image-${{ github.sha }}-${{ github.run_id }}-${{ github.run_attempt }}
+          path: artifacts/image/
+          retention-days: 1
+          compression-level: 0
+          if-no-files-found: error
+
+      - name: Upload test results
+        if: always()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: tests-${{ github.run_id }}-${{ github.run_attempt }}
+          path: test-results/**/all-tests.trx
+          retention-days: 7
+          if-no-files-found: warn
+
+      - name: Remove the runner's SQL test instance
+        if: always()
+        env:
+          MSSQL_SA_PASSWORD: unused-cleanup-value
+        run: |
+          docker compose -f compose.test.yml down --volumes --remove-orphans
+          rm -f .env.ci.local
+
+  deploy:
+    name: Deploy the verified image to saw-api
+    needs: verify
+    if: >-
+      github.repository == 'laithebao/Capstone_SAW_BE' &&
+      github.ref == 'refs/heads/main' &&
+      (github.event_name == 'push' || github.event_name == 'workflow_dispatch')
+    runs-on: ubuntu-24.04
+    timeout-minutes: 35
+    permissions:
+      contents: read
+      id-token: write
+    # Finish an active deployment/rollback; do not interrupt it with a newer run.
+    concurrency:
+      group: deploy-saw-api
+      cancel-in-progress: false
+    env:
+      AZURE_RESOURCE_GROUP: ${{ vars.AZURE_RESOURCE_GROUP }}
+      AZURE_ACR_NAME: ${{ vars.AZURE_ACR_NAME }}
+      AZURE_WEBAPP_NAME: ${{ vars.AZURE_WEBAPP_NAME }}
+      GH_TOKEN: ${{ github.token }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Download only this run's tested image
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          artifact-ids: ${{ needs.verify.outputs.image_artifact_id }}
+          path: artifacts/image
+          merge-multiple: true
+
+      - name: Log in to Azure using GitHub OIDC
+        uses: Azure/login@a641126d1b8aa4d1fa005f4f92df94a3a4c4c906 # v3.1.0
+        with:
+          client-id: ${{ vars.AZURE_CLIENT_ID }}
+          tenant-id: ${{ vars.AZURE_TENANT_ID }}
+          subscription-id: ${{ vars.AZURE_SUBSCRIPTION_ID }}
+
+      - name: Push by digest, deploy main container and verify release
+        run: python3 scripts/ci/deploy_azure.py
+
+      - name: Upload deployment and rollback record
+        if: always()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: deployment-${{ github.run_id }}-${{ github.run_attempt }}
+          path: artifacts/deployment.json
+          retention-days: 14
+          if-no-files-found: warn
