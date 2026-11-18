@@ -111,11 +111,8 @@ public sealed partial class StockAdjustmentRepository
 
     private static async Task EnsureCountCapacityAsync(AppDbContext db, Inventory stock, decimal increase, CancellationToken ct)
     {
-        if (await db.Inventories.AnyAsync(i => i.Unit != "kg", ct)) throw new ConflictException("Tồn kho có đơn vị không tương thích với kg.");
+        if (await db.Inventories.AnyAsync(i => i.WarehouseLocationId == stock.WarehouseLocationId && i.Unit != "kg", ct)) throw new ConflictException("Tồn kho có đơn vị không tương thích với kg.");
         var local = await db.Inventories.Where(i => i.WarehouseLocationId == stock.WarehouseLocationId).SumAsync(i => (decimal?)i.QuantityOnHand, ct) ?? 0;
-        var total = await db.Inventories.SumAsync(i => (decimal?)i.QuantityOnHand, ct) ?? 0;
         GoodsReceiptRules.EnsureCapacity(local, increase, stock.WarehouseLocation.MaxWeightKg, "Vị trí kho");
-        foreach (var setting in await db.WarehouseSettings.AsNoTracking().ToListAsync(ct))
-            GoodsReceiptRules.EnsureCapacity(total, increase, setting.MaxCapacityKg, "Kho");
     }
 }

@@ -53,7 +53,7 @@ public sealed partial class StockAdjustmentSqlTests
         }
     }
     [ReceivingSqlFact]
-    public async Task Count_increase_checks_location_and_total_warehouse_capacity_without_changing_pending_request()
+    public async Task Count_increase_checks_location_but_ignores_legacy_warehouse_limit()
     {
         var s=await Scenario();var a=await Service().CreateAsync(await Request(s.Batch,actual:105),F.ActorId,default);var actor=await Manager();
         await using var db=F.Context();var stock=await db.Inventories.Include(i=>i.WarehouseLocation).SingleAsync(i=>i.ProductBatchId==s.Batch);
@@ -64,9 +64,7 @@ public sealed partial class StockAdjustmentSqlTests
         var setting=new WarehouseSetting{WarehouseSettingId=1,WarehouseName="Fixture capacity",MaxCapacityKg=total+4,UpdatedAt=DateTime.UtcNow};db.Add(setting);await db.SaveChangesAsync();
         try
         {
-            d=await Reviews(actor).GetAsync(a.Summary.Id,default);Assert.False(d.CanApprove);Assert.Contains("Kho",d.ApprovalLockReason);
-            await Assert.ThrowsAsync<ConflictException>(()=>Reviews(actor).ReviewAsync(a.Summary.Id,Decision(d),actor,default));
-            setting.MaxCapacityKg=total+5;await db.SaveChangesAsync();d=await Reviews(actor).GetAsync(a.Summary.Id,default);Assert.True(d.CanApprove,d.ApprovalLockReason);
+            d=await Reviews(actor).GetAsync(a.Summary.Id,default);Assert.True(d.CanApprove,d.ApprovalLockReason);
             await Reviews(actor).ReviewAsync(a.Summary.Id,Decision(d),actor,default);Assert.Equal(105,await db.Inventories.AsNoTracking().Where(i=>i.ProductBatchId==s.Batch).Select(i=>i.QuantityOnHand).SingleAsync());
         }
         finally{db.WarehouseSettings.Remove(setting);await db.SaveChangesAsync();}

@@ -8,7 +8,7 @@ public class WarehouseLocationConfiguration : IEntityTypeConfiguration<Warehouse
 {
     public void Configure(EntityTypeBuilder<WarehouseLocation> builder)
     {
-        builder.ToTable("WAREHOUSE_LOCATION");
+        builder.ToTable("WAREHOUSE_LOCATION", t => t.UseSqlOutputClause(false));
         builder.HasKey(x => x.WarehouseLocationId);
         builder.Property(x => x.WarehouseLocationId).HasColumnName("WarehouseLocationID").UseIdentityColumn();
         builder.Property(x => x.LocationCode).HasColumnName("LocationCode").HasMaxLength(50).IsRequired();

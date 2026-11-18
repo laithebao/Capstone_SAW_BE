@@ -551,7 +551,7 @@ public sealed class GoodsReceiptSqlTests(GoodsReceiptSqlFixture fixture) : IClas
     }
 
     [ReceivingSqlFact]
-    public async Task Competing_batches_cannot_overfill_location_or_warehouse()
+    public async Task Competing_batches_obey_each_location_limit_not_legacy_total_limit()
     {
         foreach (var wholeWarehouse in new[] { false, true })
         {
@@ -569,8 +569,8 @@ public sealed class GoodsReceiptSqlTests(GoodsReceiptSqlFixture fixture) : IClas
                 var first = await DraftAsync(a, location); var second = await DraftAsync(b, wholeWarehouse ? secondLocation : location);
                 async Task<bool> Commit(long id) { try { await ConfirmAsync(Repository(), id); return true; } catch (ConflictException) { return false; } }
                 var results = await Task.WhenAll(Commit(first), Commit(second));
-                Assert.Single(results, r => r);
-                Assert.Equal(1000, await db.Inventories.Where(i => i.ProductBatchId == a.ProductBatchId || i.ProductBatchId == b.ProductBatchId).SumAsync(i => i.QuantityOnHand));
+                Assert.Equal(wholeWarehouse ? 2 : 1, results.Count(r => r));
+                Assert.Equal(wholeWarehouse ? 2000 : 1000, await db.Inventories.Where(i => i.ProductBatchId == a.ProductBatchId || i.ProductBatchId == b.ProductBatchId).SumAsync(i => i.QuantityOnHand));
             }
             finally { if (wholeWarehouse) await db.WarehouseSettings.ExecuteDeleteAsync(); }
         }
