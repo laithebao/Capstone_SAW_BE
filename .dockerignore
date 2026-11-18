@@ -1,0 +1,37 @@
+# Only send the API and its project references to the Docker builder.
+**
+!global.json
+!SAW/
+!SAW/SAW.API/
+!SAW/SAW.API/**
+!SAW/SAW.Application/
+!SAW/SAW.Application/**
+!SAW/SAW.Domain/
+!SAW/SAW.Domain/**
+!SAW/SAW.Infrastructure/
+!SAW/SAW.Infrastructure/**
+
+# Apply these after the allowlist so local/runtime data can never be copied.
+**/bin/**
+**/obj/**
+**/.git/**
+**/.vs/**
+**/App_Data/**
+**/Properties/**
+**/appsettings*.json
+**/.env*
+**/secrets.json
+**/*.secrets.json
+**/secrets/**
+**/*.pfx
+**/*.p12
+**/*.pem
+**/*.key
+**/*.crt
+**/*.cer
+**/*.jks
+**/*.keystore
+**/*.bak
+**/*.bacpac
+**/*.dacpac
+**/*.log

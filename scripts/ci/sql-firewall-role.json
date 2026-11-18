@@ -1,0 +1,17 @@
+{
+  "Name": "SAW GitHub SQL Firewall Manager",
+  "IsCustom": true,
+  "Description": "Manage temporary GitHub runner firewall rules on the assigned SQL server; no database or server write/delete permission.",
+  "Actions": [
+    "Microsoft.Sql/servers/read",
+    "Microsoft.Sql/servers/firewallRules/read",
+    "Microsoft.Sql/servers/firewallRules/write",
+    "Microsoft.Sql/servers/firewallRules/delete"
+  ],
+  "NotActions": [],
+  "DataActions": [],
+  "NotDataActions": [],
+  "AssignableScopes": [
+    "/subscriptions/7b2c5d9c-4647-4424-a705-29ff07d2cc17/resourceGroups/saw"
+  ]
+}

@@ -48,12 +48,7 @@ public sealed class QrCodeSqlTests(ReceivingSqlFixture fixture) : IClassFixture<
         using (var paused = Worker())
         {
             await paused.StartAsync(default);
-            try
-            {
-                using var deadline = new CancellationTokenSource(TimeSpan.FromSeconds(10));
-                while (!workerLog.Messages.Any(text => text.Contains("worker paused: configure")))
-                    await Task.Delay(25, deadline.Token);
-            }
+            try { await workerLog.Paused.Task.WaitAsync(TimeSpan.FromSeconds(15)); }
             finally { await paused.StopAsync(default); }
         }
         Assert.Contains(workerLog.Messages, text => text.Contains("worker paused: configure"));
@@ -87,11 +82,17 @@ public sealed class QrCodeSqlTests(ReceivingSqlFixture fixture) : IClassFixture<
     }
     private sealed class WorkerTestLog : Microsoft.Extensions.Logging.ILogger<QrCodeGenerationWorker>
     {
-        public List<string> Messages { get; } = [];
+        public ConcurrentQueue<string> Messages { get; } = new();
+        public TaskCompletionSource<bool> Paused { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
         public IDisposable? BeginScope<TState>(TState state) where TState : notnull => null;
         public bool IsEnabled(Microsoft.Extensions.Logging.LogLevel level) => true;
         public void Log<TState>(Microsoft.Extensions.Logging.LogLevel level, Microsoft.Extensions.Logging.EventId id,
-            TState state, Exception? exception, Func<TState, Exception?, string> formatter) => Messages.Add(formatter(state, exception));
+            TState state, Exception? exception, Func<TState, Exception?, string> formatter)
+        {
+            var message = formatter(state, exception);
+            Messages.Enqueue(message);
+            if (message.Contains("worker paused: configure")) Paused.TrySetResult(true);
+        }
     }
     private async Task<ProductBatch> AcceptedAsync(string grade = "A", string status = "APPROVED_FOR_STORAGE")
     {

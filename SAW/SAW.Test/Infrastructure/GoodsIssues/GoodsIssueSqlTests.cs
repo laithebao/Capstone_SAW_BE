@@ -328,7 +328,9 @@ public sealed class GoodsIssueSqlTests(GoodsIssueSqlFixture fixture) : IClassFix
             }
         }
         client.DefaultRequestHeaders.Authorization = new("Bearer", Token(F.ActorId, "OPERATION_STAFF"));
-        using var list = await client.GetAsync("/api/operation/goods-issues"); Assert.Equal(HttpStatusCode.OK, list.StatusCode);
+        using var list = await client.GetAsync("/api/operation/goods-issues");
+        Assert.True(list.StatusCode == HttpStatusCode.OK,
+            $"Expected HTTP 200, received {(int)list.StatusCode}: {await list.Content.ReadAsStringAsync()}\n{F.ApiLog}");
         using var badPage = await client.GetAsync("/api/operation/goods-issues?pageSize=101"); Assert.Equal(HttpStatusCode.BadRequest, badPage.StatusCode);
         var spoof = JsonSerializer.SerializeToNode(input, new JsonSerializerOptions(JsonSerializerDefaults.Web))!.AsObject(); spoof["operationAccountId"] = 999;
         using var bad = await client.PostAsJsonAsync("/api/operation/goods-issues", spoof); Assert.Equal(HttpStatusCode.BadRequest, bad.StatusCode);

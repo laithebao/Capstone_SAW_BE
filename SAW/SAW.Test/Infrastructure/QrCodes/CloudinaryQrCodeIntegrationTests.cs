@@ -17,7 +17,8 @@ using ZXing;
 
 namespace SAW.Test.Infrastructure.QrCodes;
 
-public sealed class RealCloudinaryFactAttribute:FactAttribute
+[Xunit.Sdk.TraitDiscoverer("SAW.Test.ExternalTraitDiscoverer", "SAW.Test")]
+public sealed class RealCloudinaryFactAttribute:FactAttribute, Xunit.Sdk.ITraitAttribute
 {
     public RealCloudinaryFactAttribute()
     {

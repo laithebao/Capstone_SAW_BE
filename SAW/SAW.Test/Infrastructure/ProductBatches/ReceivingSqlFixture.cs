@@ -1,4 +1,5 @@
 using System.Diagnostics;
+using System.Collections.Concurrent;
 using System.Net;
 using System.Net.Sockets;
 using System.Text.RegularExpressions;
@@ -15,7 +16,8 @@ namespace SAW.Test.Infrastructure.ProductBatches;
 
 // Opt in with SAW_TEST_SQL_CONNECTION. Only the server/login are used: every run creates
 // and drops its own GUID-named DB. Never migrate, seed or delete rows in the supplied DB.
-public sealed class ReceivingSqlFactAttribute : FactAttribute
+[Xunit.Sdk.TraitDiscoverer("SAW.Test.SqlTraitDiscoverer", "SAW.Test")]
+public sealed class ReceivingSqlFactAttribute : FactAttribute, Xunit.Sdk.ITraitAttribute
 {
     public ReceivingSqlFactAttribute()
     {
@@ -35,6 +37,8 @@ public sealed class ReceivingSqlFixture : IAsyncLifetime
     private bool _created;
     private Process? _api;
     private Uri? _apiAddress;
+    private readonly ConcurrentQueue<string> _apiLog = new();
+    public string ApiLog => string.Join(Environment.NewLine, _apiLog);
     public string ConnectionString { get; private set; } = "";
     public int ActorId { get; private set; }
     public int SupplierId { get; private set; }
@@ -56,7 +60,7 @@ public sealed class ReceivingSqlFixture : IAsyncLifetime
         var supplied = Environment.GetEnvironmentVariable("SAW_TEST_SQL_CONNECTION");
         if (string.IsNullOrEmpty(supplied)) return;
         var builder = new SqlConnectionStringBuilder(supplied) { InitialCatalog = "master" };
-        _master = builder.ConnectionString;
+        _master = new SqlConnectionStringBuilder(builder.ConnectionString) { Pooling = false }.ConnectionString;
         await using var master = new SqlConnection(_master);
         await master.OpenAsync();
         await ExecuteAsync(master, $"CREATE DATABASE [{_database}]");
@@ -118,7 +122,14 @@ public sealed class ReceivingSqlFixture : IAsyncLifetime
             CropTypeId = crop.CropTypeId; AreaId = area.GrowingAreaId;
             VersionId = version.InspectionStandardVersionId;
         }
-        catch { await DisposeAsync(); throw; }
+        catch (Exception error) { await CleanupAfterInitializationFailureAsync(error); throw; }
+    }
+
+    // Keep the initialization error as the primary exception if SQL is also unavailable during cleanup.
+    internal async Task CleanupAfterInitializationFailureAsync(Exception error)
+    {
+        try { await DisposeAsync(); }
+        catch (Exception cleanupError) { error.Data["SqlFixtureCleanupError"] = cleanupError; }
     }
 
     public async Task<ProductBatch> BatchAsync()
@@ -190,27 +201,41 @@ public sealed class ReceivingSqlFixture : IAsyncLifetime
         start.Environment["ASPNETCORE_ENVIRONMENT"] = "Development";
         start.Environment["ConnectionStrings__DefaultConnection"] = ConnectionString;
         start.Environment["QrCode__Enabled"] = "false"; // HTTP read tests must never upload real assets.
+        start.Environment["Email__DeliveryMode"] = "Log";
+        start.Environment["OpenAI__ApiKey"] = "";
+        start.Environment["Qdrant__Endpoint"] = "";
         start.Environment["DeliveryRefusalFiles__StoragePath"] = DeliveryRefusalStoragePath;
         start.Environment["Jwt__Key"] = JwtKey;
         start.Environment["Jwt__Issuer"] = "uc28-test";
         start.Environment["Jwt__Audience"] = "uc28-test";
         _api = Process.Start(start)!;
+        _api.OutputDataReceived += (_, e) => CaptureApiLog(e.Data);
+        _api.ErrorDataReceived += (_, e) => CaptureApiLog(e.Data);
         _api.BeginOutputReadLine(); _api.BeginErrorReadLine();
         _apiAddress = new Uri($"http://127.0.0.1:{port}");
         var client = new HttpClient { BaseAddress = new Uri($"http://127.0.0.1:{port}"), Timeout = TimeSpan.FromSeconds(20) };
         for (var i = 0; i < 100; i++)
         {
-            if (_api.HasExited) throw new InvalidOperationException("Isolated API failed to start.");
+            if (_api.HasExited) throw new InvalidOperationException($"Isolated API failed to start.\n{ApiLog}");
             try { using var response = await client.GetAsync("/api/operation/product-batches/1"); return client; }
             catch (HttpRequestException) { await Task.Delay(100); }
         }
-        throw new TimeoutException("Isolated API did not start.");
+        throw new TimeoutException($"Isolated API did not start.\n{ApiLog}");
+    }
+
+    private void CaptureApiLog(string? line)
+    {
+        if (line is null) return;
+        _apiLog.Enqueue(line);
+        while (_apiLog.Count > 200) _apiLog.TryDequeue(out _);
     }
 
     public async Task DisposeAsync()
     {
         if (_api is { HasExited: false }) { _api.Kill(entireProcessTree: true); await _api.WaitForExitAsync(); }
         _api?.Dispose();
+        _api = null;
+        _apiAddress = null;
         if (!_created) return;
         // Only this fixture's GUID-named database is eligible for cleanup.
         if (!Regex.IsMatch(_database, "^SAW_UC28_Test_[a-f0-9]{32}$")) throw new InvalidOperationException();
@@ -218,7 +243,8 @@ public sealed class ReceivingSqlFixture : IAsyncLifetime
         var expectedRoot = Path.GetFullPath(Path.Combine(Path.GetTempPath(), _database + "-DeliveryRefusals"));
         if (evidenceRoot != expectedRoot) throw new InvalidOperationException("Unexpected test evidence path.");
         if (Directory.Exists(evidenceRoot)) Directory.Delete(evidenceRoot, recursive: true);
-        SqlConnection.ClearAllPools();
+        // Other fixtures may still be using their pools. Clear only this database's pool.
+        using (var pool = new SqlConnection(ConnectionString)) SqlConnection.ClearPool(pool);
         await using var master = new SqlConnection(_master);
         await master.OpenAsync();
         await ExecuteAsync(master, $"ALTER DATABASE [{_database}] SET SINGLE_USER WITH ROLLBACK IMMEDIATE; DROP DATABASE [{_database}]");
