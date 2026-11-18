@@ -45,7 +45,9 @@ public sealed class GoodsReceiptQueryRepository(AppDbContext db) : IGoodsReceipt
         await db.Suppliers.AsNoTracking().OrderBy(s => s.SupplierName).Select(s => new GoodsReceiptOption(s.SupplierId, s.SupplierName)).ToListAsync(ct),
         await db.WarehouseLocations.AsNoTracking().OrderBy(l => l.LocationCode).Select(l => new GoodsReceiptLocation(
             l.WarehouseLocationId, l.LocationCode + " · " + l.ZoneName + " / " + (l.RackName ?? "—") + " / " + (l.BinName ?? "—"),
-            l.LocationStatus == "ACTIVE", l.MaxWeightKg)).ToListAsync(ct));
+            l.LocationStatus == "ACTIVE", l.MaxWeightKg,
+            l.Inventories.Sum(i => (decimal?)i.QuantityOnHand) ?? 0,
+            l.Inventories.Any(i => i.Unit != "kg"))).ToListAsync(ct));
 
     public async Task<GoodsReceiptPage<GoodsReceiptBatch>> EligibleAsync(int? supplierId, string? search, int page, int pageSize, CancellationToken ct)
     {

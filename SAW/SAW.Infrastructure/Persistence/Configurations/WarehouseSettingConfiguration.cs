@@ -8,7 +8,7 @@ public class WarehouseSettingConfiguration : IEntityTypeConfiguration<WarehouseS
 {
     public void Configure(EntityTypeBuilder<WarehouseSetting> builder)
     {
-        builder.ToTable("WAREHOUSE_SETTING");
+        builder.ToTable("WAREHOUSE_SETTING", table => table.UseSqlOutputClause(false));
         builder.HasKey(x => x.WarehouseSettingId);
         builder.Property(x => x.WarehouseSettingId).HasColumnName("WarehouseSettingID").ValueGeneratedNever();
         builder.Property(x => x.WarehouseName).HasColumnName("WarehouseName").HasMaxLength(200).IsRequired();
