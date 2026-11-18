@@ -48,7 +48,7 @@ public sealed class GoodsReceiptQueryRepository(AppDbContext db) : IGoodsReceipt
         var locations = await db.WarehouseLocations.AsNoTracking().OrderBy(l => l.LocationCode).Select(l => new
         {
             Id = l.WarehouseLocationId,
-            Name = l.LocationCode + " · " + l.ZoneName + " / " + (l.RackName ?? "—") + " / " + (l.BinName ?? "—"),
+            Name = l.LocationCode + " · " + l.ZoneName,
             IsActive = l.LocationStatus == "ACTIVE", l.MaxWeightKg,
             // Reserved stock is already part of physical on-hand stock. Draft receipts occupy no space.
             Used = l.Inventories.Sum(i => (decimal?)i.QuantityOnHand) ?? 0,
