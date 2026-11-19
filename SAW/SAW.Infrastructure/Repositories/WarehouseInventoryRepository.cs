@@ -283,7 +283,7 @@ public sealed class WarehouseInventoryRepository(AppDbContext db, IOrderReservat
     public async Task<WarehouseCapacityChart> GetCapacityChartAsync(CancellationToken ct)
     {
         var inventoryLocations = await GetLocationLevelsAsync(ct);
-        var locations = inventoryLocations.Select(location =>
+        var locations = inventoryLocations.Where(location => location.LocationStatus == "ACTIVE").Select(location =>
         {
             var available = location.MaxWeightKg.HasValue
                 ? Math.Max(location.MaxWeightKg.Value - location.QuantityOnHandKg, 0)

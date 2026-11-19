@@ -41,11 +41,23 @@ public sealed class GoodsReceiptQueryRepository(AppDbContext db) : IGoodsReceipt
     public Task<GoodsReceiptDetail?> GetAsync(long id, CancellationToken ct) => db.GoodsReceipts.AsNoTracking()
         .Where(r => r.GoodsReceiptId == id).Select(Projection).SingleOrDefaultAsync(ct);
 
-    public async Task<GoodsReceiptFilters> FiltersAsync(CancellationToken ct) => new(
-        await db.Suppliers.AsNoTracking().OrderBy(s => s.SupplierName).Select(s => new GoodsReceiptOption(s.SupplierId, s.SupplierName)).ToListAsync(ct),
-        await db.WarehouseLocations.AsNoTracking().OrderBy(l => l.LocationCode).Select(l => new GoodsReceiptLocation(
-            l.WarehouseLocationId, l.LocationCode + " · " + l.ZoneName + " / " + (l.RackName ?? "—") + " / " + (l.BinName ?? "—"),
-            l.LocationStatus == "ACTIVE", l.MaxWeightKg)).ToListAsync(ct));
+    public async Task<GoodsReceiptFilters> FiltersAsync(CancellationToken ct)
+    {
+        var suppliers = await db.Suppliers.AsNoTracking().OrderBy(s => s.SupplierName)
+            .Select(s => new GoodsReceiptOption(s.SupplierId, s.SupplierName)).ToListAsync(ct);
+        var locations = await db.WarehouseLocations.AsNoTracking().OrderBy(l => l.LocationCode).Select(l => new
+        {
+            Id = l.WarehouseLocationId,
+            Name = l.LocationCode + " · " + l.ZoneName,
+            IsActive = l.LocationStatus == "ACTIVE", l.MaxWeightKg,
+            // Reserved stock is already part of physical on-hand stock. Draft receipts occupy no space.
+            Used = l.Inventories.Sum(i => (decimal?)i.QuantityOnHand) ?? 0,
+            UnknownUnit = l.Inventories.Any(i => i.Unit != "kg")
+        }).ToListAsync(ct);
+        return new(suppliers, locations.Select(l => new GoodsReceiptLocation(l.Id, l.Name, l.IsActive,
+            l.MaxWeightKg, l.UnknownUnit ? null : l.Used,
+            l.UnknownUnit || l.MaxWeightKg is null ? null : Math.Max(0, l.MaxWeightKg.Value - l.Used), l.UnknownUnit)).ToList());
+    }
 
     public async Task<GoodsReceiptPage<GoodsReceiptBatch>> EligibleAsync(int? supplierId, string? search, int page, int pageSize, CancellationToken ct)
     {

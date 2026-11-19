@@ -63,7 +63,7 @@ public sealed class GoodsReceiptRepository(DbContextOptions<AppDbContext> option
     {
         await ExecuteAsync(async db =>
         {
-            // Serialize stock writers for warehouse-wide capacity, including an empty inventory.
+            // Serialize stock writers for location capacity, including an empty inventory.
             // A SQL table lock also protects against other modules that do not use sp_getapplock.
             // Keep it within this short transaction; no external calls/uploads occur here.
             await db.Database.ExecuteSqlRawAsync("SELECT COUNT_BIG(*) FROM INVENTORY WITH (TABLOCKX, HOLDLOCK)", ct);
@@ -79,14 +79,11 @@ public sealed class GoodsReceiptRepository(DbContextOptions<AppDbContext> option
             if (receipt.ReceivedQuantity != batch.VerifiedQuantity || receipt.WeightInKg != batch.VerifiedWeightInKg || receipt.Unit != batch.Unit)
                 throw new ConflictException("Số liệu kiểm nhận đã thay đổi so với phiếu nháp. Vui lòng tải lại và kiểm tra; không thể xác nhận phiếu này.");
             var location = await ActiveLocationAsync(db, receipt.WarehouseLocationId, ct);
-            if (await db.Inventories.AnyAsync(i => i.Unit != "kg", ct))
+            if (await db.Inventories.AnyAsync(i => i.WarehouseLocationId == location.WarehouseLocationId && i.Unit != "kg", ct))
                 throw new ConflictException("Tồn kho có đơn vị không tương thích với kg. Vui lòng kiểm tra dữ liệu kho.");
-            var total = await db.Inventories.SumAsync(i => (decimal?)i.QuantityOnHand, ct) ?? 0;
             var local = await db.Inventories.Where(i => i.WarehouseLocationId == location.WarehouseLocationId)
                 .SumAsync(i => (decimal?)i.QuantityOnHand, ct) ?? 0;
             GoodsReceiptRules.EnsureCapacity(local, receipt.WeightInKg, location.MaxWeightKg, "Vị trí kho");
-            foreach (var setting in await db.WarehouseSettings.AsNoTracking().ToListAsync(ct))
-                GoodsReceiptRules.EnsureCapacity(total, receipt.WeightInKg, setting.MaxCapacityKg, "Kho");
 
             var stock = await db.Inventories.SingleOrDefaultAsync(i => i.ProductBatchId == batch.ProductBatchId
                 && i.WarehouseLocationId == receipt.WarehouseLocationId, ct);
