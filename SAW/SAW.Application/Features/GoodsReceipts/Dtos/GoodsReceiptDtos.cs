@@ -7,7 +7,8 @@ public sealed record GoodsReceiptQuery(string? Search = null, int? SupplierId = 
     string? Status = null, string? SortBy = "receivedAtDesc", int Page = 1, int PageSize = 10);
 public sealed record GoodsReceiptPage<T>(IReadOnlyList<T> Items, int TotalCount, int Page, int PageSize);
 public sealed record GoodsReceiptOption(int Id, string Name);
-public sealed record GoodsReceiptLocation(int Id, string Name, bool IsActive, decimal? MaxWeightKg);
+public sealed record GoodsReceiptLocation(int Id, string Name, bool IsActive, decimal? MaxWeightKg,
+    decimal? UsedWeightKg = null, decimal? RemainingWeightKg = null, bool HasNonKgInventory = false);
 public sealed record GoodsReceiptFilters(IReadOnlyList<GoodsReceiptOption> Suppliers,
     IReadOnlyList<GoodsReceiptLocation> Locations);
 public sealed record GoodsReceiptBatch(long Id, string BatchCode, string ProductName, int SupplierId,

@@ -109,6 +109,40 @@ public sealed class GoodsReceiptSqlTests(GoodsReceiptSqlFixture fixture) : IClas
     }
 
     [ReceivingSqlFact]
+    public async Task Location_options_report_physical_capacity_including_reserved_stock_but_not_drafts()
+    {
+        var (batch, location) = await EligibleAsync(weight: 50, capacity: 100);
+        var (_, unlimited) = await EligibleAsync();
+        await DraftAsync(batch, location);
+        await using var db = F.Context();
+        db.Inventories.Add(new Inventory { ProductBatchId = batch.ProductBatchId,
+            WarehouseLocationId = location.WarehouseLocationId, QuantityOnHand = 60, ReservedQuantity = 20, Unit = "kg" });
+        await db.SaveChangesAsync();
+        var repository = new GoodsReceiptQueryRepository(db);
+        var filters = await repository.FiltersAsync(default);
+        var option = Assert.Single(filters.Locations, l => l.Id == location.WarehouseLocationId);
+        Assert.Equal(60m, option.UsedWeightKg);
+        Assert.Equal(40m, option.RemainingWeightKg);
+        var empty = Assert.Single(filters.Locations, l => l.Id == unlimited.WarehouseLocationId);
+        Assert.Equal(0m, empty.UsedWeightKg);
+        Assert.Null(empty.MaxWeightKg);
+        Assert.Null(empty.RemainingWeightKg);
+        // Refresh reads current physical stock, regardless of how much is reserved.
+        await db.Inventories.Where(i => i.WarehouseLocationId == location.WarehouseLocationId)
+            .ExecuteUpdateAsync(s => s.SetProperty(i => i.QuantityOnHand, 100m));
+        option = Assert.Single((await repository.FiltersAsync(default)).Locations, l => l.Id == location.WarehouseLocationId);
+        Assert.Equal(0m, option.RemainingWeightKg);
+        await db.WarehouseLocations.Where(l => l.WarehouseLocationId == location.WarehouseLocationId)
+            .ExecuteUpdateAsync(s => s.SetProperty(l => l.MaxWeightKg, 90m));
+        Assert.Equal(0m, Assert.Single((await repository.FiltersAsync(default)).Locations,
+            l => l.Id == location.WarehouseLocationId).RemainingWeightKg);
+        await db.Inventories.Where(i => i.WarehouseLocationId == location.WarehouseLocationId)
+            .ExecuteUpdateAsync(s => s.SetProperty(i => i.QuantityOnHand, 0m).SetProperty(i => i.ReservedQuantity, 0m));
+        Assert.Equal(90m, Assert.Single((await repository.FiltersAsync(default)).Locations,
+            l => l.Id == location.WarehouseLocationId).RemainingWeightKg);
+    }
+
+    [ReceivingSqlFact]
     public async Task Receipt_notifications_skip_drafts_and_reach_warehouse_participants_on_commit_only()
     {
         var (batch, location) = await EligibleAsync();
@@ -517,7 +551,7 @@ public sealed class GoodsReceiptSqlTests(GoodsReceiptSqlFixture fixture) : IClas
     }
 
     [ReceivingSqlFact]
-    public async Task Competing_batches_cannot_overfill_location_or_warehouse()
+    public async Task Competing_batches_obey_each_location_limit_not_legacy_total_limit()
     {
         foreach (var wholeWarehouse in new[] { false, true })
         {
@@ -535,8 +569,8 @@ public sealed class GoodsReceiptSqlTests(GoodsReceiptSqlFixture fixture) : IClas
                 var first = await DraftAsync(a, location); var second = await DraftAsync(b, wholeWarehouse ? secondLocation : location);
                 async Task<bool> Commit(long id) { try { await ConfirmAsync(Repository(), id); return true; } catch (ConflictException) { return false; } }
                 var results = await Task.WhenAll(Commit(first), Commit(second));
-                Assert.Single(results, r => r);
-                Assert.Equal(1000, await db.Inventories.Where(i => i.ProductBatchId == a.ProductBatchId || i.ProductBatchId == b.ProductBatchId).SumAsync(i => i.QuantityOnHand));
+                Assert.Equal(wholeWarehouse ? 2 : 1, results.Count(r => r));
+                Assert.Equal(wholeWarehouse ? 2000 : 1000, await db.Inventories.Where(i => i.ProductBatchId == a.ProductBatchId || i.ProductBatchId == b.ProductBatchId).SumAsync(i => i.QuantityOnHand));
             }
             finally { if (wholeWarehouse) await db.WarehouseSettings.ExecuteDeleteAsync(); }
         }
@@ -623,7 +657,7 @@ public sealed class GoodsReceiptSqlTests(GoodsReceiptSqlFixture fixture) : IClas
         foreach (var role in new[] { "SUPPLIER", "QC_STAFF" })
         {
             client.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", Token(role));
-            Assert.Equal(HttpStatusCode.Forbidden, (await client.GetAsync("/api/operation/goods-receipts")).StatusCode);
+            Assert.Equal(role == "ADMINISTRATOR" ? HttpStatusCode.OK : HttpStatusCode.Forbidden, (await client.GetAsync("/api/operation/goods-receipts")).StatusCode);
             Assert.Equal(HttpStatusCode.Forbidden, (await client.PostAsJsonAsync("/api/operation/goods-receipts", new { })).StatusCode);
             Assert.Equal(HttpStatusCode.Forbidden, (await client.PutAsJsonAsync("/api/operation/goods-receipts/1/draft", new { })).StatusCode);
         }
