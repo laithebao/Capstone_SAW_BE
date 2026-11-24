@@ -98,7 +98,7 @@ public sealed partial class StockAdjustmentSqlTests
         }
     }
     [ReceivingSqlFact]
-    public async Task Receipt_and_count_increase_share_global_capacity_lock_in_both_orders()
+    public async Task Receipt_and_count_increase_share_capacity_lock_and_cannot_overfill_same_location_in_both_orders()
     {
         foreach(var reviewFirst in new[]{true,false})
         {
@@ -107,31 +107,33 @@ public sealed partial class StockAdjustmentSqlTests
             var qc=F.Inspection(b.ProductBatchId,"COMPLETED");qc.QcResult="PASS";qc.QualityGrade="E";qc.CompletedAt=DateTime.UtcNow;setup.Add(qc);await setup.SaveChangesAsync();
             var location=await setup.Inventories.Where(i=>i.ProductBatchId==s.Batch).Select(i=>i.WarehouseLocationId).SingleAsync();var receipts=new GoodsReceiptRepository(Options(),Accessor);var date=DateOnly.FromDateTime(DateTime.UtcNow.AddHours(7));
             var receiptId=await receipts.CreateAsync(new(b.ProductBatchId,location,date,null),F.ActorId,default);var snap=new GoodsReceiptSnapshot(location,date.ToDateTime(TimeOnly.MinValue),null);
-            var total=await setup.Inventories.SumAsync(i=>i.QuantityOnHand);var setting=new SAW.Domain.Entities.WarehouseSetting{WarehouseSettingId=1,WarehouseName="Concurrency",MaxCapacityKg=total+100,UpdatedAt=DateTime.UtcNow};setup.Add(setting);await setup.SaveChangesAsync();
-            try
+            // Each writer fits by itself (105 kg or 200 kg), but together they need 205 kg.
+            // Capacity is enforced per location; the legacy warehouse setting is not used.
+            await setup.WarehouseLocations.Where(l=>l.WarehouseLocationId==location)
+                .ExecuteUpdateAsync(x=>x.SetProperty(l=>l.MaxWeightKg,200));
+
+            // Pause approval while it owns the inventory lock, or pause a real receipt transaction
+            // immediately after it has taken that same lock (before its capacity read).
+            var pause=new PauseReviewWriter("REVIEW_STOCK_ADJUSTMENT");
+            if(reviewFirst)
             {
-                // Pause approval while it owns the warehouse lock, or pause a real receipt transaction
-                // immediately after it has taken that same lock (before its capacity read).
-                var pause=new PauseReviewWriter("REVIEW_STOCK_ADJUSTMENT");
-                if(reviewFirst)
-                {
-                    var first=Reviews(actor,pause).ReviewAsync(a.Summary.Id,Decision(view),actor,default);var blocker=await WaitForPaused(first,pause);var observe=new ObserveWarehouseLock();
-                    var second=new GoodsReceiptRepository(Options(observe),Accessor).ConfirmAsync(receiptId,snap,F.ActorId,default);
-                    try{await F.AssertBlockedAsync(await observe.Session.Task.WaitAsync(TimeSpan.FromSeconds(10)),blocker);}finally{pause.Resume.TrySetResult(true);}
-                    await first;await Assert.ThrowsAsync<ConflictException>(()=>second);
-                }
-                else
-                {
-                    // Hold the exact SQL warehouse lock while executing the receipt's real confirmation;
-                    // a command interceptor pauses it after the table lock has executed.
-                    var receiptPause=new PauseReceiptCapacity();var first=new GoodsReceiptRepository(Options(receiptPause),Accessor).ConfirmAsync(receiptId,snap,F.ActorId,default);
-                    var blocker=await receiptPause.Entered.Task.WaitAsync(TimeSpan.FromSeconds(15));var observe=new ObserveWarehouseLock();var second=Reviews(actor,observe).ReviewAsync(a.Summary.Id,Decision(view),actor,default);
-                    try{await F.AssertBlockedAsync(await observe.Session.Task.WaitAsync(TimeSpan.FromSeconds(10)),blocker);}finally{receiptPause.Resume.TrySetResult(true);}
-                    await first;await Assert.ThrowsAsync<ConflictException>(()=>second);
-                }
-                Assert.Equal(reviewFirst?105:100,await setup.Inventories.Where(i=>i.ProductBatchId==s.Batch).Select(i=>i.QuantityOnHand).SingleAsync());Assert.Equal(reviewFirst?"DRAFT":"COMMITTED",await setup.GoodsReceipts.Where(x=>x.GoodsReceiptId==receiptId).Select(x=>x.ReceiptStatus).SingleAsync());
+                var first=Reviews(actor,pause).ReviewAsync(a.Summary.Id,Decision(view),actor,default);var blocker=await WaitForPaused(first,pause);var observe=new ObserveWarehouseLock();
+                var second=new GoodsReceiptRepository(Options(observe),Accessor).ConfirmAsync(receiptId,snap,F.ActorId,default);
+                try{await F.AssertBlockedAsync(await observe.Session.Task.WaitAsync(TimeSpan.FromSeconds(10)),blocker);}finally{pause.Resume.TrySetResult(true);}
+                await first;var error=await Assert.ThrowsAsync<ConflictException>(()=>second);Assert.Contains("Vị trí kho",error.Message);
             }
-            finally{setup.WarehouseSettings.Remove(setting);await setup.SaveChangesAsync();}
+            else
+            {
+                // The receipt pauses at its capacity read, after acquiring the inventory table lock.
+                var receiptPause=new PauseReceiptCapacity();var first=new GoodsReceiptRepository(Options(receiptPause),Accessor).ConfirmAsync(receiptId,snap,F.ActorId,default);
+                var blocker=await receiptPause.Entered.Task.WaitAsync(TimeSpan.FromSeconds(15));var observe=new ObserveWarehouseLock();var second=Reviews(actor,observe).ReviewAsync(a.Summary.Id,Decision(view),actor,default);
+                try{await F.AssertBlockedAsync(await observe.Session.Task.WaitAsync(TimeSpan.FromSeconds(10)),blocker);}finally{receiptPause.Resume.TrySetResult(true);}
+                await first;var error=await Assert.ThrowsAsync<ConflictException>(()=>second);Assert.Contains("Vị trí kho",error.Message);
+            }
+            Assert.Equal(reviewFirst?105:100,await setup.Inventories.Where(i=>i.ProductBatchId==s.Batch).Select(i=>i.QuantityOnHand).SingleAsync());
+            Assert.Equal(reviewFirst?"DRAFT":"COMMITTED",await setup.GoodsReceipts.Where(x=>x.GoodsReceiptId==receiptId).Select(x=>x.ReceiptStatus).SingleAsync());
+            Assert.Equal(reviewFirst?"APPROVED":"PENDING",await setup.StockAdjustments.Where(x=>x.StockAdjustmentId==a.Summary.Id).Select(x=>x.AdjustmentStatus).SingleAsync());
+            Assert.Equal(reviewFirst?105:200,await setup.Inventories.Where(i=>i.WarehouseLocationId==location).SumAsync(i=>i.QuantityOnHand));
         }
     }
     private sealed class PauseReceiptCapacity:DbCommandInterceptor

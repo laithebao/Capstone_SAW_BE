@@ -33,6 +33,8 @@ public sealed class AuthorizationPolicyTests
         [typeof(StockAdjustmentsController)] = "OPERATION_STAFF",
         [typeof(WarehouseStockAdjustmentsController)] = "WAREHOUSE_MANAGER",
         [typeof(WarehouseInventoryController)] = "WAREHOUSE_MANAGER",
+        [typeof(WarehouseCapacitySettingsController)] = "WAREHOUSE_MANAGER,ADMINISTRATOR",
+        [typeof(WarehouseLocationsController)] = "WAREHOUSE_MANAGER,ADMINISTRATOR",
         [typeof(WarehouseOrdersController)] = "WAREHOUSE_MANAGER",
         [typeof(SpoilageForecastController)] = "WAREHOUSE_MANAGER,ADMINISTRATOR",
         [typeof(SuppliersController)] = "SUPPLIER",
