@@ -8,7 +8,7 @@ namespace SAW.API.Controllers;
 
 [ApiController]
 [Route("api/environment-logs")]
-[Authorize]
+[Authorize(Roles = "QC_STAFF")]
 public sealed class EnvironmentLogsController(IQcInspectionService service) : ControllerBase
 {
     private int ActorId => int.Parse(
@@ -20,7 +20,6 @@ public sealed class EnvironmentLogsController(IQcInspectionService service) : Co
     // =========================================================================
 
     [HttpPost]
-    [Authorize(Roles = "QC_STAFF,WAREHOUSE_MANAGER,ADMINISTRATOR")]
     public async Task<ActionResult<ApiResponse<EnvironmentLogDto>>> Create(
         [FromBody] CreateEnvironmentLogRequest request,
         CancellationToken ct)
@@ -49,7 +48,6 @@ public sealed class EnvironmentLogsController(IQcInspectionService service) : Co
     // =========================================================================
 
     [HttpGet("in-storage-batches")]
-    [Authorize(Roles = "QC_STAFF,WAREHOUSE_MANAGER,ADMINISTRATOR")]
     public async Task<ActionResult<ApiResponse<PagedResult<InStorageBatchEnvDto>>>> GetInStorageBatches(
         [FromQuery] InStorageBatchEnvQuery query,
         CancellationToken ct)
@@ -63,7 +61,6 @@ public sealed class EnvironmentLogsController(IQcInspectionService service) : Co
     // =========================================================================
 
     [HttpGet("batches/{batchId:long}")]
-    [Authorize(Roles = "QC_STAFF,WAREHOUSE_MANAGER,ADMINISTRATOR")]
     public async Task<ActionResult<ApiResponse<IReadOnlyList<EnvironmentLogDto>>>> GetBatchLogs(
         long batchId,
         CancellationToken ct)
