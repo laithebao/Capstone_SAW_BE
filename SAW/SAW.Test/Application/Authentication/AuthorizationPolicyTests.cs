@@ -24,7 +24,7 @@ public sealed class AuthorizationPolicyTests
         [typeof(CropTypesController)] = "ADMINISTRATOR",
         [typeof(InspectionStandardsController)] = "ADMINISTRATOR,QC_STAFF,WAREHOUSE_MANAGER",
         [typeof(QcInspectionsController)] = "QC_STAFF,ADMINISTRATOR",
-        [typeof(EnvironmentLogsController)] = "QC_STAFF,WAREHOUSE_MANAGER,ADMINISTRATOR",
+        [typeof(EnvironmentLogsController)] = "QC_STAFF",
         [typeof(ProductBatchesController)] = "OPERATION_STAFF,QC_STAFF,WAREHOUSE_MANAGER,ADMINISTRATOR",
         [typeof(ProductBatchQrCodesController)] = "OPERATION_STAFF,QC_STAFF,WAREHOUSE_MANAGER,ADMINISTRATOR",
         [typeof(GoodsReceiptsController)] = "OPERATION_STAFF,WAREHOUSE_MANAGER,ADMINISTRATOR",
