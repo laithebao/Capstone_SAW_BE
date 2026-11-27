@@ -157,6 +157,8 @@ public sealed class GoodsReceiptSqlTests(GoodsReceiptSqlFixture fixture) : IClas
             db.Accounts.Add(account); await db.SaveChangesAsync(); return account;
         }
         var staff = await Account("OPERATION_STAFF"); var manager = await Account("WAREHOUSE_MANAGER");
+        db.EmailVerificationTokens.Add(new EmailVerificationToken { AccountId = F.ActorId, TokenHash = Guid.NewGuid().ToString("N"), CreatedAt = DateTime.UtcNow, ExpiresAt = DateTime.UtcNow.AddHours(1), UsedAt = DateTime.UtcNow });
+        await db.SaveChangesAsync();
         var accessor = new HttpContextAccessor { HttpContext = new DefaultHttpContext { User = new ClaimsPrincipal(new ClaimsIdentity(
             [new Claim("account_id", staff.AccountId.ToString()), new Claim(ClaimTypes.Role, "OPERATION_STAFF")], "test")) } };
         var repo = new GoodsReceiptRepository(new DbContextOptionsBuilder<AppDbContext>().UseSqlServer(F.ConnectionString).Options, accessor);
@@ -167,6 +169,7 @@ public sealed class GoodsReceiptSqlTests(GoodsReceiptSqlFixture fixture) : IClas
             .Where(n => n.RelatedEntityType == "GOODS_RECEIPT" && n.RelatedEntityId == id.ToString() && n.NotificationType == type).ToListAsync();
         var drafts = await Notes("GOODS_RECEIPT_CREATED");
         Assert.Empty(drafts);
+        Assert.False(await db.EmailOutbox.AnyAsync(x => x.EventKey == $"RECEIPT:{id}"));
         Assert.Equal(beforeDraft, await db.Notifications.CountAsync());
         Assert.Empty(await db.Inventories.Where(i => i.ProductBatchId == batch.ProductBatchId).ToListAsync());
         var beforeDuplicate = await db.Notifications.CountAsync();
@@ -175,6 +178,9 @@ public sealed class GoodsReceiptSqlTests(GoodsReceiptSqlFixture fixture) : IClas
         var snapshot = await SnapshotAsync(id);
         await repo.ConfirmAsync(id, snapshot, staff.AccountId, default);
         var committed = await Notes("GOODS_RECEIPT_COMMITTED");
+        var email = Assert.Single(await db.EmailOutbox.Where(x => x.EventKey == $"RECEIPT:{id}").ToListAsync());
+        Assert.Equal(F.ActorId, email.AccountId); Assert.Null(email.SentAt);
+        Assert.DoesNotContain(await db.EmailOutbox.ToListAsync(), x => x.EventKey.StartsWith($"BATCH:{batch.ProductBatchId}:IN_STOCK"));
         foreach (var accountId in new[] { staff.AccountId, manager.AccountId })
             Assert.Single(committed, n => n.AccountId == accountId);
         Assert.True(await db.Notifications.AnyAsync(n => n.AccountId == F.ActorId && n.NotificationType == "BATCH_STATUS"
@@ -654,15 +660,16 @@ public sealed class GoodsReceiptSqlTests(GoodsReceiptSqlFixture fixture) : IClas
         string Token(string role) => new JwtSecurityTokenHandler().WriteToken(new JwtSecurityToken("uc28-test", "uc28-test",
             [new Claim("account_id", F.ActorId.ToString()), new Claim(ClaimTypes.Role, role)], expires: DateTime.UtcNow.AddMinutes(10),
             signingCredentials: new SigningCredentials(new SymmetricSecurityKey(Encoding.UTF8.GetBytes(ReceivingSqlFixture.JwtKey)), SecurityAlgorithms.HmacSha256)));
-        foreach (var role in new[] { "SUPPLIER", "QC_STAFF" })
+        foreach (var role in new[] { "SUPPLIER", "QC_STAFF", "WAREHOUSE_MANAGER" })
         {
             client.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", Token(role));
-            Assert.Equal(role == "ADMINISTRATOR" ? HttpStatusCode.OK : HttpStatusCode.Forbidden, (await client.GetAsync("/api/operation/goods-receipts")).StatusCode);
+            foreach (var path in new[] { "", "/1", "/filters", "/eligible-batches" })
+                Assert.Equal(HttpStatusCode.Forbidden, (await client.GetAsync("/api/operation/goods-receipts" + path)).StatusCode);
             Assert.Equal(HttpStatusCode.Forbidden, (await client.PostAsJsonAsync("/api/operation/goods-receipts", new { })).StatusCode);
             Assert.Equal(HttpStatusCode.Forbidden, (await client.PutAsJsonAsync("/api/operation/goods-receipts/1/draft", new { })).StatusCode);
         }
-        // Controller policy permits management reads, while all writes remain staff-only.
-        foreach (var role in new[] { "WAREHOUSE_MANAGER", "ADMINISTRATOR" })
+        // Administrators retain read access, while all writes remain staff-only.
+        foreach (var role in new[] { "ADMINISTRATOR" })
         {
             client.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", Token(role));
             Assert.Equal(HttpStatusCode.OK, (await client.GetAsync("/api/operation/goods-receipts")).StatusCode);

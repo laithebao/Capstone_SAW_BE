@@ -12,7 +12,7 @@ public partial class AppDbContext : DbContext
     private static readonly HashSet<Type> ExcludedEntityTypes =
     [
         typeof(AuditLog), typeof(RefreshToken), typeof(PasswordResetToken),
-        typeof(EmailVerificationToken), typeof(Notification),
+        typeof(EmailVerificationToken), typeof(Notification), typeof(EmailOutbox),
         // These workflow records have semantic audit receipts after generated keys are saved.
         typeof(StockAdjustmentResolution), typeof(StockAdjustmentProposal), typeof(OrderAmendment), typeof(GoodsIssueInvalidation)
     ];
@@ -40,9 +40,11 @@ public partial class AppDbContext : DbContext
     public DbSet<Supplier> Suppliers => Set<Supplier>();
     public DbSet<Distributor> Distributors => Set<Distributor>();
     public DbSet<SupplyContract> SupplyContracts => Set<SupplyContract>();
+    public DbSet<SupplyContractRevision> SupplyContractRevisions => Set<SupplyContractRevision>();
 
     // 03. Crop & Certifications
     public DbSet<CropType> CropTypes => Set<CropType>();
+    public DbSet<Category> Categories => Set<Category>();
     public DbSet<SupplierCropType> SupplierCropTypes => Set<SupplierCropType>();
     public DbSet<SupplierCertification> SupplierCertifications => Set<SupplierCertification>();
 
@@ -106,6 +108,7 @@ public partial class AppDbContext : DbContext
     // 11. Traceability, Notification, Audit, AI
     public DbSet<QrCode> QrCodes => Set<QrCode>();
     public DbSet<Notification> Notifications => Set<Notification>();
+    public DbSet<EmailOutbox> EmailOutbox => Set<EmailOutbox>();
     public DbSet<AuditLog> AuditLogs => Set<AuditLog>();
     public DbSet<AiRiskForecast> AiRiskForecasts => Set<AiRiskForecast>();
 

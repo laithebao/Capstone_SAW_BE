@@ -14,7 +14,7 @@ public class PickingHistoryConfiguration : IEntityTypeConfiguration<PickingHisto
         builder.Property(x => x.InventoryReservationId).HasColumnName("InventoryReservationID").IsRequired();
         builder.Property(x => x.PickedByAccountId).HasColumnName("PickedByAccountID").IsRequired();
         builder.Property(x => x.PickedQuantity).HasColumnName("PickedQuantity").HasPrecision(18, 3).IsRequired();
-        builder.Property(x => x.PickedAt).HasColumnName("PickedAt").HasDefaultValueSql("SYSDATETIME()");
+        builder.Property(x => x.PickedAt).HasColumnName("PickedAt").HasDefaultValueSql("SYSUTCDATETIME()");
         builder.Property(x => x.Note).HasColumnName("Note").HasMaxLength(1000);
 
         builder.HasOne(x => x.InventoryReservation)

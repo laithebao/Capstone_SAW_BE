@@ -4,8 +4,12 @@ public interface ICropTypeService
 {
     Task<CropTypeListResponse> SearchAsync(string? search, string? category, bool? isActive, int page, int pageSize, CancellationToken cancellationToken);
     Task<CropTypeDto> GetAsync(int id, CancellationToken cancellationToken);
+    Task<CropTypeListResponse> LookupAsync(string? search, int? categoryId, int page, int pageSize, CancellationToken cancellationToken);
     Task<CropTypeDto> CreateAsync(SaveCropTypeRequest request, CancellationToken cancellationToken);
     Task<CropTypeDto> UpdateAsync(int id, SaveCropTypeRequest request, CancellationToken cancellationToken);
     Task<CropTypeDto> SetStatusAsync(int id, bool isActive, CancellationToken cancellationToken);
     Task DeleteAsync(int id, CancellationToken cancellationToken);
+    Task ValidateBasicCreateAsync(SaveCropTypeBasicsRequest request, CancellationToken cancellationToken);
+    Task<CropTypeDto> CreateBasicAsync(SaveCropTypeBasicsRequest request, CancellationToken cancellationToken);
+    Task<CropTypeDto> UpdateBasicAsync(int id, SaveCropTypeBasicsRequest request, CancellationToken cancellationToken);
 }

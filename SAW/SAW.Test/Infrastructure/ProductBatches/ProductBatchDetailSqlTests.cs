@@ -172,7 +172,7 @@ public sealed class ProductBatchDetailSqlTests(GoodsReceiptSqlFixture fixture) :
     [ReceivingSqlFact]
     public async Task Http_detail_all_four_read_roles_get_sections_and_get_does_not_write()
     {
-        var (batch, _) = await SeedAsync("HTTP-" + Guid.NewGuid().ToString("N")[..8]);
+        var (batch, receipt) = await SeedAsync("HTTP-" + Guid.NewGuid().ToString("N")[..8]);
         using var client = await F.ApiAsync();
         var before = await SnapshotAsync(batch.ProductBatchId);
         foreach (var role in new[] { "OPERATION_STAFF", "QC_STAFF", "WAREHOUSE_MANAGER", "ADMINISTRATOR" })
@@ -186,6 +186,22 @@ public sealed class ProductBatchDetailSqlTests(GoodsReceiptSqlFixture fixture) :
             Assert.Single(detail.GoodsReceipts); Assert.NotEmpty(detail.StatusHistory); Assert.Equal(4, detail.WarehouseTransactions.Count);
             Assert.False(detail.CanUpdateReceivingInformation);
         }
+        client.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", Token("WAREHOUSE_MANAGER"));
+        Assert.Equal(HttpStatusCode.Forbidden, (await client.GetAsync("/api/operation/goods-receipts")).StatusCode);
+        Assert.Equal(HttpStatusCode.Forbidden, (await client.GetAsync($"/api/operation/goods-receipts/{receipt.GoodsReceiptId}")).StatusCode);
+        await using var db = F.Context();
+        var inspectionId = await db.QcInspections.Where(q => q.ProductBatchId == batch.ProductBatchId)
+            .Select(q => q.QcInspectionId).SingleAsync();
+        foreach (var path in new[] { "/api/qc-inspections", $"/api/qc-inspections/{inspectionId}" })
+        {
+            client.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", Token("WAREHOUSE_MANAGER"));
+            Assert.Equal(HttpStatusCode.Forbidden, (await client.GetAsync(path)).StatusCode);
+            foreach (var role in new[] { "QC_STAFF", "ADMINISTRATOR" })
+            {
+                client.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", Token(role));
+                Assert.Equal(HttpStatusCode.OK, (await client.GetAsync(path)).StatusCode);
+            }
+        }
         client.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", Token("SUPPLIER"));
         using var forbidden = await client.GetAsync($"/api/operation/product-batches/{batch.ProductBatchId}");
         Assert.Equal(HttpStatusCode.Forbidden, forbidden.StatusCode);
@@ -193,7 +209,7 @@ public sealed class ProductBatchDetailSqlTests(GoodsReceiptSqlFixture fixture) :
     }
 
     [GoodsReceiptBrowserFact]
-    public async Task Browser_detail_shows_saved_sections_receipt_route_empty_and_mobile_without_writes()
+    public async Task Browser_detail_preserves_history_and_blocks_manager_receipt_routes_without_business_writes()
     {
         var (batch, receipt) = await SeedAsync("WEB-" + Guid.NewGuid().ToString("N")[..8]);
         var empty = await F.BatchAsync();
@@ -220,6 +236,7 @@ public sealed class ProductBatchDetailSqlTests(GoodsReceiptSqlFixture fixture) :
         start.Environment["SAW_TEST_PENDING_BATCH_ID"] = pending.ProductBatchId.ToString();
         start.Environment["SAW_TEST_RECEIPT_ID"] = receipt.GoodsReceiptId.ToString();
         start.Environment["SAW_TEST_TOKEN"] = Token("OPERATION_STAFF");
+        start.Environment["SAW_TEST_MANAGER_TOKEN"] = Token("WAREHOUSE_MANAGER");
         using var process = Process.Start(start)!;
         var output = process.StandardOutput.ReadToEndAsync(); var error = process.StandardError.ReadToEndAsync();
         try { await process.WaitForExitAsync(new CancellationTokenSource(TimeSpan.FromMinutes(3)).Token); }

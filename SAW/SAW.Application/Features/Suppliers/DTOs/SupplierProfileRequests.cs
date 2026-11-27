@@ -13,6 +13,7 @@ public class SupplierCertificationInputDto
 public class SupplierGrowingAreaInputDto
 {
     public int GrowingAreaId { get; set; }
+    [MaxLength(200)] public string? AreaName { get; set; }
     public double? AreaInHectares { get; set; }
 }
 

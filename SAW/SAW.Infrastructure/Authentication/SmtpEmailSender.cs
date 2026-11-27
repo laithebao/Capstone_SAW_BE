@@ -8,6 +8,8 @@ namespace SAW.Infrastructure.Authentication;
 
 public sealed class SmtpEmailSender(IConfiguration configuration) : IEmailSender
 {
+    public Task SendBusinessAsync(string email, string subject, string body, string messageId, CancellationToken cancellationToken) =>
+        SendAsync(email, subject, body, cancellationToken, messageId);
     public Task SendEmailVerificationAsync(
         string email, string verificationToken, CancellationToken cancellationToken)
     {
@@ -23,7 +25,7 @@ public sealed class SmtpEmailSender(IConfiguration configuration) : IEmailSender
             $"Use this link to reset your password (valid for 24 hours):\n{resetUrl}", cancellationToken);
     }
 
-    private async Task SendAsync(string recipient, string subject, string body, CancellationToken cancellationToken)
+    private async Task SendAsync(string recipient, string subject, string body, CancellationToken cancellationToken, string? messageId = null)
     {
         var host = Required("Smtp:Host");
         var fromEmail = Required("Smtp:FromEmail");
@@ -39,6 +41,7 @@ public sealed class SmtpEmailSender(IConfiguration configuration) : IEmailSender
             IsBodyHtml = false
         };
         message.To.Add(recipient);
+        if (messageId != null) message.Headers.Add("Message-ID", $"<{messageId}@saw.local>");
 
         using var client = new SmtpClient(host, port)
         {

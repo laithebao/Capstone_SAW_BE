@@ -98,7 +98,7 @@ public sealed class AuthCommandServiceTests
         _emailSender.Object, _googleIdentityService.Object);
 
     [Fact]
-    public async Task GoogleLoginAsync_VerifiedGeneratedDistributorProfile_DoesNotRequireAdminApproval()
+    public async Task GoogleLoginAsync_VerifiedGeneratedDistributorProfile_StillRequiresProfileCompletion()
     {
         var account = CreateAccount(); account.Username = "google_existing";
         account.Role = new Role { RoleId = 6, RoleCode = "DISTRIBUTOR", RoleName = "Distributor" }; account.RoleId = 6;
@@ -109,7 +109,8 @@ public sealed class AuthCommandServiceTests
         ConfigureTokenService();
         var response = await CreateService().GoogleLoginAsync(new GoogleLoginRequest("token", null), null, default);
         Assert.NotNull(response.Session);
-        Assert.Equal("ACTIVE", account.Distributor.ProfileStatus);
+        Assert.Equal("PENDING_REVIEW", account.Distributor.ProfileStatus);
+        _repository.Verify(x => x.RecordGoogleEmailVerificationAsync(account.AccountId, account.Email, It.IsAny<CancellationToken>()), Times.Once);
     }
 
     [Theory]

@@ -14,6 +14,6 @@ public class WarehouseSettingConfiguration : IEntityTypeConfiguration<WarehouseS
         builder.Property(x => x.WarehouseName).HasColumnName("WarehouseName").HasMaxLength(200).IsRequired();
         builder.Property(x => x.MaxCapacityKg).HasColumnName("MaxCapacityKg").HasPrecision(18, 3);
         builder.Property(x => x.Address).HasColumnName("Address").HasMaxLength(500);
-        builder.Property(x => x.UpdatedAt).HasColumnName("UpdatedAt").HasDefaultValueSql("SYSDATETIME()");
+        builder.Property(x => x.UpdatedAt).HasColumnName("UpdatedAt").HasDefaultValueSql("SYSUTCDATETIME()");
     }
 }

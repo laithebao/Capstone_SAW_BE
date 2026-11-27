@@ -10,6 +10,7 @@ public class Supplier
     public string TaxCode { get; set; } = default!;
 
     public string ContactPerson { get; set; } = default!;
+    public string? LegalRepresentative { get; set; }
     public string? PhoneNumber { get; set; }
     public string? Email { get; set; }
     public string Address { get; set; } = default!;

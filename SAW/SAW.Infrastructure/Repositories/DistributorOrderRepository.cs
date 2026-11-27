@@ -126,7 +126,7 @@ public sealed class DistributorOrderRepository(DbContextOptions<AppDbContext> op
             .Where(q => q.ProductBatchId == id)
             .OrderByDescending(q => q.StartedAt).ThenByDescending(q => q.QcInspectionId).FirstOrDefaultAsync(ct);
         return new(lot.ProductBatchId, lot.BatchCode, lot.ProductName, lot.CropType.CropName, lot.CropType.CategoryName,
-            lot.Supplier.SupplierName, lot.GrowingArea.AreaName, lot.GrowingArea.Province, lot.GrowingArea.District, lot.GrowingArea.Ward,
+            lot.Supplier.SupplierName, lot.GrowingArea.AreaName, lot.GrowingArea.Province ?? "", lot.GrowingArea.District ?? "", lot.GrowingArea.Ward ?? "",
             lot.QualityGrade, lot.HarvestDate, lot.ExpiryDate, offer?.ApprovedRemainderWeightKg ?? lot.VerifiedWeightInKg ?? lot.WeightInKg, price, lot.BatchStatus,
             saleable, lot.VerifiedPackagingType ?? lot.PackagingType, lot.VerifiedPackageCount ?? lot.PackageCount,
             lot.VerifiedPackageUnitWeightKg ?? lot.PackageUnitWeightKg, lot.ExpectedMinTempC, lot.ExpectedMaxTempC,

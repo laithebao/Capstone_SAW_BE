@@ -217,6 +217,8 @@ public sealed class ReceivingWorkflowApiSqlTests(GoodsReceiptSqlFixture fixture)
         {
             var batch=await SubmittedAsync();await using var before=F.Context();
             var historyCount=await before.BatchStatusHistories.CountAsync(h=>h.ProductBatchId==batch.ProductBatchId);var auditCount=await before.AuditLogs.CountAsync();
+            before.EmailVerificationTokens.Add(new EmailVerificationToken { AccountId = F.ActorId, TokenHash = Guid.NewGuid().ToString("N"), CreatedAt = DateTime.UtcNow, ExpiresAt = DateTime.UtcNow.AddHours(1), UsedAt = DateTime.UtcNow });
+            await before.SaveChangesAsync(); auditCount=await before.AuditLogs.CountAsync();
             await using var db=F.Context(new FailAudit());var repository=new ProductBatchVerificationRepository(db,new HttpContextAccessor());
             var history=new BatchStatusHistory{ProductBatchId=batch.ProductBatchId,OldStatus="SUBMITTED",NewStatus=confirm?"PENDING_QC":"REJECTED",ChangedAt=DateTime.UtcNow,ChangedByAccountId=F.ActorId};
             var failure=await Assert.ThrowsAsync<DbUpdateException>(()=>confirm
@@ -227,6 +229,7 @@ public sealed class ReceivingWorkflowApiSqlTests(GoodsReceiptSqlFixture fixture)
             Assert.Equal("SUBMITTED",saved.BatchStatus);Assert.Null(saved.VerifiedQuantity);Assert.Null(saved.VerifiedWeightInKg);Assert.Null(saved.RejectionReason);
             Assert.Equal(batch.UpdatedAt,saved.UpdatedAt);Assert.Equal(historyCount,await check.BatchStatusHistories.CountAsync(h=>h.ProductBatchId==batch.ProductBatchId));
             Assert.Equal(auditCount,await check.AuditLogs.CountAsync());
+            Assert.False(await check.EmailOutbox.AnyAsync(x => x.EventKey.StartsWith($"BATCH:{batch.ProductBatchId}:")));
         }
     }
     private sealed class FailAudit:DbCommandInterceptor

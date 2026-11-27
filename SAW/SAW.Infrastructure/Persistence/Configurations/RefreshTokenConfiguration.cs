@@ -14,7 +14,7 @@ public class RefreshTokenConfiguration : IEntityTypeConfiguration<RefreshToken>
         builder.Property(x => x.AccountId).HasColumnName("AccountID").IsRequired();
         builder.Property(x => x.TokenHash).HasColumnName("TokenHash").HasMaxLength(500).IsRequired();
         builder.Property(x => x.JwtId).HasColumnName("JwtId").HasMaxLength(120);
-        builder.Property(x => x.CreatedAt).HasColumnName("CreatedAt").HasDefaultValueSql("SYSDATETIME()");
+        builder.Property(x => x.CreatedAt).HasColumnName("CreatedAt").HasDefaultValueSql("SYSUTCDATETIME()");
         builder.Property(x => x.ExpiresAt).HasColumnName("ExpiresAt").IsRequired();
         builder.Property(x => x.RevokedAt).HasColumnName("RevokedAt");
         builder.Property(x => x.CreatedByIp).HasColumnName("CreatedByIp").HasMaxLength(64);

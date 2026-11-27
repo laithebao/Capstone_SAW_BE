@@ -34,6 +34,7 @@
     <ProjectReference Include="..\SAW.Domain\SAW.Domain.csproj" />
     <ProjectReference Include="..\SAW.API\SAW.API.csproj" />
     <ProjectReference Include="..\SAW.Infrastructure\SAW.Infrastructure.csproj" />
+    <ProjectReference Include="..\..\tools\SAW.Testing\SAW.Testing.csproj" />
     <ProjectReference Include="..\..\tools\SAW.Migrations\SAW.Migrations.csproj" />
   </ItemGroup>
 

@@ -114,7 +114,7 @@ public sealed class ProductBatchVerificationRepository(
             // The conditional SQL update (and its history trigger) are not tracked by EF.
             // Queue notifications only after the transition won, in this same transaction.
             prior.RejectionReason = reason;
-            await dbContext.QueueBatchStatusNotificationsAsync(prior, nextStatus, cancellationToken);
+            await dbContext.QueueBatchStatusNotificationsAsync(prior, nextStatus, cancellationToken, history.ChangedAt);
             await dbContext.SaveChangesAsync(cancellationToken);
             await transaction.CommitAsync(cancellationToken);
             return true;

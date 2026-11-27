@@ -53,7 +53,7 @@ public sealed class SupplierProfileServiceTests
         Assert.Same(profile, await Service.DeclareProfileAsync(7, Request));
         repository.Verify(x => x.AddSupplierAsync(It.Is<Supplier>(s => s.AccountId == 7 && s.SupplierCode == "SUP-000009"
                 && s.SupplierName == "Hợp tác xã" && s.PhoneNumber == "0901234567" && s.Email == "contact@saw.local"
-                && s.Address == "Đồng Tháp" && s.ContactPerson == "Liên hệ | Đại diện PL: Đại diện"
+                && s.Address == "Đồng Tháp" && s.ContactPerson == "Liên hệ" && s.LegalRepresentative == "Đại diện"
                 && s.Note == "Hợp tác xã" && s.ProfileStatus == "ACTIVE"),
             It.Is<List<int>>(ids => ids.SequenceEqual(new[] { 2 })), It.IsAny<List<SupplierCertificationInputDto>>(),
             It.IsAny<List<SupplierGrowingAreaInputDto>>(), It.IsAny<string?>(), It.IsAny<List<string>?>(), It.IsAny<CancellationToken>()), Times.Once);

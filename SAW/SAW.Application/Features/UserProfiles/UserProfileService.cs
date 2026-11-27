@@ -18,13 +18,20 @@ public sealed class UserProfileService(IUserProfileRepository repository) : IUse
         var business = request.Distributor;
         if (account.Role.RoleCode == "DISTRIBUTOR")
         {
-            if (account.Distributor is null) throw new NotFoundException("Không tìm thấy hồ sơ nhà phân phối.");
             if (business is null) errors.Add("Vui lòng điền thông tin nhà phân phối.");
             else
             {
                 RequiredText(business.DistributorName, 200, "Tên nhà phân phối", errors);
-                if (business.TaxCode is not null && !string.Equals(business.TaxCode.Trim(), account.Distributor.TaxCode, StringComparison.Ordinal))
+                var registeredTaxCode = account.Distributor?.TaxCode;
+                if (DistributorProfileCompletion.HasRealTaxCode(registeredTaxCode)
+                    && business.TaxCode is not null && !string.Equals(business.TaxCode.Trim(), registeredTaxCode, StringComparison.Ordinal))
                     errors.Add("Mã số thuế không thể thay đổi trong hồ sơ.");
+                if (!DistributorProfileCompletion.HasRealTaxCode(registeredTaxCode))
+                {
+                    if (!DistributorProfileCompletion.HasRealTaxCode(business.TaxCode)) errors.Add("Vui lòng nhập mã số thuế / ĐKKD hợp lệ, tối đa 50 ký tự.");
+                    else if (await repository.TaxCodeExistsAsync(business.TaxCode!.Trim(), account.Distributor?.DistributorId ?? 0, cancellationToken))
+                        errors.Add("Mã số thuế đã được sử dụng.");
+                }
                 OptionalText(business.ContactPerson, 150, "Người liên hệ", errors);
                 OptionalText(business.Address, 500, "Địa chỉ", errors);
                 Phone(business.PhoneNumber, "Số điện thoại liên hệ", errors);
@@ -42,13 +49,18 @@ public sealed class UserProfileService(IUserProfileRepository repository) : IUse
         account.UpdatedAt = DateTime.UtcNow;
         if (business is not null)
         {
-            var distributor = account.Distributor!;
+            var distributor = account.Distributor ??= new Distributor {
+                AccountId = account.AccountId, DistributorCode = $"DST-{account.AccountId:D6}", CreatedAt = DateTime.UtcNow,
+                TaxCode = business.TaxCode!.Trim(), ProfileStatus = "PENDING_REVIEW"
+            };
+            if (!DistributorProfileCompletion.HasRealTaxCode(distributor.TaxCode)) distributor.TaxCode = business.TaxCode!.Trim();
             distributor.DistributorName = business.DistributorName.Trim();
             distributor.ContactPerson = Normalize(business.ContactPerson);
             distributor.PhoneNumber = ContactValidation.NormalizePhone(business.PhoneNumber);
             distributor.Email = Normalize(business.Email);
             distributor.Address = Normalize(business.Address);
             distributor.UpdatedAt = account.UpdatedAt;
+            if (distributor.ProfileStatus == "PENDING_REVIEW") distributor.ProfileStatus = "ACTIVE";
         }
         await repository.SaveChangesAsync(cancellationToken);
         return Map(account);
@@ -85,5 +97,5 @@ public sealed class UserProfileService(IUserProfileRepository repository) : IUse
         account.Role.RoleCode == "DISTRIBUTOR" && account.Distributor is { } distributor
             ? new(distributor.DistributorId, distributor.DistributorCode, distributor.DistributorName,
                 distributor.TaxCode, distributor.ContactPerson, distributor.PhoneNumber, distributor.Email, distributor.Address)
-            : null);
+            : null, account.Role.RoleCode != "DISTRIBUTOR" || DistributorProfileCompletion.IsComplete(account));
 }

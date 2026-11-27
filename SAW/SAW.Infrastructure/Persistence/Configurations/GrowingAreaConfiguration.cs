@@ -13,6 +13,7 @@ public class GrowingAreaConfiguration : IEntityTypeConfiguration<GrowingArea>
 
         // Khóa chính
         builder.HasKey(e => e.GrowingAreaId);
+        builder.HasOne(e => e.OwnerSupplier).WithMany().HasForeignKey(e => e.OwnerSupplierId).OnDelete(DeleteBehavior.Restrict);
 
         // Thuộc tính
         builder.Property(e => e.AreaName)
@@ -20,19 +21,19 @@ public class GrowingAreaConfiguration : IEntityTypeConfiguration<GrowingArea>
             .HasMaxLength(200);
 
         builder.Property(e => e.Region)
-            .IsRequired()
+            .IsRequired(false)
             .HasMaxLength(100);
 
         builder.Property(e => e.Province)
-            .IsRequired()
+            .IsRequired(false)
             .HasMaxLength(100);
 
         builder.Property(e => e.District)
-            .IsRequired()
+            .IsRequired(false)
             .HasMaxLength(100);
 
         builder.Property(e => e.Ward)
-            .IsRequired()
+            .IsRequired(false)
             .HasMaxLength(100);
 
         builder.Property(e => e.Description)

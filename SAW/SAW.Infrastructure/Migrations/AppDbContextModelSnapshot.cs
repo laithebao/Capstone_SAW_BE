@@ -48,7 +48,7 @@ namespace SAW.Infrastructure.Migrations
                         .ValueGeneratedOnAdd()
                         .HasColumnType("datetime2")
                         .HasColumnName("CreatedAt")
-                        .HasDefaultValueSql("SYSDATETIME()");
+                        .HasDefaultValueSql("SYSUTCDATETIME()");
 
                     b.Property<string>("Email")
                         .IsRequired()
@@ -142,7 +142,7 @@ namespace SAW.Infrastructure.Migrations
                         .ValueGeneratedOnAdd()
                         .HasColumnType("datetime2")
                         .HasColumnName("UpdatedAt")
-                        .HasDefaultValueSql("SYSDATETIME()");
+                        .HasDefaultValueSql("SYSUTCDATETIME()");
 
                     b.HasKey("AccountId", "PermissionId");
 
@@ -168,7 +168,7 @@ namespace SAW.Infrastructure.Migrations
                         .ValueGeneratedOnAdd()
                         .HasColumnType("datetime2")
                         .HasColumnName("GeneratedAt")
-                        .HasDefaultValueSql("SYSDATETIME()");
+                        .HasDefaultValueSql("SYSUTCDATETIME()");
 
                     b.Property<string>("InputSnapshotJson")
                         .HasColumnType("nvarchar(max)")
@@ -238,7 +238,7 @@ namespace SAW.Infrastructure.Migrations
                         .ValueGeneratedOnAdd()
                         .HasColumnType("datetime2")
                         .HasColumnName("CreatedAt")
-                        .HasDefaultValueSql("SYSDATETIME()");
+                        .HasDefaultValueSql("SYSUTCDATETIME()");
 
                     b.Property<string>("Description")
                         .HasMaxLength(1500)
@@ -339,7 +339,7 @@ namespace SAW.Infrastructure.Migrations
                         .ValueGeneratedOnAdd()
                         .HasColumnType("datetime2")
                         .HasColumnName("ChangedAt")
-                        .HasDefaultValueSql("SYSDATETIME()");
+                        .HasDefaultValueSql("SYSUTCDATETIME()");
 
                     b.Property<int?>("ChangedByAccountId")
                         .HasColumnType("int")
@@ -369,6 +369,52 @@ namespace SAW.Infrastructure.Migrations
                     b.ToTable("BATCH_STATUS_HISTORY", (string)null);
 
                     b.HasAnnotation("SqlServer:UseSqlOutputClause", false);
+                });
+
+            modelBuilder.Entity("SAW.Domain.Entities.Category", b =>
+                {
+                    b.Property<int>("CategoryId")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("int");
+
+                    SqlServerPropertyBuilderExtensions.UseIdentityColumn(b.Property<int>("CategoryId"));
+
+                    b.Property<string>("Code")
+                        .IsRequired()
+                        .HasMaxLength(30)
+                        .HasColumnType("nvarchar(30)");
+
+                    b.Property<DateTime>("CreatedAt")
+                        .HasColumnType("datetime2");
+
+                    b.Property<bool>("IsActive")
+                        .HasColumnType("bit");
+
+                    b.Property<string>("Name")
+                        .IsRequired()
+                        .HasMaxLength(100)
+                        .HasColumnType("nvarchar(100)");
+
+                    b.Property<int?>("ParentId")
+                        .HasColumnType("int");
+
+                    b.Property<int>("SortOrder")
+                        .HasColumnType("int");
+
+                    b.Property<DateTime?>("UpdatedAt")
+                        .HasColumnType("datetime2");
+
+                    b.HasKey("CategoryId");
+
+                    b.HasIndex("Code")
+                        .IsUnique();
+
+                    b.HasIndex("ParentId");
+
+                    b.ToTable("CATEGORY", null, t =>
+                        {
+                            t.HasCheckConstraint("CK_CATEGORY_Parent", "[ParentId] IS NULL OR [ParentId] <> [CategoryId]");
+                        });
                 });
 
             modelBuilder.Entity("SAW.Domain.Entities.CriterionGradeRule", b =>
@@ -427,6 +473,9 @@ namespace SAW.Infrastructure.Migrations
 
                     SqlServerPropertyBuilderExtensions.UseIdentityColumn(b.Property<int>("CropTypeId"));
 
+                    b.Property<int?>("CategoryId")
+                        .HasColumnType("int");
+
                     b.Property<string>("CategoryName")
                         .IsRequired()
                         .HasMaxLength(100)
@@ -437,12 +486,12 @@ namespace SAW.Infrastructure.Migrations
                         .ValueGeneratedOnAdd()
                         .HasColumnType("datetime2")
                         .HasColumnName("CreatedAt")
-                        .HasDefaultValueSql("SYSDATETIME()");
+                        .HasDefaultValueSql("SYSUTCDATETIME()");
 
                     b.Property<string>("CropCode")
                         .IsRequired()
-                        .HasMaxLength(30)
-                        .HasColumnType("nvarchar(30)")
+                        .HasMaxLength(50)
+                        .HasColumnType("nvarchar(50)")
                         .HasColumnName("CropCode");
 
                     b.Property<string>("CropName")
@@ -505,6 +554,8 @@ namespace SAW.Infrastructure.Migrations
 
                     b.HasKey("CropTypeId");
 
+                    b.HasIndex("CategoryId");
+
                     b.HasIndex("CropCode")
                         .IsUnique()
                         .HasDatabaseName("UQ_CROP_TYPE_Code");
@@ -547,7 +598,7 @@ namespace SAW.Infrastructure.Migrations
                         .ValueGeneratedOnAdd()
                         .HasColumnType("datetime2")
                         .HasColumnName("CreatedAt")
-                        .HasDefaultValueSql("SYSDATETIME()");
+                        .HasDefaultValueSql("SYSUTCDATETIME()");
 
                     b.Property<string>("DistributorCode")
                         .IsRequired()
@@ -619,6 +670,67 @@ namespace SAW.Infrastructure.Migrations
                     b.HasAnnotation("SqlServer:UseSqlOutputClause", false);
                 });
 
+            modelBuilder.Entity("SAW.Domain.Entities.EmailOutbox", b =>
+                {
+                    b.Property<long>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("bigint");
+
+                    SqlServerPropertyBuilderExtensions.UseIdentityColumn(b.Property<long>("Id"));
+
+                    b.Property<int>("AccountId")
+                        .HasColumnType("int");
+
+                    b.Property<int>("Attempts")
+                        .HasColumnType("int");
+
+                    b.Property<string>("Body")
+                        .IsRequired()
+                        .HasColumnType("nvarchar(max)");
+
+                    b.Property<DateTime>("CreatedAt")
+                        .HasColumnType("datetime2");
+
+                    b.Property<string>("EventKey")
+                        .IsRequired()
+                        .HasMaxLength(180)
+                        .HasColumnType("nvarchar(180)");
+
+                    b.Property<string>("LastError")
+                        .HasMaxLength(200)
+                        .HasColumnType("nvarchar(200)");
+
+                    b.Property<Guid?>("LeaseId")
+                        .HasColumnType("uniqueidentifier");
+
+                    b.Property<DateTime>("NextAttemptAt")
+                        .HasColumnType("datetime2");
+
+                    b.Property<string>("Recipient")
+                        .IsRequired()
+                        .HasMaxLength(255)
+                        .HasColumnType("nvarchar(255)");
+
+                    b.Property<DateTime?>("SentAt")
+                        .HasColumnType("datetime2");
+
+                    b.Property<string>("Subject")
+                        .IsRequired()
+                        .HasMaxLength(250)
+                        .HasColumnType("nvarchar(250)");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("AccountId");
+
+                    b.HasIndex("EventKey", "AccountId")
+                        .IsUnique();
+
+                    b.HasIndex("SentAt", "NextAttemptAt");
+
+                    b.ToTable("EMAIL_OUTBOX", (string)null);
+                });
+
             modelBuilder.Entity("SAW.Domain.Entities.EmailVerificationToken", b =>
                 {
                     b.Property<long>("EmailVerificationTokenId")
@@ -636,7 +748,7 @@ namespace SAW.Infrastructure.Migrations
                         .ValueGeneratedOnAdd()
                         .HasColumnType("datetime2")
                         .HasColumnName("CreatedAt")
-                        .HasDefaultValueSql("SYSDATETIME()");
+                        .HasDefaultValueSql("SYSUTCDATETIME()");
 
                     b.Property<DateTime>("ExpiresAt")
                         .HasColumnType("datetime2")
@@ -769,7 +881,7 @@ namespace SAW.Infrastructure.Migrations
                         .ValueGeneratedOnAdd()
                         .HasColumnType("datetime2")
                         .HasColumnName("IssuedAt")
-                        .HasDefaultValueSql("SYSDATETIME()");
+                        .HasDefaultValueSql("CONVERT(date, DATEADD(hour, 7, SYSUTCDATETIME()))");
 
                     b.Property<string>("Note")
                         .HasMaxLength(1000)
@@ -934,7 +1046,7 @@ namespace SAW.Infrastructure.Migrations
                         .ValueGeneratedOnAdd()
                         .HasColumnType("datetime2")
                         .HasColumnName("ReceivedAt")
-                        .HasDefaultValueSql("SYSDATETIME()");
+                        .HasDefaultValueSql("CONVERT(date, DATEADD(hour, 7, SYSUTCDATETIME()))");
 
                     b.Property<decimal>("ReceivedQuantity")
                         .HasPrecision(18, 3)
@@ -991,26 +1103,27 @@ namespace SAW.Infrastructure.Migrations
                         .HasColumnType("nvarchar(1000)");
 
                     b.Property<string>("District")
-                        .IsRequired()
                         .HasMaxLength(100)
                         .HasColumnType("nvarchar(100)");
 
+                    b.Property<int?>("OwnerSupplierId")
+                        .HasColumnType("int");
+
                     b.Property<string>("Province")
-                        .IsRequired()
                         .HasMaxLength(100)
                         .HasColumnType("nvarchar(100)");
 
                     b.Property<string>("Region")
-                        .IsRequired()
                         .HasMaxLength(100)
                         .HasColumnType("nvarchar(100)");
 
                     b.Property<string>("Ward")
-                        .IsRequired()
                         .HasMaxLength(100)
                         .HasColumnType("nvarchar(100)");
 
                     b.HasKey("GrowingAreaId");
+
+                    b.HasIndex("OwnerSupplierId");
 
                     b.ToTable("GROWING_AREA", (string)null);
                 });
@@ -1156,7 +1269,7 @@ namespace SAW.Infrastructure.Migrations
                         .ValueGeneratedOnAdd()
                         .HasColumnType("datetime2")
                         .HasColumnName("CreatedAt")
-                        .HasDefaultValueSql("SYSDATETIME()");
+                        .HasDefaultValueSql("SYSUTCDATETIME()");
 
                     b.Property<int>("CropTypeId")
                         .HasColumnType("int")
@@ -1209,7 +1322,7 @@ namespace SAW.Infrastructure.Migrations
                         .ValueGeneratedOnAdd()
                         .HasColumnType("datetime2")
                         .HasColumnName("CreatedAt")
-                        .HasDefaultValueSql("SYSDATETIME()");
+                        .HasDefaultValueSql("SYSUTCDATETIME()");
 
                     b.Property<DateOnly?>("EffectiveFrom")
                         .HasColumnType("date")
@@ -1268,7 +1381,7 @@ namespace SAW.Infrastructure.Migrations
                         .ValueGeneratedOnAdd()
                         .HasColumnType("datetime2")
                         .HasColumnName("LastUpdatedAt")
-                        .HasDefaultValueSql("SYSDATETIME()");
+                        .HasDefaultValueSql("SYSUTCDATETIME()");
 
                     b.Property<long>("ProductBatchId")
                         .HasColumnType("bigint")
@@ -1351,7 +1464,7 @@ namespace SAW.Infrastructure.Migrations
                         .ValueGeneratedOnAdd()
                         .HasColumnType("datetime2")
                         .HasColumnName("ReservedAt")
-                        .HasDefaultValueSql("SYSDATETIME()");
+                        .HasDefaultValueSql("SYSUTCDATETIME()");
 
                     b.Property<decimal>("ReservedQuantity")
                         .HasPrecision(18, 3)
@@ -1449,7 +1562,7 @@ namespace SAW.Infrastructure.Migrations
                         .ValueGeneratedOnAdd()
                         .HasColumnType("datetime2")
                         .HasColumnName("CreatedAt")
-                        .HasDefaultValueSql("SYSDATETIME()");
+                        .HasDefaultValueSql("SYSUTCDATETIME()");
 
                     b.Property<bool>("IsRead")
                         .ValueGeneratedOnAdd()
@@ -1468,6 +1581,9 @@ namespace SAW.Infrastructure.Migrations
                         .HasMaxLength(50)
                         .HasColumnType("nvarchar(50)")
                         .HasColumnName("NotificationType");
+
+                    b.Property<DateTime?>("PopupHandledAt")
+                        .HasColumnType("datetime2");
 
                     b.Property<string>("Priority")
                         .IsRequired()
@@ -1842,7 +1958,7 @@ namespace SAW.Infrastructure.Migrations
                         .ValueGeneratedOnAdd()
                         .HasColumnType("datetime2")
                         .HasColumnName("ChangedAt")
-                        .HasDefaultValueSql("SYSDATETIME()");
+                        .HasDefaultValueSql("SYSUTCDATETIME()");
 
                     b.Property<int?>("ChangedByAccountId")
                         .HasColumnType("int")
@@ -1889,7 +2005,7 @@ namespace SAW.Infrastructure.Migrations
                         .ValueGeneratedOnAdd()
                         .HasColumnType("datetime2")
                         .HasColumnName("CreatedAt")
-                        .HasDefaultValueSql("SYSDATETIME()");
+                        .HasDefaultValueSql("SYSUTCDATETIME()");
 
                     b.Property<DateTime>("ExpiresAt")
                         .HasColumnType("datetime2")
@@ -1979,7 +2095,7 @@ namespace SAW.Infrastructure.Migrations
                         .ValueGeneratedOnAdd()
                         .HasColumnType("datetime2")
                         .HasColumnName("PickedAt")
-                        .HasDefaultValueSql("SYSDATETIME()");
+                        .HasDefaultValueSql("SYSUTCDATETIME()");
 
                     b.Property<int>("PickedByAccountId")
                         .HasColumnType("int")
@@ -2028,7 +2144,7 @@ namespace SAW.Infrastructure.Migrations
                         .ValueGeneratedOnAdd()
                         .HasColumnType("datetime2")
                         .HasColumnName("CreatedAt")
-                        .HasDefaultValueSql("SYSDATETIME()");
+                        .HasDefaultValueSql("SYSUTCDATETIME()");
 
                     b.Property<int>("CropTypeId")
                         .HasColumnType("int")
@@ -2240,7 +2356,7 @@ namespace SAW.Infrastructure.Migrations
                         .ValueGeneratedOnAdd()
                         .HasColumnType("datetime2")
                         .HasColumnName("CreatedAt")
-                        .HasDefaultValueSql("SYSDATETIME()");
+                        .HasDefaultValueSql("SYSUTCDATETIME()");
 
                     b.Property<string>("DeliveryAddress")
                         .IsRequired()
@@ -2425,7 +2541,7 @@ namespace SAW.Infrastructure.Migrations
                         .ValueGeneratedOnAdd()
                         .HasColumnType("datetime2")
                         .HasColumnName("StartedAt")
-                        .HasDefaultValueSql("SYSDATETIME()");
+                        .HasDefaultValueSql("SYSUTCDATETIME()");
 
                     b.HasKey("QcInspectionId");
 
@@ -2460,7 +2576,7 @@ namespace SAW.Infrastructure.Migrations
                         .ValueGeneratedOnAdd()
                         .HasColumnType("datetime2")
                         .HasColumnName("GeneratedAt")
-                        .HasDefaultValueSql("SYSDATETIME()");
+                        .HasDefaultValueSql("SYSUTCDATETIME()");
 
                     b.Property<bool>("IsActive")
                         .ValueGeneratedOnAdd()
@@ -2548,7 +2664,7 @@ namespace SAW.Infrastructure.Migrations
                         .ValueGeneratedOnAdd()
                         .HasColumnType("datetime2")
                         .HasColumnName("UploadedAt")
-                        .HasDefaultValueSql("SYSDATETIME()");
+                        .HasDefaultValueSql("SYSUTCDATETIME()");
 
                     b.Property<int>("UploadedByAccountId")
                         .HasColumnType("int")
@@ -2580,7 +2696,7 @@ namespace SAW.Infrastructure.Migrations
                         .ValueGeneratedOnAdd()
                         .HasColumnType("datetime2")
                         .HasColumnName("CreatedAt")
-                        .HasDefaultValueSql("SYSDATETIME()");
+                        .HasDefaultValueSql("SYSUTCDATETIME()");
 
                     b.Property<string>("CreatedByIp")
                         .HasMaxLength(64)
@@ -2640,7 +2756,7 @@ namespace SAW.Infrastructure.Migrations
                         .ValueGeneratedOnAdd()
                         .HasColumnType("datetime2")
                         .HasColumnName("CreatedAt")
-                        .HasDefaultValueSql("SYSDATETIME()");
+                        .HasDefaultValueSql("SYSUTCDATETIME()");
 
                     b.Property<string>("Description")
                         .HasMaxLength(500)
@@ -2758,7 +2874,7 @@ namespace SAW.Infrastructure.Migrations
                         .ValueGeneratedOnAdd()
                         .HasColumnType("datetime2")
                         .HasColumnName("ReviewedAt")
-                        .HasDefaultValueSql("SYSDATETIME()");
+                        .HasDefaultValueSql("SYSUTCDATETIME()");
 
                     b.Property<int>("ReviewedByAccountId")
                         .HasColumnType("int")
@@ -2817,7 +2933,7 @@ namespace SAW.Infrastructure.Migrations
                         .ValueGeneratedOnAdd()
                         .HasColumnType("datetime2")
                         .HasColumnName("CreatedAt")
-                        .HasDefaultValueSql("SYSDATETIME()");
+                        .HasDefaultValueSql("SYSUTCDATETIME()");
 
                     b.Property<int>("CreatedByAccountId")
                         .HasColumnType("int")
@@ -3212,7 +3328,7 @@ namespace SAW.Infrastructure.Migrations
                         .ValueGeneratedOnAdd()
                         .HasColumnType("datetime2")
                         .HasColumnName("TransferredAt")
-                        .HasDefaultValueSql("SYSDATETIME()");
+                        .HasDefaultValueSql("SYSUTCDATETIME()");
 
                     b.Property<string>("Unit")
                         .IsRequired()
@@ -3276,12 +3392,16 @@ namespace SAW.Infrastructure.Migrations
                         .ValueGeneratedOnAdd()
                         .HasColumnType("datetime2")
                         .HasColumnName("CreatedAt")
-                        .HasDefaultValueSql("SYSDATETIME()");
+                        .HasDefaultValueSql("SYSUTCDATETIME()");
 
                     b.Property<string>("Email")
                         .HasMaxLength(255)
                         .HasColumnType("nvarchar(255)")
                         .HasColumnName("Email");
+
+                    b.Property<string>("LegalRepresentative")
+                        .HasMaxLength(100)
+                        .HasColumnType("nvarchar(100)");
 
                     b.Property<string>("Note")
                         .HasMaxLength(1000)
@@ -3411,7 +3531,7 @@ namespace SAW.Infrastructure.Migrations
                         .ValueGeneratedOnAdd()
                         .HasColumnType("datetime2")
                         .HasColumnName("CreatedAt")
-                        .HasDefaultValueSql("SYSDATETIME()");
+                        .HasDefaultValueSql("SYSUTCDATETIME()");
 
                     b.Property<bool>("IsActive")
                         .ValueGeneratedOnAdd()
@@ -3492,7 +3612,7 @@ namespace SAW.Infrastructure.Migrations
                     b.Property<DateTime>("JoinedAt")
                         .ValueGeneratedOnAdd()
                         .HasColumnType("DATETIME2(0)")
-                        .HasDefaultValueSql("SYSDATETIME()");
+                        .HasDefaultValueSql("SYSUTCDATETIME()");
 
                     b.Property<string>("SupplierSpecificNote")
                         .HasMaxLength(1000)
@@ -3569,7 +3689,7 @@ namespace SAW.Infrastructure.Migrations
                     b.Property<DateTime>("CreatedAt")
                         .ValueGeneratedOnAdd()
                         .HasColumnType("datetime2")
-                        .HasDefaultValueSql("SYSDATETIME()");
+                        .HasDefaultValueSql("SYSUTCDATETIME()");
 
                     b.Property<int>("CropTypeId")
                         .HasColumnType("int")
@@ -3657,6 +3777,49 @@ namespace SAW.Infrastructure.Migrations
                         });
                 });
 
+            modelBuilder.Entity("SAW.Domain.Entities.SupplyContractRevision", b =>
+                {
+                    b.Property<long>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("bigint");
+
+                    SqlServerPropertyBuilderExtensions.UseIdentityColumn(b.Property<long>("Id"));
+
+                    b.Property<string>("Content")
+                        .IsRequired()
+                        .HasColumnType("nvarchar(max)");
+
+                    b.Property<string>("ContentHash")
+                        .IsRequired()
+                        .HasMaxLength(64)
+                        .HasColumnType("nvarchar(64)");
+
+                    b.Property<int>("Revision")
+                        .HasColumnType("int");
+
+                    b.Property<DateTime>("SentAt")
+                        .HasColumnType("datetime2");
+
+                    b.Property<string>("SnapshotJson")
+                        .IsRequired()
+                        .HasColumnType("nvarchar(max)");
+
+                    b.Property<long>("SupplyContractId")
+                        .HasColumnType("bigint");
+
+                    b.Property<string>("TemplateVersion")
+                        .IsRequired()
+                        .HasMaxLength(30)
+                        .HasColumnType("nvarchar(30)");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("SupplyContractId", "Revision")
+                        .IsUnique();
+
+                    b.ToTable("SUPPLY_CONTRACT_REVISION", (string)null);
+                });
+
             modelBuilder.Entity("SAW.Domain.Entities.WarehouseLocation", b =>
                 {
                     b.Property<int>("WarehouseLocationId")
@@ -3675,7 +3838,7 @@ namespace SAW.Infrastructure.Migrations
                         .ValueGeneratedOnAdd()
                         .HasColumnType("datetime2")
                         .HasColumnName("CreatedAt")
-                        .HasDefaultValueSql("SYSDATETIME()");
+                        .HasDefaultValueSql("SYSUTCDATETIME()");
 
                     b.Property<string>("LocationCode")
                         .IsRequired()
@@ -3739,6 +3902,8 @@ namespace SAW.Infrastructure.Migrations
                         .HasDatabaseName("UQ_WAREHOUSE_LOCATION_Code");
 
                     b.ToTable("WAREHOUSE_LOCATION", (string)null);
+
+                    b.HasAnnotation("SqlServer:UseSqlOutputClause", false);
                 });
 
             modelBuilder.Entity("SAW.Domain.Entities.WarehouseSetting", b =>
@@ -3761,7 +3926,7 @@ namespace SAW.Infrastructure.Migrations
                         .ValueGeneratedOnAdd()
                         .HasColumnType("datetime2")
                         .HasColumnName("UpdatedAt")
-                        .HasDefaultValueSql("SYSDATETIME()");
+                        .HasDefaultValueSql("SYSUTCDATETIME()");
 
                     b.Property<string>("WarehouseName")
                         .IsRequired()
@@ -3772,6 +3937,8 @@ namespace SAW.Infrastructure.Migrations
                     b.HasKey("WarehouseSettingId");
 
                     b.ToTable("WAREHOUSE_SETTING", (string)null);
+
+                    b.HasAnnotation("SqlServer:UseSqlOutputClause", false);
                 });
 
             modelBuilder.Entity("SAW.Domain.Entities.Account", b =>
@@ -3869,6 +4036,16 @@ namespace SAW.Infrastructure.Migrations
                     b.Navigation("ProductBatch");
                 });
 
+            modelBuilder.Entity("SAW.Domain.Entities.Category", b =>
+                {
+                    b.HasOne("SAW.Domain.Entities.Category", "Parent")
+                        .WithMany()
+                        .HasForeignKey("ParentId")
+                        .OnDelete(DeleteBehavior.Restrict);
+
+                    b.Navigation("Parent");
+                });
+
             modelBuilder.Entity("SAW.Domain.Entities.CriterionGradeRule", b =>
                 {
                     b.HasOne("SAW.Domain.Entities.InspectionCriterion", "InspectionCriterion")
@@ -3881,6 +4058,16 @@ namespace SAW.Infrastructure.Migrations
                     b.Navigation("InspectionCriterion");
                 });
 
+            modelBuilder.Entity("SAW.Domain.Entities.CropType", b =>
+                {
+                    b.HasOne("SAW.Domain.Entities.Category", "Category")
+                        .WithMany()
+                        .HasForeignKey("CategoryId")
+                        .OnDelete(DeleteBehavior.Restrict);
+
+                    b.Navigation("Category");
+                });
+
             modelBuilder.Entity("SAW.Domain.Entities.Distributor", b =>
                 {
                     b.HasOne("SAW.Domain.Entities.Account", "Account")
@@ -3891,6 +4078,15 @@ namespace SAW.Infrastructure.Migrations
                         .HasConstraintName("FK_DISTRIBUTOR_ACCOUNT");
 
                     b.Navigation("Account");
+                });
+
+            modelBuilder.Entity("SAW.Domain.Entities.EmailOutbox", b =>
+                {
+                    b.HasOne("SAW.Domain.Entities.Account", null)
+                        .WithMany()
+                        .HasForeignKey("AccountId")
+                        .OnDelete(DeleteBehavior.Restrict)
+                        .IsRequired();
                 });
 
             modelBuilder.Entity("SAW.Domain.Entities.EmailVerificationToken", b =>
@@ -4053,6 +4249,16 @@ namespace SAW.Infrastructure.Migrations
                     b.Navigation("ProductBatch");
 
                     b.Navigation("WarehouseLocation");
+                });
+
+            modelBuilder.Entity("SAW.Domain.Entities.GrowingArea", b =>
+                {
+                    b.HasOne("SAW.Domain.Entities.Supplier", "OwnerSupplier")
+                        .WithMany()
+                        .HasForeignKey("OwnerSupplierId")
+                        .OnDelete(DeleteBehavior.Restrict);
+
+                    b.Navigation("OwnerSupplier");
                 });
 
             modelBuilder.Entity("SAW.Domain.Entities.InspectionCriterion", b =>
@@ -4817,6 +5023,17 @@ namespace SAW.Infrastructure.Migrations
                     b.Navigation("Supplier");
 
                     b.Navigation("WarehouseManagerAccount");
+                });
+
+            modelBuilder.Entity("SAW.Domain.Entities.SupplyContractRevision", b =>
+                {
+                    b.HasOne("SAW.Domain.Entities.SupplyContract", "Contract")
+                        .WithMany()
+                        .HasForeignKey("SupplyContractId")
+                        .OnDelete(DeleteBehavior.Restrict)
+                        .IsRequired();
+
+                    b.Navigation("Contract");
                 });
 
             modelBuilder.Entity("SAW.Domain.Entities.Account", b =>

@@ -33,14 +33,14 @@ public sealed class AdminDashboardRepository(AppDbContext dbContext) : IAdminDas
             .ToList();
 
         var accountsByDay = await dbContext.Accounts.Where(x => x.CreatedAt >= fromDate)
-            .GroupBy(x => x.CreatedAt.Date).Select(x => new { x.Key, Count = x.Count() })
+            .GroupBy(x => x.CreatedAt.AddHours(7).Date).Select(x => new { x.Key, Count = x.Count() })
             .ToDictionaryAsync(x => x.Key, x => x.Count, cancellationToken);
         var batchesByDay = await dbContext.ProductBatches.Where(x => x.CreatedAt >= fromDate)
-            .GroupBy(x => x.CreatedAt.Date).Select(x => new { x.Key, Count = x.Count() })
+            .GroupBy(x => x.CreatedAt.AddHours(7).Date).Select(x => new { x.Key, Count = x.Count() })
             .ToDictionaryAsync(x => x.Key, x => x.Count, cancellationToken);
         var weekly = Enumerable.Range(0, 7).Select(offset =>
         {
-            var date = fromDate.AddDays(offset);
+            var date = SAW.Domain.Common.VietnamTime.ToLocal(fromDate).Date.AddDays(offset);
             return new DailyDashboardActivity(date, accountsByDay.GetValueOrDefault(date), batchesByDay.GetValueOrDefault(date));
         }).ToList();
 

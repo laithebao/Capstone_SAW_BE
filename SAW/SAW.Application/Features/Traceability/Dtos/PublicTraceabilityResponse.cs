@@ -11,7 +11,7 @@ public sealed record PublicTraceabilityResponse(
     PublicTraceabilityQuality Quality,
     IReadOnlyList<PublicTraceabilityMilestone> Milestones);
 
-public sealed record PublicTraceabilityOrigin(string AreaName, string Region, string Province);
+public sealed record PublicTraceabilityOrigin(string AreaName, string? Region, string? Province);
 public sealed record PublicTraceabilityQuality(string Grade, string Result, DateTimeOffset StartedAt,
     DateTimeOffset CompletedAt, PublicTraceabilityStandard? Standard, PublicTraceabilitySampling? Sampling,
     IReadOnlyList<PublicTraceabilityCriterion> Criteria, string GradeExplanation, IReadOnlyList<string> DeterminingCriteria);

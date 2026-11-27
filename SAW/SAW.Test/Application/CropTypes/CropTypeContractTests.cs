@@ -18,7 +18,7 @@ public sealed class CropTypeContractTests
     }
 
     [Theory]
-    [InlineData("Code", 30)]
+    [InlineData("Code", 50)]
     [InlineData("Name", 150)]
     [InlineData("CategoryName", 100)]
     [InlineData("DefaultUnit", 20)]
@@ -59,7 +59,6 @@ public sealed class CropTypeContractTests
     public void OptionalStorageSettingsRemainOptionalAndDescriptionHasItsOwnLimit()
     {
         Assert.Empty(Errors(Valid with { MinTemperature = null, MaxTemperature = null, MinHumidity = null, MaxHumidity = null, ShelfLifeDays = null, SafetyStockLevelKg = null }));
-        Assert.Empty(Errors(Valid with { ScientificName = new string('a', 1000) }));
-        Assert.Contains(Errors(Valid with { ScientificName = new string('a', 1001) }), error => error.MemberNames.Contains("ScientificName"));
+        Assert.Null(typeof(SaveCropTypeRequest).GetProperty("ScientificName"));
     }
 }

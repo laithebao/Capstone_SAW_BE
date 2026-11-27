@@ -47,7 +47,7 @@ public sealed class SupplyContractConfiguration : IEntityTypeConfiguration<Suppl
         builder.Property(x => x.AdminRejectionReason).HasMaxLength(1000);
         builder.Property(x => x.CancellationRequestReason).HasMaxLength(1000);
         builder.Property(x => x.CancellationReason).HasMaxLength(1000);
-        builder.Property(x => x.CreatedAt).HasDefaultValueSql("SYSDATETIME()");
+        builder.Property(x => x.CreatedAt).HasDefaultValueSql("SYSUTCDATETIME()");
 
         builder.HasIndex(x => x.ContractCode).IsUnique().HasDatabaseName("UQ_SUPPLY_CONTRACT_Code");
         builder.HasIndex(x => new { x.SupplierId, x.ContractStatus }).HasDatabaseName("IX_SUPPLY_CONTRACT_Supplier_Status");

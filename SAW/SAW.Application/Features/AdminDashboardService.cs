@@ -25,5 +25,5 @@ public interface IAdminDashboardService
 public sealed class AdminDashboardService(IAdminDashboardRepository repository) : IAdminDashboardService
 {
     public Task<AdminDashboardResponse> GetAsync(CancellationToken cancellationToken) =>
-        repository.GetAsync(DateTime.UtcNow.Date.AddDays(-6), cancellationToken);
+        repository.GetAsync(SAW.Domain.Common.VietnamTime.StartOfDayUtc(SAW.Domain.Common.VietnamTime.Today.AddDays(-6)), cancellationToken);
 }

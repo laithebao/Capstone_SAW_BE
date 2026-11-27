@@ -143,6 +143,11 @@ public sealed class ReceivingSqlFixture : IAsyncLifetime
             VerifiedQuantity = 10, VerifiedWeightInKg = 100, VerifiedPackagingType = "Received box",
             VerifiedPackageCount = 10, VerifiedPackageUnitWeightKg = 10, ReceivingNote = "Received",
             BatchStatus = "PENDING_QC", CreatedAt = new DateTime(2026, 1, 2), UpdatedAt = new DateTime(2026, 1, 3) };
+        if (useMigrationBaseline && await db.Database.SqlQueryRaw<bool>("SELECT CONVERT(bit,CASE WHEN COL_LENGTH('dbo.NOTIFICATION','PopupHandledAt') IS NULL THEN 1 ELSE 0 END) AS Value").SingleAsync())
+        {
+            await using var historical = await HistoricalSeedContext.ForAppliedSchemaAsync(db);
+            historical.Add(batch); await historical.SaveChangesAsync(); return batch;
+        }
         db.ProductBatches.Add(batch);
         await db.SaveChangesAsync();
         return batch;

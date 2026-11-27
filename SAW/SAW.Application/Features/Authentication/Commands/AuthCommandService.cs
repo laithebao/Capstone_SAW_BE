@@ -107,7 +107,7 @@ public sealed class AuthCommandService(
                 ContactPerson = identity.FullName,
                 Email = identity.Email,
                 // Account PENDING gates access until email verification, as for normal registration.
-                ProfileStatus = "ACTIVE",
+                ProfileStatus = "PENDING_REVIEW",
                 CreatedAt = now
             } : null;
             await repository.CreateRegistrationAsync(account, supplier, distributor, cancellationToken);
@@ -126,13 +126,8 @@ public sealed class AuthCommandService(
         if (account.AccountStatus == "PENDING")
             throw new ForbiddenException("Tài khoản chưa xác nhận email. Vui lòng mở email xác nhận (kiểm tra cả thư rác), xác nhận rồi đăng nhập lại.");
 
-        // Older Google signups left a generated distributor profile pending review
-        // even though this registration flow has no distributor profile approval step.
-        if (account.AccountStatus == "ACTIVE" && account.Username.StartsWith("google_", StringComparison.Ordinal)
-            && account.Distributor is { ProfileStatus: "PENDING_REVIEW" } profile
-            && profile.TaxCode.StartsWith("GOOGLE-", StringComparison.Ordinal))
-            profile.ProfileStatus = "ACTIVE";
-
+        // Only reached after server-side Google signature/audience/email verification and account checks.
+        await repository.RecordGoogleEmailVerificationAsync(account.AccountId, identity.Email, cancellationToken);
         var session = await CreateSessionAsync(account, ipAddress, cancellationToken);
         return new GoogleLoginResponse(false, session);
     }
@@ -211,7 +206,7 @@ public sealed class AuthCommandService(
             {
                 DistributorName = request.OrganizationName.Trim(), TaxCode = taxCode,
                 ContactPerson = account.FullName, PhoneNumber = account.PhoneNumber, Email = email,
-                Address = request.Address?.Trim(), CreatedAt = now
+                Address = request.Address?.Trim(), CreatedAt = now, ProfileStatus = "PENDING_REVIEW"
             };
         }
 

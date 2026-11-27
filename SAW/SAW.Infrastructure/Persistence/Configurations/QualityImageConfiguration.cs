@@ -16,7 +16,7 @@ public class QualityImageConfiguration : IEntityTypeConfiguration<QualityImage>
         builder.Property(x => x.FileUrl).HasColumnName("FileUrl").HasMaxLength(1000).IsRequired();
         builder.Property(x => x.MimeType).HasColumnName("MimeType").HasMaxLength(100);
         builder.Property(x => x.UploadedByAccountId).HasColumnName("UploadedByAccountID").IsRequired();
-        builder.Property(x => x.UploadedAt).HasColumnName("UploadedAt").HasDefaultValueSql("SYSDATETIME()");
+        builder.Property(x => x.UploadedAt).HasColumnName("UploadedAt").HasDefaultValueSql("SYSUTCDATETIME()");
 
         builder.HasOne(x => x.QcInspection)
                .WithMany(q => q.QualityImages)

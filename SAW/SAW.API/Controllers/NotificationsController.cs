@@ -13,6 +13,46 @@ namespace SAW.API.Controllers;
 [Authorize]
 public sealed class NotificationsController(AppDbContext db) : ControllerBase
 {
+    private const int MaxBaselineIds = 50_000;
+    // A tab snapshots IDs, never acknowledges another tab's pending popups. READPAST
+    // skips uncommitted inserts: a lower identity committed later is still new.
+    [HttpPost("popup/initialize")]
+    public async Task<IActionResult> InitializePopup(CancellationToken ct)
+    {
+        var actor = ActorId();
+        var ids = await db.Notifications.FromSqlRaw("SELECT * FROM NOTIFICATION WITH (READPAST,READCOMMITTEDLOCK)")
+            .AsNoTracking().Where(x => x.AccountId == actor && x.PopupHandledAt == null
+                && x.NotificationType != "GOODS_RECEIPT_CREATED" && x.NotificationType != "GOODS_ISSUE_CREATED")
+            .OrderBy(x => x.NotificationId).Select(x => x.NotificationId).Take(MaxBaselineIds + 1).ToArrayAsync(ct);
+        if (ids.Length > MaxBaselineIds) return Conflict(new { message = "Không thể khởi tạo popup. Bạn vẫn có thể xem đầy đủ thông báo trong chuông." });
+        return Ok(ApiResponse<object>.Success(new { baselineIds = ids }));
+    }
+
+    [HttpPost("popup/poll"), RequestSizeLimit(1024 * 1024)]
+    public async Task<IActionResult> PollPopup(PopupPollRequest request, CancellationToken ct)
+    {
+        if (request.BaselineIds is null || request.BaselineIds.Length > MaxBaselineIds || request.BaselineIds.Any(x => x <= 0)) return BadRequest();
+        return Ok(ApiResponse<object>.Success(await VisibleNotifications(ActorId()).AsNoTracking()
+            .Where(x => x.PopupHandledAt == null && !request.BaselineIds.Contains(x.NotificationId))
+            .OrderBy(x => x.NotificationId).Take(20)
+            .Select(x => new NotificationItem(x.NotificationId, x.NotificationType, x.Title, x.Message,
+                x.RelatedEntityType, x.RelatedEntityId, x.IsRead, x.CreatedAt)).ToListAsync(ct)));
+    }
+
+    [HttpGet("popup")]
+    public async Task<IActionResult> Popup(CancellationToken ct) => Ok(ApiResponse<object>.Success(
+        await VisibleNotifications(ActorId()).AsNoTracking().Where(x => x.PopupHandledAt == null)
+            .OrderBy(x => x.NotificationId).Take(20).Select(x => new NotificationItem(x.NotificationId, x.NotificationType,
+                x.Title, x.Message, x.RelatedEntityType, x.RelatedEntityId, x.IsRead, x.CreatedAt)).ToListAsync(ct)));
+
+    [HttpPost("popup/acknowledge")]
+    public async Task<IActionResult> AcknowledgePopup([FromBody] long[] ids, CancellationToken ct)
+    {
+        if (ids.Length > 20 || ids.Any(x => x <= 0)) return BadRequest();
+        await VisibleNotifications(ActorId()).Where(x => ids.Contains(x.NotificationId) && x.PopupHandledAt == null)
+            .ExecuteUpdateAsync(s => s.SetProperty(x => x.PopupHandledAt, DateTime.UtcNow), ct);
+        return Ok();
+    }
     [HttpGet]
     public async Task<ActionResult<ApiResponse<NotificationList>>> List(CancellationToken ct, [FromQuery] long? beforeId = null)
     {
@@ -96,3 +136,4 @@ public sealed record NotificationItem(
 
 public sealed record NotificationList(IReadOnlyList<NotificationItem> Items, int UnreadCount);
 public sealed record NotificationReadReceipt(long ReadThroughId, int UnreadCount);
+public sealed record PopupPollRequest(long[] BaselineIds);

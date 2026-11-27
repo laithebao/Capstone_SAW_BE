@@ -117,10 +117,24 @@ public sealed class QcInspectionRepository(AppDbContext db) : IQcInspectionRepos
             query = query.Where(q => q.QcAccountId == qcAccountId.Value);
 
         if (fromDate.HasValue)
-            query = query.Where(q => q.StartedAt >= fromDate.Value);
+        {
+            var fromUtc = SAW.Domain.Common.VietnamTime.QueryUtc(fromDate.Value);
+            query = query.Where(q => q.StartedAt >= fromUtc);
+        }
 
         if (toDate.HasValue)
-            query = query.Where(q => q.StartedAt <= toDate.Value);
+        {
+            if (SAW.Domain.Common.VietnamTime.IsCalendarQuery(toDate.Value))
+            {
+                var untilUtc = SAW.Domain.Common.VietnamTime.StartOfDayUtc(DateOnly.FromDateTime(toDate.Value).AddDays(1));
+                query = query.Where(q => q.StartedAt < untilUtc);
+            }
+            else
+            {
+                var toUtc = SAW.Domain.Common.VietnamTime.QueryUtc(toDate.Value);
+                query = query.Where(q => q.StartedAt <= toUtc);
+            }
+        }
 
         var total = await query.CountAsync(ct);
 

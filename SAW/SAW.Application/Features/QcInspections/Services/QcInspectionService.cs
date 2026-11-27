@@ -628,7 +628,8 @@ public sealed class QcInspectionService(IQcInspectionRepository repository) : IQ
         string actorRole,
         CancellationToken ct)
     {
-        // BR-62-01: QC_STAFF only sees own inspections; WAREHOUSE_MANAGER & ADMINISTRATOR see all
+        EnsureInspectionReadRole(actorRole);
+        // QC_STAFF only sees own inspections; ADMINISTRATOR can see all.
         int? filterByAccountId = actorRole.Equals("QC_STAFF", StringComparison.OrdinalIgnoreCase)
             ? actorAccountId
             : query.QcAccountId;
@@ -672,6 +673,7 @@ public sealed class QcInspectionService(IQcInspectionRepository repository) : IQ
         string actorRole,
         CancellationToken ct)
     {
+        EnsureInspectionReadRole(actorRole);
         var inspection = await repository.GetInspectionDetailAsync(inspectionId, ct)
             ?? throw new NotFoundException($"Không tìm thấy phiếu kiểm định ID {inspectionId}.");
 
@@ -918,7 +920,7 @@ public sealed class QcInspectionService(IQcInspectionRepository repository) : IQ
 
     /// <summary>
     /// QC_STAFF chỉ được phép truy cập và chỉnh sửa phiếu kiểm định do chính họ tạo.
-    /// WAREHOUSE_MANAGER và ADMINISTRATOR được truy cập toàn bộ.
+    /// ADMINISTRATOR không bị giới hạn theo người tạo.
     /// </summary>
     private static void EnsureOwnership(QcInspection inspection, int actorAccountId, string actorRole)
     {
@@ -927,6 +929,13 @@ public sealed class QcInspectionService(IQcInspectionRepository repository) : IQ
             throw new ForbiddenException(
                 "Bạn không có quyền truy cập phiếu kiểm định này. " +
                 "QC_STAFF chỉ được xem và chỉnh sửa phiếu kiểm định do chính mình tạo.");
+    }
+
+    private static void EnsureInspectionReadRole(string actorRole)
+    {
+        if (!actorRole.Equals("QC_STAFF", StringComparison.OrdinalIgnoreCase)
+            && !actorRole.Equals("ADMINISTRATOR", StringComparison.OrdinalIgnoreCase))
+            throw new ForbiddenException("Bạn không có quyền xem phiếu kiểm định.");
     }
 
     private static void EnsureInProgress(QcInspection inspection)
@@ -944,7 +953,7 @@ public sealed class QcInspectionService(IQcInspectionRepository repository) : IQ
 
     private async Task<string> GenerateUniqueCodeAsync(string batchCode, CancellationToken ct)
     {
-        var date = DateTime.UtcNow.ToString("yyyyMMdd");
+        var date = SAW.Domain.Common.VietnamTime.ToLocal(DateTime.UtcNow).ToString("yyyyMMdd");
         var rnd  = Random.Shared.Next(1000, 9999);
         var code = $"QC-{batchCode}-{date}-{rnd}";
 

@@ -13,7 +13,7 @@ public class EmailVerificationTokenConfiguration : IEntityTypeConfiguration<Emai
         builder.Property(x => x.EmailVerificationTokenId).HasColumnName("EmailVerificationTokenID").UseIdentityColumn();
         builder.Property(x => x.AccountId).HasColumnName("AccountID").IsRequired();
         builder.Property(x => x.TokenHash).HasColumnName("TokenHash").HasMaxLength(500).IsRequired();
-        builder.Property(x => x.CreatedAt).HasColumnName("CreatedAt").HasDefaultValueSql("SYSDATETIME()");
+        builder.Property(x => x.CreatedAt).HasColumnName("CreatedAt").HasDefaultValueSql("SYSUTCDATETIME()");
         builder.Property(x => x.ExpiresAt).HasColumnName("ExpiresAt").IsRequired();
         builder.Property(x => x.UsedAt).HasColumnName("UsedAt");
 

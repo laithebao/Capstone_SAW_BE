@@ -16,12 +16,13 @@ public class SupplierConfiguration : IEntityTypeConfiguration<Supplier>
         builder.Property(x => x.SupplierName).HasColumnName("SupplierName").HasMaxLength(200).IsRequired();
         builder.Property(x => x.TaxCode).HasColumnName("TaxCode").HasMaxLength(50).IsRequired();
         builder.Property(x => x.ContactPerson).HasColumnName("ContactPerson").HasMaxLength(150).IsRequired();
+        builder.Property(x => x.LegalRepresentative).HasMaxLength(100);
         builder.Property(x => x.PhoneNumber).HasColumnName("PhoneNumber").HasMaxLength(30);
         builder.Property(x => x.Email).HasColumnName("Email").HasMaxLength(255);
         builder.Property(x => x.Address).HasColumnName("Address").HasMaxLength(500).IsRequired();
         builder.Property(x => x.Note).HasColumnName("Note").HasMaxLength(1000);
         builder.Property(x => x.ProfileStatus).HasColumnName("ProfileStatus").HasMaxLength(20).HasDefaultValue("ACTIVE");
-        builder.Property(x => x.CreatedAt).HasColumnName("CreatedAt").HasDefaultValueSql("SYSDATETIME()");
+        builder.Property(x => x.CreatedAt).HasColumnName("CreatedAt").HasDefaultValueSql("SYSUTCDATETIME()");
         builder.Property(x => x.UpdatedAt).HasColumnName("UpdatedAt");
 
         builder.HasIndex(x => x.AccountId).IsUnique().HasDatabaseName("UQ_SUPPLIER_Account");

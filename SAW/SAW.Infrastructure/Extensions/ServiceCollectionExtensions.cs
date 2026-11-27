@@ -36,6 +36,7 @@ public static class ServiceCollectionExtensions
         IConfiguration configuration)
     {
         services.AddHttpContextAccessor();
+        services.AddHostedService<EmailOutboxWorker>();
         services.AddDbContext<AppDbContext>(options =>
             options.UseSqlServer(
                 configuration.GetConnectionString("DefaultConnection"),

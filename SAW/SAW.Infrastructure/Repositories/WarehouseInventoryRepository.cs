@@ -260,7 +260,7 @@ public sealed class WarehouseInventoryRepository(AppDbContext db, IOrderReservat
     {
         var cropIds = order.OrderDetails.Where(d => d.RequestedProductBatchId == null).Select(d => d.CropTypeId).ToList();
         var batchIds = order.OrderDetails.Where(d => d.RequestedProductBatchId != null).Select(d => d.RequestedProductBatchId!.Value).ToList();
-        var today = DateOnly.FromDateTime(DateTime.UtcNow);
+        var today = SAW.Domain.Common.VietnamTime.Today;
         var stock = await db.Inventories.AsNoTracking().Where(i => !BatchHandlingEligibility.PendingHandlingBatches(db).Contains(i.ProductBatchId) && (batchIds.Contains(i.ProductBatchId) || cropIds.Contains(i.ProductBatch.CropTypeId)) && i.ProductBatch.BatchStatus == "IN_STOCK" && (i.ProductBatch.ExpiryDate == null || i.ProductBatch.ExpiryDate >= today)).GroupBy(i => new { i.ProductBatchId, i.ProductBatch.CropTypeId }).Select(g => new { g.Key.ProductBatchId, g.Key.CropTypeId, Available = g.Sum(i => i.AvailableQuantity) }).ToListAsync(ct);
         var lines = order.OrderDetails.Select(d => { var available = stock.Where(s => d.RequestedProductBatchId.HasValue ? s.ProductBatchId == d.RequestedProductBatchId : s.CropTypeId == d.CropTypeId).Sum(s => s.Available); return new WarehouseDistributorOrderLine(d.OrderDetailId, d.CropType.CropName, d.RequestedProductBatch?.BatchCode, d.RequestedWeightKg, available, d.UnitPrice, d.ApprovedWeightKg, available >= d.RequestedWeightKg); }).ToList();
         var adjustments = await db.StockAdjustmentResolutions.AsNoTracking().Where(r => r.PurchaseOrderId == order.PurchaseOrderId).OrderByDescending(r => r.StockAdjustmentId).Select(r => new WarehouseOrderAdjustment(r.StockAdjustmentId, r.StockAdjustment.AdjustmentCode, r.State)).ToListAsync(ct);

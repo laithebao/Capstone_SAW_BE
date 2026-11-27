@@ -10,9 +10,13 @@ public sealed class CropTypeServiceTests
     private readonly Mock<ICropTypeRepository> repository = new();
     private readonly CropType crop = new() { CropTypeId = 4, CropCode = "OLD", CropName = "Old", CategoryName = "Fruit", DefaultUnit = "Kg", IsActive = true };
     private CropTypeService Service => new(repository.Object);
-    private static SaveCropTypeRequest Request => new(" cam ", " Cam ", " Fruit ", " Citrus ", 2, 8, 60, 90, 30, 100, " Kg ");
+    private static SaveCropTypeRequest Request => new(" cam ", " Cam ", " Fruit ", 2, 2, 8, 60, 90, 30, 100, " Kg ");
 
-    public CropTypeServiceTests() => repository.Setup(x => x.GetByIdAsync(4, It.IsAny<CancellationToken>())).ReturnsAsync(crop);
+    public CropTypeServiceTests()
+    {
+        repository.Setup(x => x.GetByIdAsync(4, It.IsAny<CancellationToken>())).ReturnsAsync(crop);
+        repository.Setup(x => x.GetCategoryAsync(2, It.IsAny<CancellationToken>())).ReturnsAsync(new Category { CategoryId = 2, ParentId = 1, Name = "Citrus", IsActive = true, Parent = new Category { CategoryId = 1, Name = "Fruit", IsActive = true } });
+    }
 
     [Fact]
     public async Task Search_NormalizesFiltersAndPagination_AndMapsResults()
@@ -32,7 +36,7 @@ public sealed class CropTypeServiceTests
         Assert.Equal("CAM", result.Code);
         Assert.Equal("Cam", result.Name);
         Assert.Equal("Fruit", result.CategoryName);
-        Assert.Equal("Citrus", result.ScientificName);
+        Assert.Equal(2, result.CategoryId);
         Assert.Equal(2, result.MinTemperature);
         Assert.Equal(90, result.MaxHumidity);
         Assert.Equal(30, result.ShelfLifeDays);
@@ -43,11 +47,33 @@ public sealed class CropTypeServiceTests
     }
 
     [Fact]
-    public async Task Update_ExcludesCurrentIdFromUniquenessChecks_AndClearsOptionalScientificName()
+    public async Task BasicEditPreservesExistingStorageAndScientificDescription()
     {
-        var result = await Service.UpdateAsync(4, Request with { ScientificName = " " }, default);
+        crop.ExpectedMinTempC = 3; crop.ExpectedMaxTempC = 8;
+        crop.ExpectedMinHumidityPct = 70; crop.ExpectedMaxHumidityPct = 90;
+        crop.ShelfLifeDays = 60; crop.SafetyStockLevelKg = 150; crop.DefaultUnit = "thùng"; crop.Description = "Legacy";
+        var result = await Service.UpdateBasicAsync(4, new("NEW", " ngô ST25 ", 2), default);
+        Assert.Equal("Ngô ST25", result.Name); Assert.Equal("thùng", result.DefaultUnit);
+        Assert.Equal(3, result.MinTemperature); Assert.Equal(8, result.MaxTemperature);
+        Assert.Equal(70, result.MinHumidity); Assert.Equal(90, result.MaxHumidity);
+        Assert.Equal(60, result.ShelfLifeDays); Assert.Equal(150, result.SafetyStockLevelKg); Assert.Equal("Legacy", crop.Description);
+    }
+
+    [Fact]
+    public async Task BasicCreateUsesNeutralStorageDefaultsAndCapitalizesOnlyFirstLetter()
+    {
+        var result = await Service.CreateBasicAsync(new("MA_NGO", " ngô ST25 ", 2), default);
+        Assert.Equal("Ngô ST25", result.Name); Assert.Equal("kg", result.DefaultUnit);
+        Assert.Null(result.MinTemperature); Assert.Null(result.MaxTemperature); Assert.Null(result.ShelfLifeDays);
+    }
+
+    [Fact]
+    public async Task Update_ExcludesCurrentIdFromUniquenessChecks_AndPreservesDescription()
+    {
+        crop.Description = "Legacy scientific description";
+        var result = await Service.UpdateAsync(4, Request, default);
         Assert.Equal(4, result.Id);
-        Assert.Null(result.ScientificName);
+        Assert.Equal("Legacy scientific description", crop.Description);
         Assert.NotNull(result.UpdatedAt);
         repository.Verify(x => x.CodeExistsAsync("cam", 4, It.IsAny<CancellationToken>()), Times.Once);
         repository.Verify(x => x.NameExistsAsync("Cam", 4, It.IsAny<CancellationToken>()), Times.Once);

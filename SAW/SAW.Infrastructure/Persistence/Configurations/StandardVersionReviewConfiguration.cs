@@ -16,7 +16,7 @@ public class StandardVersionReviewConfiguration : IEntityTypeConfiguration<Stand
         builder.Property(x => x.ReviewSequence).HasColumnName("ReviewSequence").IsRequired();
         builder.Property(x => x.ReviewDecision).HasColumnName("ReviewDecision").HasMaxLength(20).IsRequired();
         builder.Property(x => x.Comments).HasColumnName("Comments").HasMaxLength(1000);
-        builder.Property(x => x.ReviewedAt).HasColumnName("ReviewedAt").HasDefaultValueSql("SYSDATETIME()");
+        builder.Property(x => x.ReviewedAt).HasColumnName("ReviewedAt").HasDefaultValueSql("SYSUTCDATETIME()");
 
         builder.HasIndex(x => new { x.InspectionStandardVersionId, x.ReviewSequence })
                .IsUnique().HasDatabaseName("UQ_STANDARD_VERSION_REVIEW_Step");
