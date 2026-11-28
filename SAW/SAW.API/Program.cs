@@ -17,7 +17,8 @@ namespace SAW.API
 
             // Add services to the container.
 
-            builder.Services.AddControllers();
+            builder.Services.AddControllers(options => options.Filters.Add<SAW.API.Filters.DistributorProfileCompletionFilter>())
+                .AddJsonOptions(options => options.JsonSerializerOptions.Converters.Add(new SAW.API.Serialization.UtcDateTimeJsonConverter()));
             var allowedOrigins = builder.Configuration
                 .GetSection("Cors:AllowedOrigins")
                 .Get<string[]>() ?? ["http://localhost:5173"];

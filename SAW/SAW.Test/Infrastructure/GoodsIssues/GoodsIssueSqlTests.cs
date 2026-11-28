@@ -104,6 +104,8 @@ public sealed class GoodsIssueSqlTests(GoodsIssueSqlFixture fixture) : IClassFix
             FullName = "Manager", PasswordHash = "test", AccountStatus = "ACTIVE" };
         db.Accounts.Add(manager); await db.SaveChangesAsync();
         var buyerId = await db.PurchaseOrders.Where(o => o.PurchaseOrderId == s.OrderId).Select(o => o.Distributor.AccountId).SingleAsync();
+        db.EmailVerificationTokens.Add(new EmailVerificationToken { AccountId = buyerId, TokenHash = Guid.NewGuid().ToString("N"), CreatedAt = DateTime.UtcNow, ExpiresAt = DateTime.UtcNow.AddHours(1), UsedAt = DateTime.UtcNow });
+        await db.SaveChangesAsync();
         var before = await StockStateAsync(s);
         var request = await RequestAsync(s);
         var beforeDraftCount = await db.Notifications.CountAsync();
@@ -112,6 +114,7 @@ public sealed class GoodsIssueSqlTests(GoodsIssueSqlFixture fixture) : IClassFix
             && n.RelatedEntityId == draft.Summary.Id.ToString() && n.NotificationType == type).ToListAsync();
         var created = await Notes("GOODS_ISSUE_CREATED");
         Assert.Empty(created);
+        Assert.False(await db.EmailOutbox.AnyAsync(x => x.EventKey == $"ISSUE:{draft.Summary.Id}"));
         Assert.Equal(beforeDraftCount, await db.Notifications.CountAsync());
         Assert.Equal(before, await StockStateAsync(s));
         var createdCount = await db.Notifications.CountAsync();
@@ -128,6 +131,9 @@ public sealed class GoodsIssueSqlTests(GoodsIssueSqlFixture fixture) : IClassFix
         var committedCount = await db.Notifications.CountAsync();
         await Service().ConfirmAsync(draft.Summary.Id, confirm, F.ActorId, default);
         Assert.Equal(committedCount, await db.Notifications.CountAsync());
+        var email = Assert.Single(await db.EmailOutbox.Where(x => x.EventKey == $"ISSUE:{draft.Summary.Id}").ToListAsync());
+        Assert.Equal(buyerId, email.AccountId); Assert.Null(email.SentAt);
+        Assert.Contains("Chỉ xác nhận phần hàng", email.Body);
     }
 
     [ReceivingSqlFact]

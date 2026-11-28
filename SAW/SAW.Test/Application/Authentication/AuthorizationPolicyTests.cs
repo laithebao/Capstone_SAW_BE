@@ -22,12 +22,16 @@ public sealed class AuthorizationPolicyTests
         [typeof(AuditLogsController)] = "ADMINISTRATOR",
         [typeof(UserAccessController)] = "ADMINISTRATOR",
         [typeof(CropTypesController)] = "ADMINISTRATOR",
+        [typeof(CropTypeWorkbookController)] = "ADMINISTRATOR",
+        [typeof(CategoriesController)] = "ADMINISTRATOR",
+        [typeof(ContractPreviewController)] = "WAREHOUSE_MANAGER",
+        [typeof(InspectionWorkbookController)] = "ADMINISTRATOR",
         [typeof(InspectionStandardsController)] = "ADMINISTRATOR,QC_STAFF,WAREHOUSE_MANAGER",
         [typeof(QcInspectionsController)] = "QC_STAFF,ADMINISTRATOR",
         [typeof(EnvironmentLogsController)] = "QC_STAFF",
         [typeof(ProductBatchesController)] = "OPERATION_STAFF,QC_STAFF,WAREHOUSE_MANAGER,ADMINISTRATOR",
         [typeof(ProductBatchQrCodesController)] = "OPERATION_STAFF,QC_STAFF,WAREHOUSE_MANAGER,ADMINISTRATOR",
-        [typeof(GoodsReceiptsController)] = "OPERATION_STAFF,WAREHOUSE_MANAGER,ADMINISTRATOR",
+        [typeof(GoodsReceiptsController)] = "OPERATION_STAFF,ADMINISTRATOR",
         [typeof(GoodsIssuesController)] = "OPERATION_STAFF",
         [typeof(PickingOrdersController)] = "OPERATION_STAFF",
         [typeof(StockAdjustmentsController)] = "OPERATION_STAFF",
@@ -56,12 +60,13 @@ public sealed class AuthorizationPolicyTests
     {
         if (controller == typeof(AuthController) && action is "Logout" or "ChangePassword") return AllAuthenticated;
         if (controller == typeof(SupplierFilesController) && action == "Avatar") return Public;
-        if (controller == typeof(CropTypesController) && action is "Search" or "Get") return "ADMINISTRATOR,SUPPLIER";
+        if (controller == typeof(CropTypesController) && action is "Search" or "Get" or "Lookup") return "ADMINISTRATOR,SUPPLIER";
+        if (controller == typeof(CategoriesController) && action == "Lookup") return "ADMINISTRATOR,SUPPLIER";
         if (controller == typeof(InspectionStandardsController) && action is "List" or "Create" or "CreateVersion") return "ADMINISTRATOR";
         if (controller == typeof(QcInspectionsController))
         {
             if (action == "RejectBatch") return "ADMINISTRATOR";
-            if (action is "List" or "GetById") return "QC_STAFF,WAREHOUSE_MANAGER,ADMINISTRATOR";
+            if (action is "List" or "GetById") return "QC_STAFF,ADMINISTRATOR";
         }
         if (controller == typeof(ProductBatchesController) && action is "Verify" or "Reject" or "UpdateReceivingDetails") return "OPERATION_STAFF";
         if (controller == typeof(GoodsReceiptsController) && action is "Create" or "UpdateDraft" or "Confirm") return "OPERATION_STAFF";

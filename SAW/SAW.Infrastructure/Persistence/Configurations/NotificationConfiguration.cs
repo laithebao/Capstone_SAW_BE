@@ -19,7 +19,7 @@ public class NotificationConfiguration : IEntityTypeConfiguration<Notification>
         builder.Property(x => x.RelatedEntityType).HasColumnName("RelatedEntityType").HasMaxLength(80);
         builder.Property(x => x.RelatedEntityId).HasColumnName("RelatedEntityID").HasMaxLength(100);
         builder.Property(x => x.IsRead).HasColumnName("IsRead").HasDefaultValue(false);
-        builder.Property(x => x.CreatedAt).HasColumnName("CreatedAt").HasDefaultValueSql("SYSDATETIME()");
+        builder.Property(x => x.CreatedAt).HasColumnName("CreatedAt").HasDefaultValueSql("SYSUTCDATETIME()");
         builder.Property(x => x.ReadAt).HasColumnName("ReadAt");
 
         builder.HasOne(x => x.Account)

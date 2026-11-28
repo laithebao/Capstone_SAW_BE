@@ -59,7 +59,7 @@ public sealed class SupplyContractService(ISupplyContractRepository repository) 
         var deliveryPeriod = Clean(request.DeliveryPeriod)?.ToUpperInvariant();
         if (deliveryPeriod is null || !DeliveryPeriods.Contains(deliveryPeriod))
             throw new BadRequestException("Chu kỳ giao phải là theo tuần hoặc theo tháng.");
-        if (request.UnitPriceVndPerKg <= 0)
+        if (request.UnitPriceVndPerKg <= 0 || request.UnitPriceVndPerKg > 9999999999999999.99m || decimal.Round(request.UnitPriceVndPerKg, 2) != request.UnitPriceVndPerKg)
             throw new BadRequestException("Đơn giá thu mua phải lớn hơn 0.");
         var today = DateOnly.FromDateTime(DateTime.UtcNow.AddHours(7));
         if (request.StartDate < today || request.EndDate < request.StartDate)
@@ -91,7 +91,7 @@ public sealed class SupplyContractService(ISupplyContractRepository repository) 
         var deliveryPeriod = Clean(request.DeliveryPeriod)?.ToUpperInvariant();
         if (deliveryPeriod is null || !DeliveryPeriods.Contains(deliveryPeriod))
             throw new BadRequestException("Chu kỳ giao phải là theo tuần hoặc theo tháng.");
-        if (request.UnitPriceVndPerKg <= 0)
+        if (request.UnitPriceVndPerKg <= 0 || request.UnitPriceVndPerKg > 9999999999999999.99m || decimal.Round(request.UnitPriceVndPerKg, 2) != request.UnitPriceVndPerKg)
             throw new BadRequestException("Đơn giá thu mua phải lớn hơn 0.");
         var today = DateOnly.FromDateTime(DateTime.UtcNow.AddHours(7));
         if (request.EndDate < request.StartDate || request.EndDate < today)

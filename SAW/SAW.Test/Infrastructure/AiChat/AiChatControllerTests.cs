@@ -14,12 +14,13 @@ namespace SAW.Test.Infrastructure.AiChat;
 public sealed class AiChatControllerTests
 {
     private readonly Mock<IHttpClientFactory> factory = new(MockBehavior.Strict);
-    private AiChatController Controller(IAiChatService service, string? actor = "7", string claim = "account_id")
+    private AiChatController Controller(IAiChatService service, string? actor = "7", string claim = "account_id",
+        IAiChatHistoryService? history = null)
     {
         var options = new OpenAIOptions();
         var knowledge = new KnowledgeBaseService(new OpenAIEmbeddingService(factory.Object, options, NullLogger<OpenAIEmbeddingService>.Instance), [], new AiChatOptions(), options,
             new QdrantKnowledgeStore(factory.Object, new QdrantOptions()), NullLogger<KnowledgeBaseService>.Instance);
-        return new(service, knowledge) { ControllerContext = new ControllerContext { HttpContext = new DefaultHttpContext {
+        return new(service, knowledge, history ?? Mock.Of<IAiChatHistoryService>(MockBehavior.Strict)) { ControllerContext = new ControllerContext { HttpContext = new DefaultHttpContext {
             User = new ClaimsPrincipal(new ClaimsIdentity(actor is null ? [] : [new Claim(claim, actor)], "Test")) } } };
     }
 
@@ -44,6 +45,32 @@ public sealed class AiChatControllerTests
     {
         var service = new Mock<IAiChatService>(MockBehavior.Strict);
         await Assert.ThrowsAsync<UnauthorizedAccessException>(() => Controller(service.Object, actor).Chat(new AiChatRequest("Question"), default)); service.VerifyNoOtherCalls(); factory.VerifyNoOtherCalls();
+    }
+
+    [Fact]
+    public async Task HistoryAndClearUseAuthenticatedAccountAndForwardCancellation()
+    {
+        using var cancellation = new CancellationTokenSource();
+        var history = new Mock<IAiChatHistoryService>(MockBehavior.Strict);
+        var page = new AiChatHistoryPage([], false);
+        history.Setup(s => s.GetHistoryAsync(7, 25, cancellation.Token)).ReturnsAsync(page);
+        history.Setup(s => s.ClearHistoryAsync(7, cancellation.Token)).Returns(Task.CompletedTask);
+        var controller = Controller(Mock.Of<IAiChatService>(MockBehavior.Strict), history: history.Object);
+        var result = Assert.IsType<OkObjectResult>(await controller.History(25, cancellation.Token));
+        Assert.Equal(page, Assert.IsType<ApiResponse<AiChatHistoryPage>>(result.Value).Data);
+        Assert.IsType<NoContentResult>(await controller.ClearHistory(cancellation.Token));
+        history.VerifyAll();
+    }
+
+    [Theory]
+    [InlineData(null)]
+    [InlineData("0")]
+    [InlineData("invalid")]
+    public async Task HistoryAndClearRejectInvalidActor(string? actor)
+    {
+        var controller = Controller(Mock.Of<IAiChatService>(MockBehavior.Strict), actor);
+        await Assert.ThrowsAsync<UnauthorizedAccessException>(() => controller.History(null, default));
+        await Assert.ThrowsAsync<UnauthorizedAccessException>(() => controller.ClearHistory(default));
     }
 
     [Fact]

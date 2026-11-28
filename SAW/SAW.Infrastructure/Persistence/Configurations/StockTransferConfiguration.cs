@@ -21,7 +21,7 @@ public class StockTransferConfiguration : IEntityTypeConfiguration<StockTransfer
         builder.Property(x => x.DestinationTrackingId).HasColumnName("DestinationTrackingID").HasMaxLength(100).IsRequired();
         builder.Property(x => x.OperationAccountId).HasColumnName("OperationAccountID").IsRequired();
         builder.Property(x => x.TransferStatus).HasColumnName("TransferStatus").HasMaxLength(20).HasDefaultValue("COMPLETED");
-        builder.Property(x => x.TransferredAt).HasColumnName("TransferredAt").HasDefaultValueSql("SYSDATETIME()");
+        builder.Property(x => x.TransferredAt).HasColumnName("TransferredAt").HasDefaultValueSql("SYSUTCDATETIME()");
         builder.Property(x => x.Note).HasColumnName("Note").HasMaxLength(1000);
 
         builder.HasIndex(x => x.TransferCode).IsUnique().HasDatabaseName("UQ_STOCK_TRANSFER_Code");

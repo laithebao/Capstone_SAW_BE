@@ -233,14 +233,15 @@ public sealed class UserProfileServiceTests
     }
 
     [Fact]
-    public async Task MissingAccountOrBusinessProfile_ReturnsNotFoundWithoutSaving()
+    public async Task MissingAccountReturnsNotFound_ButMissingDistributorCanCompleteProfile()
     {
         await Assert.ThrowsAsync<NotFoundException>(() => Service.GetAsync(999, default));
         await Assert.ThrowsAsync<NotFoundException>(() => Service.UpdateAsync(999, Request, default));
         account.Role.RoleCode = "DISTRIBUTOR";
         account.Distributor = null;
-        await Assert.ThrowsAsync<NotFoundException>(() => Service.UpdateAsync(7, Request with { Distributor = Business }, default));
-        repository.Verify(x => x.SaveChangesAsync(It.IsAny<CancellationToken>()), Times.Never);
+        var result = await Service.UpdateAsync(7, Request with { Distributor = Business }, default);
+        Assert.True(result.IsProfileComplete);
+        repository.Verify(x => x.SaveChangesAsync(It.IsAny<CancellationToken>()), Times.Once);
     }
 
     [Fact]

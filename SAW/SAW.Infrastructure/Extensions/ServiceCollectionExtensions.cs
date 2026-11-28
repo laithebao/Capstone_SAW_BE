@@ -36,6 +36,7 @@ public static class ServiceCollectionExtensions
         IConfiguration configuration)
     {
         services.AddHttpContextAccessor();
+        services.AddHostedService<EmailOutboxWorker>();
         services.AddDbContext<AppDbContext>(options =>
             options.UseSqlServer(
                 configuration.GetConnectionString("DefaultConnection"),
@@ -147,7 +148,10 @@ public static class ServiceCollectionExtensions
         services.AddHostedService<KnowledgeBaseIndexingService>();
 
         services.AddScoped<AiToolExecutor>();
-        services.AddScoped<IAiChatService, AiChatService>();
+        services.AddScoped<AiChatService>();
+        services.AddScoped<PersistentAiChatService>();
+        services.AddScoped<IAiChatService>(sp => sp.GetRequiredService<PersistentAiChatService>());
+        services.AddScoped<IAiChatHistoryService>(sp => sp.GetRequiredService<PersistentAiChatService>());
 
         // AI Spoilage Forecast (OpenAI)
         services.AddHttpClient<OpenAIForecastClient>(client =>

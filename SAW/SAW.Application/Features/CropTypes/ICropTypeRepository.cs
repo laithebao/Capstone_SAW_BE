@@ -7,6 +7,9 @@ public interface ICropTypeRepository
     Task<(IReadOnlyList<CropType> Items, int TotalCount)> SearchAsync(
         string? search, string? category, bool? isActive, int page, int pageSize, CancellationToken cancellationToken);
     Task<CropType?> GetByIdAsync(int id, CancellationToken cancellationToken);
+    Task<(IReadOnlyList<CropType> Items, int TotalCount)> LookupAsync(
+        string? search, int? categoryId, int page, int pageSize, CancellationToken cancellationToken);
+    Task<Category?> GetCategoryAsync(int id, CancellationToken cancellationToken);
     Task<bool> CodeExistsAsync(string code, int? excludingId, CancellationToken cancellationToken);
     Task<bool> NameExistsAsync(string name, int? excludingId, CancellationToken cancellationToken);
     Task<bool> IsInUseAsync(int id, CancellationToken cancellationToken);

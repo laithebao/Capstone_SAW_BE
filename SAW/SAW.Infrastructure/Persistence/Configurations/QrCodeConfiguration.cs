@@ -17,7 +17,7 @@ public class QrCodeConfiguration : IEntityTypeConfiguration<QrCode>
         builder.Property(x => x.TraceabilityUrl).HasColumnName("TraceabilityUrl").HasMaxLength(1000).IsRequired();
         builder.Property(x => x.QrImageUrl).HasColumnName("QRImageUrl").HasMaxLength(1000);
         builder.Property(x => x.IsActive).HasColumnName("IsActive").HasDefaultValue(true);
-        builder.Property(x => x.GeneratedAt).HasColumnName("GeneratedAt").HasDefaultValueSql("SYSDATETIME()");
+        builder.Property(x => x.GeneratedAt).HasColumnName("GeneratedAt").HasDefaultValueSql("SYSUTCDATETIME()");
 
         builder.HasIndex(x => x.PublicToken).IsUnique().HasDatabaseName("UQ_QR_CODE_PublicToken");
         builder.HasIndex(x => x.TraceabilityUrl).IsUnique().HasDatabaseName("UQ_QR_CODE_Url");

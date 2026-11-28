@@ -49,7 +49,7 @@ public class ProductBatchConfiguration : IEntityTypeConfiguration<ProductBatch>
         builder.Property(x => x.QualityGrade).HasColumnName("QualityGrade").HasMaxLength(5);
         builder.Property(x => x.RejectionReason).HasColumnName("RejectionReason").HasMaxLength(1000);
         builder.Property(x => x.Note).HasColumnName("Note").HasMaxLength(1000);
-        builder.Property(x => x.CreatedAt).HasColumnName("CreatedAt").HasDefaultValueSql("SYSDATETIME()");
+        builder.Property(x => x.CreatedAt).HasColumnName("CreatedAt").HasDefaultValueSql("SYSUTCDATETIME()");
         builder.Property(x => x.UpdatedAt).HasColumnName("UpdatedAt");
 
         builder.HasIndex(x => x.BatchCode).IsUnique().HasDatabaseName("UQ_PRODUCT_BATCH_Code");

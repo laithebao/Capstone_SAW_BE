@@ -15,7 +15,7 @@ public class RoleConfiguration : IEntityTypeConfiguration<Role>
         builder.Property(x => x.RoleName).HasColumnName("RoleName").HasMaxLength(100).IsRequired();
         builder.Property(x => x.Description).HasColumnName("Description").HasMaxLength(500);
         builder.Property(x => x.IsActive).HasColumnName("IsActive").HasDefaultValue(true);
-        builder.Property(x => x.CreatedAt).HasColumnName("CreatedAt").HasDefaultValueSql("SYSDATETIME()");
+        builder.Property(x => x.CreatedAt).HasColumnName("CreatedAt").HasDefaultValueSql("SYSUTCDATETIME()");
 
         builder.HasIndex(x => x.RoleCode).IsUnique().HasDatabaseName("UQ_ROLE_RoleCode");
     }

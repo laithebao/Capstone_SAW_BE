@@ -16,7 +16,7 @@ public class BatchStatusHistoryConfiguration : IEntityTypeConfiguration<BatchSta
         builder.Property(x => x.NewStatus).HasColumnName("NewStatus").HasMaxLength(40).IsRequired();
         builder.Property(x => x.ChangedByAccountId).HasColumnName("ChangedByAccountID");
         builder.Property(x => x.ChangeReason).HasColumnName("ChangeReason").HasMaxLength(1000);
-        builder.Property(x => x.ChangedAt).HasColumnName("ChangedAt").HasDefaultValueSql("SYSDATETIME()");
+        builder.Property(x => x.ChangedAt).HasColumnName("ChangedAt").HasDefaultValueSql("SYSUTCDATETIME()");
 
         builder.HasOne(x => x.ProductBatch)
                .WithMany(b => b.StatusHistories)

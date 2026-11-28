@@ -57,7 +57,8 @@ public sealed class AuditLogRepositoryTests
     public async Task AuditDateRangeIncludesEntireEndDate_AndFormattedIdFindsExactRecord()
     {
         await using var db = Database(); var date = new DateTime(2026, 11, 1);
-        db.AddRange(Log(101, "UPDATE", date), Log(102, "UPDATE", date.AddHours(23).AddMinutes(59)), Log(103, "UPDATE", date.AddDays(1)));
+        var startUtc = SAW.Domain.Common.VietnamTime.StartOfDayUtc(DateOnly.FromDateTime(date));
+        db.AddRange(Log(101, "UPDATE", startUtc), Log(102, "UPDATE", startUtc.AddHours(23).AddMinutes(59)), Log(103, "UPDATE", startUtc.AddDays(1)));
         await db.SaveChangesAsync(); var repository = new AuditLogRepository(db);
         var result = await repository.SearchAsync(Query() with { From = date, To = date }, true, default);
         Assert.Equal(new long[] { 102, 101 }, result.Items.Select(item => item.AuditLogId));

@@ -24,7 +24,7 @@ public class SupplierGrowingAreaConfiguration : IEntityTypeConfiguration<Supplie
         builder.Property(e => e.JoinedAt)
             .IsRequired()
             .HasColumnType("DATETIME2(0)")
-            .HasDefaultValueSql("SYSDATETIME()");
+            .HasDefaultValueSql("SYSUTCDATETIME()");
 
         // Quan hệ Many-to-Many
         builder.HasOne(sga => sga.Supplier)

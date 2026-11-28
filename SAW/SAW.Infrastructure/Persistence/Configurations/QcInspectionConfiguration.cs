@@ -23,7 +23,7 @@ public class QcInspectionConfiguration : IEntityTypeConfiguration<QcInspection>
         builder.Property(x => x.InspectionStatus).HasColumnName("InspectionStatus").HasMaxLength(20).HasDefaultValue("DRAFT");
         builder.Property(x => x.QcResult).HasColumnName("QCResult").HasMaxLength(20);
         builder.Property(x => x.QualityGrade).HasColumnName("QualityGrade").HasMaxLength(5);
-        builder.Property(x => x.StartedAt).HasColumnName("StartedAt").HasDefaultValueSql("SYSDATETIME()");
+        builder.Property(x => x.StartedAt).HasColumnName("StartedAt").HasDefaultValueSql("SYSUTCDATETIME()");
         builder.Property(x => x.CompletedAt).HasColumnName("CompletedAt");
         builder.Property(x => x.Note).HasColumnName("Note").HasMaxLength(1000);
 

@@ -26,7 +26,11 @@ public class GrowingAreasController : ControllerBase
     [HttpGet]
     public async Task<ActionResult<List<SupplierGrowingAreaDto>>> GetGrowingAreas(CancellationToken cancellationToken)
     {
+        var actor = User.FindFirst("account_id")?.Value ?? User.FindFirst(System.Security.Claims.ClaimTypes.NameIdentifier)?.Value;
+        if (!int.TryParse(actor, out var accountId) || accountId <= 0) return Unauthorized();
+        var isStaff = User.IsInRole("ADMINISTRATOR") || User.IsInRole("OPERATION_STAFF") || User.IsInRole("WAREHOUSE_MANAGER");
         var growingAreas = await _context.Set<GrowingArea>()
+            .Where(ga => ga.OwnerSupplierId == null || ga.OwnerSupplier!.AccountId == accountId || isStaff)
             .Select(ga => new SupplierGrowingAreaDto
             {
                 GrowingAreaId = ga.GrowingAreaId,

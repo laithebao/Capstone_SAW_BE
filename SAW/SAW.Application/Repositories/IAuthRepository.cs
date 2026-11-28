@@ -21,5 +21,6 @@ public interface IAuthRepository
     void AddRefreshToken(RefreshToken token);
     void AddPasswordResetToken(PasswordResetToken token);
     void AddEmailVerificationToken(EmailVerificationToken token);
+    Task RecordGoogleEmailVerificationAsync(int accountId, string email, CancellationToken cancellationToken);
     Task SaveChangesAsync(CancellationToken cancellationToken);
 }

@@ -22,7 +22,7 @@ public class WarehouseLocationConfiguration : IEntityTypeConfiguration<Warehouse
         builder.Property(x => x.MinHumidityPct).HasColumnName("MinHumidityPct").HasPrecision(6, 2);
         builder.Property(x => x.MaxHumidityPct).HasColumnName("MaxHumidityPct").HasPrecision(6, 2);
         builder.Property(x => x.LocationStatus).HasColumnName("LocationStatus").HasMaxLength(30).HasDefaultValue("ACTIVE");
-        builder.Property(x => x.CreatedAt).HasColumnName("CreatedAt").HasDefaultValueSql("SYSDATETIME()");
+        builder.Property(x => x.CreatedAt).HasColumnName("CreatedAt").HasDefaultValueSql("SYSUTCDATETIME()");
 
         builder.HasIndex(x => x.LocationCode).IsUnique().HasDatabaseName("UQ_WAREHOUSE_LOCATION_Code");
     }

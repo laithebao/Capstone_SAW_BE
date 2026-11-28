@@ -23,7 +23,7 @@ public class DistributorConfiguration : IEntityTypeConfiguration<Distributor>
         builder.Property(x => x.Email).HasColumnName("Email").HasMaxLength(255);
         builder.Property(x => x.Address).HasColumnName("Address").HasMaxLength(500);
         builder.Property(x => x.ProfileStatus).HasColumnName("ProfileStatus").HasMaxLength(20).HasDefaultValue("ACTIVE");
-        builder.Property(x => x.CreatedAt).HasColumnName("CreatedAt").HasDefaultValueSql("SYSDATETIME()");
+        builder.Property(x => x.CreatedAt).HasColumnName("CreatedAt").HasDefaultValueSql("SYSUTCDATETIME()");
         builder.Property(x => x.UpdatedAt).HasColumnName("UpdatedAt");
 
         builder.HasIndex(x => x.AccountId).IsUnique().HasDatabaseName("UQ_DISTRIBUTOR_Account");

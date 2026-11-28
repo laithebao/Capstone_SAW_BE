@@ -21,7 +21,7 @@ public class InventoryConfiguration : IEntityTypeConfiguration<Inventory>
                .HasColumnName("AvailableQuantity")
                .HasPrecision(18, 3)
                .ValueGeneratedOnAddOrUpdate();
-        builder.Property(x => x.LastUpdatedAt).HasColumnName("LastUpdatedAt").HasDefaultValueSql("SYSDATETIME()");
+        builder.Property(x => x.LastUpdatedAt).HasColumnName("LastUpdatedAt").HasDefaultValueSql("SYSUTCDATETIME()");
 
         builder.HasIndex(x => new { x.ProductBatchId, x.WarehouseLocationId })
                .IsUnique().HasDatabaseName("UQ_INVENTORY_BatchLocation");

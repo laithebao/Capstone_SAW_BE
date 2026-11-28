@@ -20,6 +20,13 @@ public sealed class GoogleSupplierProfileSqlTests(ReceivingSqlFixture fixture) :
         var role = await db.Roles.SingleOrDefaultAsync(r => r.RoleCode == "SUPPLIER");
         if (role is null) { role = new Role { RoleCode = "SUPPLIER", RoleName = "Supplier", IsActive = true }; db.Roles.Add(role); }
         var suffix = Guid.NewGuid().ToString("N");
+        // New selections require an active two-level category under BIG UPDATE 01.
+        var crop = await db.CropTypes.FindAsync(fixture.CropTypeId);
+        if (crop!.CategoryId is null)
+        {
+            crop.Category = new Category { Code = "CH_" + suffix[..12], Name = "Test child",
+                Parent = new Category { Code = "PA_" + suffix[..12], Name = "Test parent" } };
+        }
         var account = new Account { Role = role, Username = "google_" + suffix, Email = suffix + "@test.invalid",
             FullName = "Google supplier", AccountStatus = "ACTIVE", PasswordHash = "test-only", CreatedAt = DateTime.UtcNow };
         db.Suppliers.Add(new Supplier { Account = account, SupplierCode = suffix[..20], SupplierName = account.FullName,
@@ -54,7 +61,7 @@ public sealed class GoogleSupplierProfileSqlTests(ReceivingSqlFixture fixture) :
         using var declaration = await client.PostAsJsonAsync("/api/Suppliers/me/declare", profile);
         Assert.Equal(HttpStatusCode.Conflict, declaration.StatusCode); // The Google placeholder already exists.
         using var update = await client.PutAsJsonAsync("/api/Suppliers/me/profile", profile);
-        Assert.Equal(HttpStatusCode.OK, update.StatusCode);
+        Assert.True(update.StatusCode == HttpStatusCode.OK, await update.Content.ReadAsStringAsync());
         Assert.Equal("ACTIVE", (await update.Content.ReadFromJsonAsync<SupplierProfileResponse>())!.ProfileStatus);
         using var list = await client.GetAsync("/api/SupplierBatches");
         Assert.Equal(HttpStatusCode.OK, list.StatusCode);

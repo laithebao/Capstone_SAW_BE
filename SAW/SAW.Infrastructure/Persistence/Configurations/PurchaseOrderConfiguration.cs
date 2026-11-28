@@ -29,7 +29,7 @@ public class PurchaseOrderConfiguration : IEntityTypeConfiguration<PurchaseOrder
         builder.Property(x => x.RejectedAt).HasColumnName("RejectedAt");
         builder.Property(x => x.RejectionReason).HasColumnName("RejectionReason").HasMaxLength(1000);
         builder.Property(x => x.CancellationReason).HasColumnName("CancellationReason").HasMaxLength(1000);
-        builder.Property(x => x.CreatedAt).HasColumnName("CreatedAt").HasDefaultValueSql("SYSDATETIME()");
+        builder.Property(x => x.CreatedAt).HasColumnName("CreatedAt").HasDefaultValueSql("SYSUTCDATETIME()");
         builder.Property(x => x.UpdatedAt).HasColumnName("UpdatedAt");
         builder.Property(x => x.ReceivedAt).HasColumnName("ReceivedAt");
         builder.Property(x => x.ReceivedByAccountId).HasColumnName("ReceivedByAccountID");

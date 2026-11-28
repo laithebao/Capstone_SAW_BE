@@ -62,7 +62,8 @@ public class SupplierCommandService : ISupplierCommandService
             SupplierName = request.SupplierName.Trim(),
             TaxCode = request.TaxCode.Trim(),
             Address = fullAddress,
-            ContactPerson = BuildContactPerson(request.ContactPerson, request.LegalRepresentative),
+            ContactPerson = request.ContactPerson.Trim(),
+            LegalRepresentative = request.LegalRepresentative.Trim(),
             PhoneNumber = ContactValidation.NormalizePhone(request.PhoneNumber),
             Email = request.Email?.Trim(),
             ProfileStatus = "ACTIVE",
@@ -121,7 +122,8 @@ public class SupplierCommandService : ISupplierCommandService
         supplier.SupplierName = request.SupplierName.Trim();
         if (canCompleteTaxCode) supplier.TaxCode = taxCode;
         supplier.Address = request.Address?.Trim() ?? string.Empty;
-        supplier.ContactPerson = BuildContactPerson(request.ContactPerson, request.LegalRepresentative);
+        supplier.ContactPerson = request.ContactPerson.Trim();
+        supplier.LegalRepresentative = request.LegalRepresentative.Trim();
         supplier.PhoneNumber = ContactValidation.NormalizePhone(request.PhoneNumber);
         supplier.Email = request.Email?.Trim();
         supplier.Note = request.SupplierType;

@@ -3,20 +3,21 @@ using System.ComponentModel.DataAnnotations;
 namespace SAW.Application.Features.CropTypes;
 
 public sealed record CropTypeDto(
-    int Id, string Code, string Name, string CategoryName, string? ScientificName,
+    int Id, string Code, string Name, string CategoryName, int? CategoryId,
     decimal? MinTemperature, decimal? MaxTemperature,
     decimal? MinHumidity, decimal? MaxHumidity,
     int? ShelfLifeDays, decimal? SafetyStockLevelKg,
-    string DefaultUnit, bool IsActive, DateTime CreatedAt, DateTime? UpdatedAt);
+    string DefaultUnit, bool IsActive, DateTime CreatedAt, DateTime? UpdatedAt,
+    int? ParentCategoryId = null, string? ChildCategoryName = null);
 
 public sealed record CropTypeListResponse(
     IReadOnlyList<CropTypeDto> Items, int TotalCount, int Page, int PageSize);
 
 public sealed record SaveCropTypeRequest(
-    [Required, MaxLength(30)] string Code,
+    [Required, MaxLength(50)] string Code,
     [Required, MaxLength(150)] string Name,
     [Required, MaxLength(100)] string CategoryName,
-    [MaxLength(1000)] string? ScientificName,
+    int? CategoryId,
     [Range(typeof(decimal), "-50", "100")] decimal? MinTemperature,
     [Range(typeof(decimal), "-50", "100")] decimal? MaxTemperature,
     [Range(typeof(decimal), "0", "100")] decimal? MinHumidity,
@@ -27,3 +28,9 @@ public sealed record SaveCropTypeRequest(
     bool IsActive = true);
 
 public sealed record SetCropTypeStatusRequest(bool IsActive);
+
+public sealed record SaveCropTypeBasicsRequest(
+    [Required, MaxLength(50)] string Code,
+    [Required, MaxLength(150)] string Name,
+    int? CategoryId,
+    bool IsActive = true);

@@ -27,7 +27,10 @@ public sealed record SupplyContractSummary(
     string Status,
     int Revision,
     DateTime CreatedAt,
-    bool IsEffective);
+    bool IsEffective)
+{
+    public string UnitPriceExact => UnitPriceVndPerKg.ToString(System.Globalization.CultureInfo.InvariantCulture);
+}
 
 public sealed record SupplyContractDetail(
     long Id,
@@ -59,7 +62,14 @@ public sealed record SupplyContractDetail(
     string? AttachmentContentType,
     DateTime? AttachmentUploadedAt,
     bool HasOverdueDelivery,
-    DateOnly? OverdueDeliveryDueDate);
+    DateOnly? OverdueDeliveryDueDate)
+{
+    public string? DocumentContent { get; init; }
+    public string? DocumentHash { get; init; }
+    public DateTime? DocumentSentAt { get; init; }
+    public string? CropCode { get; init; }
+    public string UnitPriceExact => UnitPriceVndPerKg.ToString(System.Globalization.CultureInfo.InvariantCulture);
+}
 
 public sealed record SupplyContractPage(
     IReadOnlyList<SupplyContractSummary> Items,

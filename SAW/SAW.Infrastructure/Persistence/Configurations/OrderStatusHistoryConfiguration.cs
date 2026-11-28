@@ -16,7 +16,7 @@ public class OrderStatusHistoryConfiguration : IEntityTypeConfiguration<OrderSta
         builder.Property(x => x.NewStatus).HasColumnName("NewStatus").HasMaxLength(30).IsRequired();
         builder.Property(x => x.ChangedByAccountId).HasColumnName("ChangedByAccountID");
         builder.Property(x => x.ChangeReason).HasColumnName("ChangeReason").HasMaxLength(1000);
-        builder.Property(x => x.ChangedAt).HasColumnName("ChangedAt").HasDefaultValueSql("SYSDATETIME()");
+        builder.Property(x => x.ChangedAt).HasColumnName("ChangedAt").HasDefaultValueSql("SYSUTCDATETIME()");
 
         builder.HasOne(x => x.PurchaseOrder)
                .WithMany(o => o.StatusHistories)

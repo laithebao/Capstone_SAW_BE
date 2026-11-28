@@ -58,7 +58,7 @@ public sealed class AuditLogServiceTests
         Assert.Equal(Encoding.Unicode.GetPreamble(), bytes.Take(2));
         var text = Encoding.Unicode.GetString(bytes);
         Assert.Contains("ALOG-000005", text);
-        Assert.Contains("2026-11-11 01:02:03", text);
+        Assert.Contains("2026-11-11 08:02:03", text);
         Assert.Contains("'" + description + " line  break", text);
         Assert.Equal(10, text.Split('\n')[1].TrimEnd('\r').Split('\t').Length);
         repository.Verify(x => x.SearchAsync(Query, false, It.IsAny<CancellationToken>()), Times.Once);

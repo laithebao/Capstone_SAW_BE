@@ -19,7 +19,7 @@ public class GoodsReceiptConfiguration : IEntityTypeConfiguration<GoodsReceipt>
         builder.Property(x => x.Unit).HasColumnName("Unit").HasMaxLength(20).IsRequired();
         builder.Property(x => x.WeightInKg).HasColumnName("WeightInKg").HasPrecision(18, 3).IsRequired();
         builder.Property(x => x.ReceiptStatus).HasColumnName("ReceiptStatus").HasMaxLength(20).HasDefaultValue("DRAFT");
-        builder.Property(x => x.ReceivedAt).HasColumnName("ReceivedAt").HasDefaultValueSql("SYSDATETIME()");
+        builder.Property(x => x.ReceivedAt).HasColumnName("ReceivedAt").HasDefaultValueSql("CONVERT(date, DATEADD(hour, 7, SYSUTCDATETIME()))");
         builder.Property(x => x.CommittedAt).HasColumnName("CommittedAt");
         builder.Property(x => x.Note).HasColumnName("Note").HasMaxLength(1000);
 
