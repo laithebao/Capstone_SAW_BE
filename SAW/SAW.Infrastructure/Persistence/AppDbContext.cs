@@ -12,7 +12,7 @@ public partial class AppDbContext : DbContext
     private static readonly HashSet<Type> ExcludedEntityTypes =
     [
         typeof(AuditLog), typeof(RefreshToken), typeof(PasswordResetToken),
-        typeof(EmailVerificationToken), typeof(Notification), typeof(EmailOutbox),
+        typeof(EmailVerificationToken), typeof(Notification), typeof(EmailOutbox), typeof(AiChatTurn),
         // These workflow records have semantic audit receipts after generated keys are saved.
         typeof(StockAdjustmentResolution), typeof(StockAdjustmentProposal), typeof(OrderAmendment), typeof(GoodsIssueInvalidation)
     ];
@@ -111,6 +111,7 @@ public partial class AppDbContext : DbContext
     public DbSet<EmailOutbox> EmailOutbox => Set<EmailOutbox>();
     public DbSet<AuditLog> AuditLogs => Set<AuditLog>();
     public DbSet<AiRiskForecast> AiRiskForecasts => Set<AiRiskForecast>();
+    public DbSet<AiChatTurn> AiChatTurns => Set<AiChatTurn>();
 
     protected override void OnModelCreating(ModelBuilder modelBuilder)
     {

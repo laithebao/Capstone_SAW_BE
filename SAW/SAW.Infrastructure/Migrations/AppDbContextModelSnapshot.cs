@@ -151,6 +151,48 @@ namespace SAW.Infrastructure.Migrations
                     b.ToTable("ACCOUNT_PERMISSION", (string)null);
                 });
 
+            modelBuilder.Entity("SAW.Domain.Entities.AiChatTurn", b =>
+                {
+                    b.Property<long>("AiChatTurnId")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("bigint")
+                        .HasColumnName("AIChatTurnID");
+
+                    SqlServerPropertyBuilderExtensions.UseIdentityColumn(b.Property<long>("AiChatTurnId"));
+
+                    b.Property<int>("AccountId")
+                        .HasColumnType("int")
+                        .HasColumnName("AccountID");
+
+                    b.Property<string>("BatchContextCode")
+                        .HasMaxLength(200)
+                        .HasColumnType("nvarchar(200)");
+
+                    b.Property<long?>("BatchContextId")
+                        .HasColumnType("bigint");
+
+                    b.Property<string>("Message")
+                        .IsRequired()
+                        .HasMaxLength(2000)
+                        .HasColumnType("nvarchar(2000)");
+
+                    b.Property<DateTime>("RepliedAt")
+                        .HasColumnType("datetime2");
+
+                    b.Property<string>("Reply")
+                        .IsRequired()
+                        .HasColumnType("nvarchar(max)");
+
+                    b.Property<DateTime>("SentAt")
+                        .HasColumnType("datetime2");
+
+                    b.HasKey("AiChatTurnId");
+
+                    b.HasIndex("AccountId", "AiChatTurnId");
+
+                    b.ToTable("AI_CHAT_TURN", (string)null);
+                });
+
             modelBuilder.Entity("SAW.Domain.Entities.AiRiskForecast", b =>
                 {
                     b.Property<long>("AiRiskForecastId")
@@ -3972,6 +4014,15 @@ namespace SAW.Infrastructure.Migrations
                     b.Navigation("Account");
 
                     b.Navigation("Permission");
+                });
+
+            modelBuilder.Entity("SAW.Domain.Entities.AiChatTurn", b =>
+                {
+                    b.HasOne("SAW.Domain.Entities.Account", null)
+                        .WithMany()
+                        .HasForeignKey("AccountId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired();
                 });
 
             modelBuilder.Entity("SAW.Domain.Entities.AiRiskForecast", b =>
