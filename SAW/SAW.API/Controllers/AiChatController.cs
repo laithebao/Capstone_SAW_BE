@@ -10,8 +10,23 @@ namespace SAW.API.Controllers;
 [ApiController]
 [Route("api/distributor/ai-chat")]
 [Authorize(Roles = "DISTRIBUTOR")]
-public sealed class AiChatController(IAiChatService service, KnowledgeBaseService kbService) : ControllerBase
+public sealed class AiChatController(
+    IAiChatService service, KnowledgeBaseService kbService, IAiChatHistoryService historyService) : ControllerBase
 {
+    [HttpGet("history")]
+    public async Task<IActionResult> History([FromQuery] long? beforeId, CancellationToken ct)
+    {
+        var history = await historyService.GetHistoryAsync(ActorId(), beforeId, ct);
+        return Ok(ApiResponse<AiChatHistoryPage>.Success(history));
+    }
+
+    [HttpDelete("history")]
+    public async Task<IActionResult> ClearHistory(CancellationToken ct)
+    {
+        await historyService.ClearHistoryAsync(ActorId(), ct);
+        return NoContent();
+    }
+
     /// <summary>
     /// POST api/distributor/ai-chat
     /// Send a chat message to the AI assistant.

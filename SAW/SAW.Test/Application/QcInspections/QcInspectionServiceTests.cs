@@ -1376,8 +1376,7 @@ public sealed class QcInspectionServiceTests
 // Kiểm tra logic EnsureOwnership trong service:
 //   • QC_STAFF chỉ được thao tác trên phiếu do chính mình tạo (QcAccountId == actorId)
 //   • ADMINISTRATOR không bị giới hạn
-//   • WAREHOUSE_MANAGER được đọc (GET) nhưng bị chặn ở controller trước khi
-//     vào service (không test ở đây vì đó là controller-level Authorize attribute)
+//   • WAREHOUSE_MANAGER không được xem danh sách hoặc chi tiết phiếu kiểm định.
 // ═════════════════════════════════════════════════════════════════════════════
 public sealed class QcInspectionAuthorizationTests
 {
@@ -1637,19 +1636,16 @@ public sealed class QcInspectionAuthorizationTests
         Assert.NotNull(result);
     }
 
-    [Fact]
-    public async Task GetById_WarehouseManager_AccessingAnyInspection_Succeeds()
+    [Theory]
+    [InlineData("WAREHOUSE_MANAGER")]
+    [InlineData("OPERATION_STAFF")]
+    [InlineData("SUPPLIER")]
+    [InlineData("DISTRIBUTOR")]
+    public async Task GetById_RoleWithoutInspectionAccess_IsForbidden(string role)
     {
-        // WAREHOUSE_MANAGER được đọc phiếu của bất kỳ ai
-        SetupGetInspectionDetail(OwnerInspection());
         var svc = CreateService();
-
-        var result = await svc.GetByIdAsync(1,
-            actorAccountId: 99,  // khác owner
-            actorRole: "WAREHOUSE_MANAGER",
-            CancellationToken.None);
-
-        Assert.NotNull(result);
+        await Assert.ThrowsAsync<ForbiddenException>(() => svc.GetByIdAsync(1, 99, role, CancellationToken.None));
+        _repo.Verify(r => r.GetInspectionDetailAsync(It.IsAny<long>(), It.IsAny<CancellationToken>()), Times.Never);
     }
 
     [Fact]
@@ -1687,23 +1683,18 @@ public sealed class QcInspectionAuthorizationTests
         _repo.Verify(r => r.ListAsync(null, null, null, null, 5, null, null, 1, 20, It.IsAny<CancellationToken>()), Times.Once);
     }
 
-    [Fact]
-    public async Task UC62_WarehouseManager_ListIsNotFilteredByAccountId()
+    [Theory]
+    [InlineData("WAREHOUSE_MANAGER")]
+    [InlineData("OPERATION_STAFF")]
+    [InlineData("SUPPLIER")]
+    [InlineData("DISTRIBUTOR")]
+    public async Task UC62_RoleWithoutInspectionAccess_IsForbidden(string role)
     {
-        var items = new List<QcInspection> { OwnerInspection() };
-        // WAREHOUSE_MANAGER: không filter theo accountId (null)
-        _repo.Setup(r => r.ListAsync(null, null, null, null, null, null, null, 1, 20, It.IsAny<CancellationToken>()))
-             .ReturnsAsync(((IReadOnlyList<QcInspection>)items, 1));
-
         var svc = CreateService();
-        var result = await svc.ListAsync(
+        await Assert.ThrowsAsync<ForbiddenException>(() => svc.ListAsync(
             new QcInspectionListQuery(null, null, null, null, null, null, null),
-            actorAccountId: 99,
-            actorRole: "WAREHOUSE_MANAGER",
-            CancellationToken.None);
-
-        Assert.Equal(1, result.TotalCount);
-        _repo.Verify(r => r.ListAsync(null, null, null, null, null, null, null, 1, 20, It.IsAny<CancellationToken>()), Times.Once);
+            99, role, CancellationToken.None));
+        _repo.Verify(r => r.ListAsync(null, null, null, null, null, null, null, 1, 20, It.IsAny<CancellationToken>()), Times.Never);
     }
 
     [Fact]

@@ -170,7 +170,7 @@ public sealed class QcInspectionsController(IQcInspectionService service) : Cont
     // =========================================================================
 
     [HttpGet]
-    [Authorize(Roles = "QC_STAFF,WAREHOUSE_MANAGER,ADMINISTRATOR")]
+    [Authorize(Roles = "QC_STAFF,ADMINISTRATOR")]
     public async Task<ActionResult<ApiResponse<PagedResult<QcInspectionListItem>>>> List(
         [FromQuery] string? batchCode,
         [FromQuery] string? inspectionCode,
@@ -197,7 +197,7 @@ public sealed class QcInspectionsController(IQcInspectionService service) : Cont
     // =========================================================================
 
     [HttpGet("{id:long}")]
-    [Authorize(Roles = "QC_STAFF,WAREHOUSE_MANAGER,ADMINISTRATOR")]
+    [Authorize(Roles = "QC_STAFF,ADMINISTRATOR")]
     public async Task<ActionResult<ApiResponse<QcInspectionDetailDto>>> GetById(
         long id,
         CancellationToken ct)

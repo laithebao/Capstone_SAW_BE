@@ -61,7 +61,7 @@ public sealed class AuditLogService(IAuditLogRepository repository) : IAuditLogS
             var row = MapList(item);
             csv.AppendLine(string.Join('\t', new[]
             {
-                $"ALOG-{row.Id:D6}", row.CreatedAt.ToString("yyyy-MM-dd HH:mm:ss"), row.ActorName,
+                $"ALOG-{row.Id:D6}", SAW.Domain.Common.VietnamTime.ToLocal(row.CreatedAt).ToString("yyyy-MM-dd HH:mm:ss"), row.ActorName,
                 row.ActorRole, row.ActionType, row.EntityName, row.EntityId, row.Status,
                 row.IpAddress, row.Description
             }.Select(ExcelCell)));

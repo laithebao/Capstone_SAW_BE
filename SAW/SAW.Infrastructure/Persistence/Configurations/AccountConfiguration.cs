@@ -23,7 +23,7 @@ public class AccountConfiguration : IEntityTypeConfiguration<Account>
         builder.Property(x => x.LockoutEnd).HasColumnName("LockoutEnd");
         builder.Property(x => x.LastLoginAt).HasColumnName("LastLoginAt");
         builder.Property(x => x.InactiveReviewFlag).HasColumnName("InactiveReviewFlag").HasDefaultValue(false);
-        builder.Property(x => x.CreatedAt).HasColumnName("CreatedAt").HasDefaultValueSql("SYSDATETIME()");
+        builder.Property(x => x.CreatedAt).HasColumnName("CreatedAt").HasDefaultValueSql("SYSUTCDATETIME()");
         builder.Property(x => x.UpdatedAt).HasColumnName("UpdatedAt");
 
         builder.HasIndex(x => x.Username).IsUnique().HasDatabaseName("UQ_ACCOUNT_Username");

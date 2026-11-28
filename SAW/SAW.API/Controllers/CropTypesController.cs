@@ -17,6 +17,13 @@ public sealed class CropTypesController(ICropTypeService service) : ControllerBa
         [FromQuery] int page = 1, [FromQuery] int pageSize = 100, CancellationToken cancellationToken = default) =>
         Ok(ApiResponse<CropTypeListResponse>.Success(await service.SearchAsync(search, category, isActive, page, pageSize, cancellationToken)));
 
+    [HttpGet("lookup")]
+    [Authorize(Roles = "ADMINISTRATOR,SUPPLIER")]
+    public async Task<ActionResult<ApiResponse<CropTypeListResponse>>> Lookup(
+        [FromQuery] string? search, [FromQuery] int? categoryId,
+        [FromQuery] int page = 1, [FromQuery] int pageSize = 20, CancellationToken cancellationToken = default) =>
+        Ok(ApiResponse<CropTypeListResponse>.Success(await service.LookupAsync(search, categoryId, page, pageSize, cancellationToken)));
+
     [HttpGet("{id:int}")]
     [Authorize(Roles = "ADMINISTRATOR, SUPPLIER")] // Mở cho cả 2 xem chi tiết
     public async Task<ActionResult<ApiResponse<CropTypeDto>>> Get(int id, CancellationToken cancellationToken) =>
@@ -29,6 +36,17 @@ public sealed class CropTypesController(ICropTypeService service) : ControllerBa
         var result = await service.CreateAsync(request, cancellationToken);
         return CreatedAtAction(nameof(Get), new { id = result.Id }, ApiResponse<CropTypeDto>.Created(result, "Đã tạo loại nông sản."));
     }
+
+    [HttpPost("basic"), Authorize(Roles = "ADMINISTRATOR")]
+    public async Task<IActionResult> CreateBasic(SaveCropTypeBasicsRequest request, CancellationToken ct)
+    {
+        var result = await service.CreateBasicAsync(request, ct);
+        return CreatedAtAction(nameof(Get), new { id = result.Id }, ApiResponse<CropTypeDto>.Created(result));
+    }
+
+    [HttpPut("{id:int}/basic"), Authorize(Roles = "ADMINISTRATOR")]
+    public async Task<IActionResult> UpdateBasic(int id, SaveCropTypeBasicsRequest request, CancellationToken ct) =>
+        Ok(ApiResponse<CropTypeDto>.Success(await service.UpdateBasicAsync(id, request, ct)));
 
     [HttpPut("{id:int}")]
     [Authorize(Roles = "ADMINISTRATOR")] // Chỉ ADMINISTRATOR mới có quyền Sửa

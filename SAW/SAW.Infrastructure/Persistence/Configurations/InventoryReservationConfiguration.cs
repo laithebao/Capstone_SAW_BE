@@ -16,7 +16,7 @@ public class InventoryReservationConfiguration : IEntityTypeConfiguration<Invent
         builder.Property(x => x.ReservedQuantity).HasColumnName("ReservedQuantity").HasPrecision(18, 3).IsRequired();
         builder.Property(x => x.PickedQuantity).HasColumnName("PickedQuantity").HasPrecision(18, 3).HasDefaultValue(0m);
         builder.Property(x => x.ReservationStatus).HasColumnName("ReservationStatus").HasMaxLength(25).HasDefaultValue("RESERVED");
-        builder.Property(x => x.ReservedAt).HasColumnName("ReservedAt").HasDefaultValueSql("SYSDATETIME()");
+        builder.Property(x => x.ReservedAt).HasColumnName("ReservedAt").HasDefaultValueSql("SYSUTCDATETIME()");
         builder.Property(x => x.ReleasedAt).HasColumnName("ReleasedAt");
 
         builder.HasIndex(x => new { x.OrderDetailId, x.InventoryId })

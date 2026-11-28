@@ -16,7 +16,7 @@ public class InspectionStandardSetConfiguration : IEntityTypeConfiguration<Inspe
         builder.Property(x => x.StandardName).HasColumnName("StandardName").HasMaxLength(200).IsRequired();
         builder.Property(x => x.Description).HasColumnName("Description").HasMaxLength(1000);
         builder.Property(x => x.IsActive).HasColumnName("IsActive").HasDefaultValue(true);
-        builder.Property(x => x.CreatedAt).HasColumnName("CreatedAt").HasDefaultValueSql("SYSDATETIME()");
+        builder.Property(x => x.CreatedAt).HasColumnName("CreatedAt").HasDefaultValueSql("SYSUTCDATETIME()");
 
         builder.HasIndex(x => x.StandardCode).IsUnique().HasDatabaseName("UQ_INSPECTION_STANDARD_SET_Code");
 

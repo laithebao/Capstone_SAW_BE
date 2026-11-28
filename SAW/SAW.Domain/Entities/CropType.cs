@@ -8,6 +8,8 @@ public class CropType
     public string CropName { get; set; } = default!;
 
     public string CategoryName { get; set; } = default!;
+    public int? CategoryId { get; set; }
+    public Category? Category { get; set; }
     public string? Description { get; set; }
 
     public decimal? ExpectedMinTempC { get; set; }

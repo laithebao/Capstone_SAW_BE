@@ -9,7 +9,7 @@ namespace SAW.API.Controllers;
 
 [ApiController]
 [Route("api/operation/goods-receipts")]
-[Authorize(Roles = "OPERATION_STAFF,WAREHOUSE_MANAGER,ADMINISTRATOR")]
+[Authorize(Roles = "OPERATION_STAFF,ADMINISTRATOR")]
 public sealed class GoodsReceiptsController(IGoodsReceiptService service) : ControllerBase
 {
     [HttpGet]

@@ -47,4 +47,29 @@ public sealed class AdminDashboardRepositoryTests
         Assert.Equal(0, result.WeeklyActivity[0].BatchCount); Assert.Equal(1, result.WeeklyActivity[1].BatchCount);
         Assert.Empty(db.ChangeTracker.Entries());
     }
+    [Fact]
+    public async Task AuditActivityGroupsVietnamDaysAndExcludesLoginsFromOperations()
+    {
+        await using var db = Database();
+        var today = DateTime.UtcNow.AddHours(7).Date;
+        var firstUtc = today.AddDays(-6).AddHours(-7);
+        db.AuditLogs.AddRange(
+            new AuditLog { ActionType = "LOGIN_SUCCESS", EntityName = "ACCOUNT", CreatedAt = firstUtc },
+            new AuditLog { ActionType = "LOGIN_FAILED", EntityName = "ACCOUNT", CreatedAt = firstUtc.AddHours(3) },
+            new AuditLog { ActionType = "UPDATE", EntityName = "ACCOUNT", CreatedAt = firstUtc.AddHours(23) },
+            new AuditLog { ActionType = "CREATE", EntityName = "CONTRACT", CreatedAt = firstUtc.AddDays(1) },
+            new AuditLog { ActionType = "DELETE", EntityName = "ACCOUNT", CreatedAt = firstUtc.AddTicks(-1) },
+            new AuditLog { ActionType = "UPDATE", EntityName = "ACCOUNT", CreatedAt = firstUtc.AddDays(7) });
+        await db.SaveChangesAsync();
+        var result = await new AdminDashboardRepository(db).GetAsync(today.AddDays(-6), default);
+        Assert.NotNull(result.AuditActivity);
+        Assert.Equal(7, result.AuditActivity.Count);
+        Assert.Equal(DateOnly.FromDateTime(today.AddDays(-6)), result.AuditActivity[0].Date);
+        Assert.Equal(1, result.AuditActivity[0].LoginSuccessCount);
+        Assert.Equal(1, result.AuditActivity[0].LoginFailedCount);
+        Assert.Equal(1, result.AuditActivity[0].OperationCount);
+        Assert.Equal(1, result.AuditActivity[1].OperationCount);
+        Assert.All(result.AuditActivity.Skip(2), day => Assert.Equal(0, day.OperationCount));
+    }
+
 }

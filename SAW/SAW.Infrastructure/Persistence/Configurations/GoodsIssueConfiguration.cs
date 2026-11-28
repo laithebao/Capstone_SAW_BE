@@ -16,7 +16,7 @@ public class GoodsIssueConfiguration : IEntityTypeConfiguration<GoodsIssue>
         builder.Property(x => x.OperationAccountId).HasColumnName("OperationAccountID").IsRequired();
         builder.Property(x => x.ReceiverName).HasColumnName("ReceiverName").HasMaxLength(200);
         builder.Property(x => x.IssueStatus).HasColumnName("IssueStatus").HasMaxLength(20).HasDefaultValue("DRAFT");
-        builder.Property(x => x.IssuedAt).HasColumnName("IssuedAt").HasDefaultValueSql("SYSDATETIME()");
+        builder.Property(x => x.IssuedAt).HasColumnName("IssuedAt").HasDefaultValueSql("CONVERT(date, DATEADD(hour, 7, SYSUTCDATETIME()))");
         builder.Property(x => x.CommittedAt).HasColumnName("CommittedAt");
         builder.Property(x => x.Note).HasColumnName("Note").HasMaxLength(1000);
 

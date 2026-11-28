@@ -20,7 +20,7 @@ public class AuditLogConfiguration : IEntityTypeConfiguration<AuditLog>
         builder.Property(x => x.Description).HasColumnName("Description").HasMaxLength(1500);
         builder.Property(x => x.IpAddress).HasColumnName("IpAddress").HasMaxLength(64);
         builder.Property(x => x.UserAgent).HasColumnName("UserAgent").HasMaxLength(500);
-        builder.Property(x => x.CreatedAt).HasColumnName("CreatedAt").HasDefaultValueSql("SYSDATETIME()");
+        builder.Property(x => x.CreatedAt).HasColumnName("CreatedAt").HasDefaultValueSql("SYSUTCDATETIME()");
 
         builder.HasOne(x => x.Account)
                .WithMany(a => a.AuditLogs)

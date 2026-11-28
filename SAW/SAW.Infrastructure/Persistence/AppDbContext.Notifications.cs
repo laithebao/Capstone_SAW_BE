@@ -110,7 +110,7 @@ public partial class AppDbContext
 
     // ExecuteUpdate bypasses the change tracker. Its caller queues the same notifications
     // inside the existing transaction, then persists them with its history/audit receipt.
-    internal async Task QueueBatchStatusNotificationsAsync(ProductBatch batch, string status, CancellationToken ct)
+    internal async Task QueueBatchStatusNotificationsAsync(ProductBatch batch, string status, CancellationToken ct, DateTime? eventAt = null)
     {
         var label = status switch { "PENDING_QC" => "Chờ kiểm định", "APPROVED_FOR_STORAGE" => "Đạt QC, chờ nhập kho",
             "IN_STOCK" => "Đã nhập kho", "REJECTED" => "Bị từ chối", "SUBMITTED" => "Chờ kiểm nhận", "PENDING_PREDECLARATION" => "Chờ kiểm nhận",
@@ -125,6 +125,13 @@ public partial class AppDbContext
         };
         var supplierAccountId = await Suppliers.Where(s => s.SupplierId == batch.SupplierId)
             .Select(s => (int?)s.AccountId).SingleOrDefaultAsync(ct);
+        if (supplierAccountId.HasValue && status is "PENDING_QC" or "APPROVED_FOR_STORAGE" or "REJECTED")
+        {
+            var at = eventAt ?? batch.UpdatedAt ?? batch.CreatedAt;
+            var name = await Suppliers.Where(s => s.SupplierId == batch.SupplierId).Select(s => s.SupplierName).SingleAsync(ct);
+            await QueueBusinessEmailAsync(supplierAccountId.Value, $"BATCH:{batch.ProductBatchId}:{status}:{at.Ticks}",
+                $"Lô {batch.BatchCode}: {label}", $"Nhà cung cấp: {name}\nLô: {batch.BatchCode}\nNông sản: {batch.ProductName}\nTrạng thái: {label}\nThời gian (UTC): {at:O}\n{batch.RejectionReason}", ct);
+        }
         var recipients = await Accounts.AsNoTracking().Where(a => a.AccountStatus == "ACTIVE"
             && (a.AccountId == supplierAccountId || recipientRole != null && a.Role.RoleCode == recipientRole))
             .Select(a => new { a.AccountId, a.Role.RoleCode }).ToListAsync(ct);
@@ -147,6 +154,10 @@ public partial class AppDbContext
     internal async Task QueueGoodsReceiptNotificationAsync(GoodsReceipt receipt, int actorId, CancellationToken ct)
     {
         if (receipt.ReceiptStatus != "COMMITTED") return;
+        var supplier = await ProductBatches.Where(b => b.ProductBatchId == receipt.ProductBatchId)
+            .Select(b => new { b.Supplier.AccountId, b.Supplier.SupplierName, b.BatchCode, b.ProductName }).SingleAsync(ct);
+        await QueueBusinessEmailAsync(supplier.AccountId, $"RECEIPT:{receipt.GoodsReceiptId}", $"Đã nhập kho lô {supplier.BatchCode}",
+            $"Nhà cung cấp: {supplier.SupplierName}\nPhiếu: {receipt.ReceiptCode}\nLô: {supplier.BatchCode}\nNông sản: {supplier.ProductName}\nTrạng thái: Đã nhập kho\nKhối lượng: {receipt.WeightInKg} kg\nThời gian (UTC): {receipt.CommittedAt:O}", ct);
         var batchCode = await ProductBatches.Where(b => b.ProductBatchId == receipt.ProductBatchId)
             .Select(b => b.BatchCode).SingleAsync(ct);
         var weight = receipt.WeightInKg.ToString("0.###", System.Globalization.CultureInfo.GetCultureInfo("vi-VN"));
@@ -158,6 +169,12 @@ public partial class AppDbContext
     internal async Task QueueGoodsIssueNotificationAsync(GoodsIssue issue, int actorId, CancellationToken ct)
     {
         if (issue.IssueStatus != "COMMITTED") return;
+        var buyer = await PurchaseOrders.Where(o => o.PurchaseOrderId == issue.PurchaseOrderId).Select(o => new { o.Distributor.AccountId, o.OrderCode }).SingleAsync(ct);
+        var lots = await GoodsIssueDetails.Where(d => d.GoodsIssueId == issue.GoodsIssueId)
+            .Select(d => new { d.Inventory.ProductBatch.BatchCode, d.WeightInKg }).ToListAsync(ct);
+        await QueueBusinessEmailAsync(buyer.AccountId, $"ISSUE:{issue.GoodsIssueId}", $"Đã xuất kho theo phiếu {issue.IssueCode}",
+            $"Đơn: {buyer.OrderCode}\nPhiếu: {issue.IssueCode}\n" + string.Join("\n", lots.Select(l => $"Lô {l.BatchCode}: {l.WeightInKg} kg")) +
+            $"\nThời gian (UTC): {issue.CommittedAt:O}\nChỉ xác nhận phần hàng thuộc phiếu này đã xuất kho; không xác nhận khách đã nhận hàng hoặc toàn bộ đơn đã xuất xong.", ct);
         var orderCode = await PurchaseOrders.Where(o => o.PurchaseOrderId == issue.PurchaseOrderId)
             .Select(o => o.OrderCode).SingleAsync(ct);
         await QueueWarehouseDocumentNotificationAsync("GOODS_ISSUE", issue.GoodsIssueId, issue.OperationAccountId, actorId,

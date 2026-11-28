@@ -99,6 +99,7 @@ public sealed class GoodsIssueMigrationTests
             .ToListAsync();
     private static async Task SeedProbeAsync(AppDbContext db)
     {
+        await using var historical = HistoricalSeedContext.Create(db, new AddSupplyContractChangeAndCancellation());
         var role = new Role { RoleCode = "MIGRATION_TEST", RoleName = "Fixture", IsActive = true };
         var account = new Account { Role = role, Username = "migration", Email = "migration@test.invalid", FullName = "Migration fixture", PasswordHash = "unused", AccountStatus = "ACTIVE" };
         var supplier = new Supplier { Account = account, SupplierCode = "MIG", SupplierName = "Fixture supplier", TaxCode = "TEST", ContactPerson = "Fixture", Address = "Fixture" };
@@ -112,12 +113,12 @@ public sealed class GoodsIssueMigrationTests
         var order = new PurchaseOrder { Distributor = buyer, OrderCode = "MIGRATION-ORDER", OrderStatus = "PARTIALLY_PICKED", DeliveryAddress = "Fixture", CreatedAt = DateTime.UtcNow, ApprovedByAccount = account, ApprovedAt = DateTime.UtcNow };
         var line = new OrderDetail { PurchaseOrder = order, CropType = crop, RequestedProductBatch = batch, RequestedQuantity = 1, ApprovedQuantity = 1, Unit = "Lô", RequestedWeightKg = 100, ApprovedWeightKg = 100 };
         var reservation = new InventoryReservation { OrderDetail = line, Inventory = stock, ReservedQuantity = 100, PickedQuantity = 40, ReservationStatus = "PARTIALLY_PICKED", ReservedAt = DateTime.UtcNow };
-        db.Add(reservation); await db.SaveChangesAsync();
-        db.Add(new PickingHistory { InventoryReservationId = reservation.InventoryReservationId, PickedByAccountId = account.AccountId, PickedQuantity = 40, PickedAt = DateTime.UtcNow });
-        db.Add(new GoodsIssue { IssueCode = "MIGRATION-DRAFT", PurchaseOrderId = order.PurchaseOrderId, OperationAccountId = account.AccountId,
+        historical.Add(reservation); await historical.SaveChangesAsync();
+        historical.Add(new PickingHistory { InventoryReservationId = reservation.InventoryReservationId, PickedByAccountId = account.AccountId, PickedQuantity = 40, PickedAt = DateTime.UtcNow });
+        historical.Add(new GoodsIssue { IssueCode = "MIGRATION-DRAFT", PurchaseOrderId = order.PurchaseOrderId, OperationAccountId = account.AccountId,
             IssuedAt = DateTime.UtcNow.Date, IssueStatus = "DRAFT", GoodsIssueDetails = [new GoodsIssueDetail {
                 OrderDetailId = line.OrderDetailId, InventoryReservationId = reservation.InventoryReservationId, InventoryId = stock.InventoryId, IssuedQuantity = 20, Unit = "kg", WeightInKg = 20 }] });
-        await db.SaveChangesAsync();
+        await historical.SaveChangesAsync();
     }
     private static async Task<string> BusinessSnapshotAsync(AppDbContext db)
     {

@@ -29,7 +29,7 @@ public class StockAdjustmentConfiguration : IEntityTypeConfiguration<StockAdjust
         builder.Property(x => x.AdjustmentType).HasColumnName("AdjustmentType").HasMaxLength(30).IsRequired();
         builder.Property(x => x.Reason).HasColumnName("Reason").HasMaxLength(1000).IsRequired();
         builder.Property(x => x.AdjustmentStatus).HasColumnName("AdjustmentStatus").HasMaxLength(20).HasDefaultValue("PENDING");
-        builder.Property(x => x.CreatedAt).HasColumnName("CreatedAt").HasDefaultValueSql("SYSDATETIME()");
+        builder.Property(x => x.CreatedAt).HasColumnName("CreatedAt").HasDefaultValueSql("SYSUTCDATETIME()");
         builder.Property(x => x.ReviewedAt).HasColumnName("ReviewedAt");
         builder.Property(x => x.ReviewNote).HasColumnName("ReviewNote").HasMaxLength(1000);
 

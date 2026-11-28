@@ -89,5 +89,14 @@ public sealed class AuthRepository(AppDbContext dbContext) : IAuthRepository
     public void AddRefreshToken(RefreshToken token) => dbContext.RefreshTokens.Add(token);
     public void AddPasswordResetToken(PasswordResetToken token) => dbContext.PasswordResetTokens.Add(token);
     public void AddEmailVerificationToken(EmailVerificationToken token) => dbContext.EmailVerificationTokens.Add(token);
+    public async Task RecordGoogleEmailVerificationAsync(int accountId, string email, CancellationToken cancellationToken)
+    {
+        var address = email.Trim().ToLowerInvariant();
+        if (!await dbContext.AuditLogs.AnyAsync(x => x.AccountId == accountId && x.ActionType == "EMAIL_VERIFIED_GOOGLE"
+            && x.EntityName == "ACCOUNT" && x.Description == address, cancellationToken))
+            dbContext.AuditLogs.Add(new AuditLog { AccountId = accountId, ActionType = "EMAIL_VERIFIED_GOOGLE",
+                EntityName = "ACCOUNT", EntityId = accountId.ToString(), Description = address, CreatedAt = DateTime.UtcNow });
+        // Saved atomically with the authenticated session by CreateSessionAsync.
+    }
     public Task SaveChangesAsync(CancellationToken cancellationToken) => dbContext.SaveChangesAsync(cancellationToken);
 }

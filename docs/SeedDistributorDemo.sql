@@ -1,4 +1,5 @@
 ﻿-- Distributor UC 48–51 demo data only. No schema/migration changes.
+-- Optional local/demo seed. Never run from migrations, startup or production deployment.
 -- Open this entire file in SSMS, select SmartAgriWarehouseDB, and execute (F5).
 -- Demo login: demo_distributor / Demo@12345
 -- Second buyer: demo_distributor2 / Demo@12345
@@ -86,11 +87,19 @@ BEGIN TRY
         VALUES (N'DEMO-DIST-ZONE',N'Khu demo Distributor',1000,N'ACTIVE',@Now);
     DECLARE @Location int=(SELECT WarehouseLocationID FROM dbo.WAREHOUSE_LOCATION WHERE LocationCode=N'DEMO-DIST-ZONE');
 
-    DECLARE @Crops TABLE (Code nvarchar(30), Name nvarchar(100), Category nvarchar(100), SafetyStockKg decimal(18,3));
+    DECLARE @Crops TABLE (Code nvarchar(50), Name nvarchar(100), Category nvarchar(100), SafetyStockKg decimal(18,3));
     INSERT @Crops VALUES
         (N'DEMO-DIST-RICE',N'Gạo demo',N'Ngũ cốc',50),
         (N'DEMO-DIST-MANGO',N'Xoài demo',N'Trái cây',70),
         (N'DEMO-DIST-DRAGON',N'Thanh long demo',N'Trái cây',30);
+    -- Resolve legacy demo labels to the actual current code by immutable CropTypeID.
+    -- Never recreate a migrated crop under its former code.
+    IF OBJECT_ID(N'dbo.CROP_CODE_MIGRATION_01',N'U') IS NOT NULL
+    BEGIN
+        UPDATE source SET Code=c.CropCode FROM @Crops source JOIN dbo.CROP_CODE_MIGRATION_01 m ON m.OldCode=source.Code JOIN dbo.CROP_TYPE c ON c.CropTypeID=m.CropTypeId;
+        IF EXISTS(SELECT 1 FROM @Crops source WHERE NOT EXISTS(SELECT 1 FROM dbo.CROP_TYPE c WHERE c.CropCode=source.Code))
+            THROW 50302,'A mapped demo crop is missing. Create and classify it through Crop Type management first.',1;
+    END;
     INSERT dbo.CROP_TYPE (CropCode,CropName,CategoryName,SafetyStockLevelKg,DefaultUnit,IsActive,CreatedAt)
     SELECT Code,Name,Category,SafetyStockKg,N'kg',1,@Now FROM @Crops c WHERE NOT EXISTS (SELECT 1 FROM dbo.CROP_TYPE e WHERE e.CropCode=c.Code);
     UPDATE crop SET CropName=source.Name,CategoryName=source.Category,SafetyStockLevelKg=source.SafetyStockKg,
@@ -101,15 +110,18 @@ BEGIN TRY
     WHERE NOT EXISTS (SELECT 1 FROM dbo.SUPPLIER_CROP_TYPE e WHERE e.SupplierID=@Supplier AND e.CropTypeID=c.CropTypeID);
 
     -- Standards include two distinct manager reviews before publishing, respecting the existing trigger.
-    DECLARE @Crop int,@CropCode nvarchar(30),@Set int,@Version bigint,@Criterion bigint;
+    DECLARE @Crop int,@CropCode nvarchar(50),@StandardCode nvarchar(50),@Set int,@Version bigint,@Criterion bigint;
     DECLARE crop_cursor CURSOR LOCAL FAST_FORWARD FOR SELECT c.CropTypeID,c.CropCode FROM dbo.CROP_TYPE c JOIN @Crops d ON d.Code=c.CropCode;
     OPEN crop_cursor; FETCH NEXT FROM crop_cursor INTO @Crop,@CropCode;
     WHILE @@FETCH_STATUS=0
     BEGIN
-        IF NOT EXISTS (SELECT 1 FROM dbo.INSPECTION_STANDARD_SET WHERE StandardCode=@CropCode)
+        SET @StandardCode=@CropCode;
+        IF OBJECT_ID(N'dbo.CROP_CODE_MIGRATION_01',N'U') IS NOT NULL
+            SELECT @StandardCode=OldCode FROM dbo.CROP_CODE_MIGRATION_01 WHERE CropTypeId=@Crop;
+        IF NOT EXISTS (SELECT 1 FROM dbo.INSPECTION_STANDARD_SET WHERE StandardCode=@StandardCode)
             INSERT dbo.INSPECTION_STANDARD_SET (CropTypeID,StandardCode,StandardName,Description,IsActive,CreatedAt)
-            VALUES (@Crop,@CropCode,N'Tiêu chuẩn demo Distributor',N'Dữ liệu demo, không phải tiêu chuẩn sản xuất',1,@Now);
-        SELECT @Set=InspectionStandardSetID FROM dbo.INSPECTION_STANDARD_SET WHERE StandardCode=@CropCode;
+            VALUES (@Crop,@StandardCode,N'Tiêu chuẩn demo Distributor',N'Dữ liệu demo, không phải tiêu chuẩn sản xuất',1,@Now);
+        SELECT @Set=InspectionStandardSetID FROM dbo.INSPECTION_STANDARD_SET WHERE StandardCode=@StandardCode;
         IF NOT EXISTS (SELECT 1 FROM dbo.INSPECTION_STANDARD_VERSION WHERE InspectionStandardSetID=@Set AND VersionNo=1)
         BEGIN
             INSERT dbo.INSPECTION_STANDARD_VERSION (InspectionStandardSetID,VersionNo,VersionStatus,EffectiveFrom,CreatedAt)
@@ -128,7 +140,7 @@ BEGIN TRY
     END;
     CLOSE crop_cursor; DEALLOCATE crop_cursor;
 
-    DECLARE @Lots TABLE (No int, CropCode nvarchar(30), Product nvarchar(200), WeightKg decimal(18,3), Price decimal(18,2), Expired bit, PublishPrice bit);
+    DECLARE @Lots TABLE (No int, CropCode nvarchar(50), Product nvarchar(200), WeightKg decimal(18,3), Price decimal(18,2), Expired bit, PublishPrice bit);
     INSERT @Lots VALUES
         (1,N'DEMO-DIST-RICE',N'Gạo ST25 — lô demo 01',100,1500000,0,1),
         (2,N'DEMO-DIST-MANGO',N'Xoài cát — lô demo 02',80,2400000,0,1),
@@ -140,6 +152,8 @@ BEGIN TRY
         (8,N'DEMO-DIST-DRAGON',N'Thanh long — lô hết hạn demo',20,400000,1,1),
         (9,N'DEMO-DIST-MANGO',N'Xoài — lô chưa công bố giá demo',15,450000,0,0);
 
+    IF OBJECT_ID(N'dbo.CROP_CODE_MIGRATION_01',N'U') IS NOT NULL
+        UPDATE lot SET CropCode=c.CropCode FROM @Lots lot JOIN dbo.CROP_CODE_MIGRATION_01 m ON m.OldCode=lot.CropCode JOIN dbo.CROP_TYPE c ON c.CropTypeID=m.CropTypeId;
     DECLARE @No int,@Product nvarchar(200),@Weight decimal(18,3),@Price decimal(18,2),@Expired bit,@Publish bit,@Batch bigint,@Code nvarchar(50);
     DECLARE lot_cursor CURSOR LOCAL FAST_FORWARD FOR SELECT No,CropCode,Product,WeightKg,Price,Expired,PublishPrice FROM @Lots WHERE @CatalogOnly=0 OR No IN (1,2,3) ORDER BY No;
     OPEN lot_cursor; FETCH NEXT FROM lot_cursor INTO @No,@CropCode,@Product,@Weight,@Price,@Expired,@Publish;
@@ -147,7 +161,10 @@ BEGIN TRY
     BEGIN
         SET @Code=N'DEMO-DIST-LOT-'+RIGHT(N'0'+CONVERT(nvarchar(2),@No),2);
         SELECT @Crop=CropTypeID FROM dbo.CROP_TYPE WHERE CropCode=@CropCode;
-        SELECT @Version=v.InspectionStandardVersionID FROM dbo.INSPECTION_STANDARD_VERSION v JOIN dbo.INSPECTION_STANDARD_SET s ON s.InspectionStandardSetID=v.InspectionStandardSetID WHERE s.StandardCode=@CropCode AND v.VersionNo=1;
+        SET @StandardCode=@CropCode;
+        IF OBJECT_ID(N'dbo.CROP_CODE_MIGRATION_01',N'U') IS NOT NULL
+            SELECT @StandardCode=OldCode FROM dbo.CROP_CODE_MIGRATION_01 WHERE CropTypeId=@Crop;
+        SELECT @Version=v.InspectionStandardVersionID FROM dbo.INSPECTION_STANDARD_VERSION v JOIN dbo.INSPECTION_STANDARD_SET s ON s.InspectionStandardSetID=v.InspectionStandardSetID WHERE s.StandardCode=@StandardCode AND v.VersionNo=1;
         IF NOT EXISTS (SELECT 1 FROM dbo.PRODUCT_BATCH WHERE BatchCode=@Code)
             INSERT dbo.PRODUCT_BATCH (BatchCode,SupplierID,CropTypeID,GrowingAreaID,ProductName,HarvestDate,DeclaredQuantity,Unit,WeightInKg,VerifiedQuantity,VerifiedWeightInKg,ExpiryDate,BatchStatus,QualityGrade,Note,CreatedAt)
             VALUES (@Code,@Supplier,@Crop,@Area,@Product,DATEADD(day,-20,@Today),@Weight,N'kg',@Weight,@Weight,@Weight,CASE WHEN @Expired=1 THEN DATEADD(day,-1,@Today) ELSE DATEADD(day,30,@Today) END,N'IN_STOCK',N'A',N'Dữ liệu test Distributor',DATEADD(day,-12,@Now));

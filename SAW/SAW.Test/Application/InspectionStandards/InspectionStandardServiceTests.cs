@@ -73,6 +73,30 @@ public sealed class InspectionStandardServiceTests
              .Returns(Task.CompletedTask);
     }
 
+    [Theory]
+    [InlineData(true, false, true)]
+    [InlineData(false, false, false)]
+    [InlineData(true, true, false)]
+    [InlineData(false, true, false)]
+    public async Task BooleanGateIsConsistentForCreateAndNewVersion(bool critical, bool hasRules, bool valid)
+    {
+        SetupRepoDefaults();
+        var set = new InspectionStandardSet { InspectionStandardSetId = 1, IsActive = true, StandardCode = "STD-001", StandardName = "Standard" };
+        _repo.Setup(x => x.GetByIdAsync(1, It.IsAny<CancellationToken>())).ReturnsAsync(set);
+        var criterion = MakeBooleanCriterion() with { IsCritical = critical,
+            GradeRules = hasRules ? [new("A", null, null, null, false)] : [] };
+        var service = CreateService();
+        var create = () => service.CreateAsync(ValidCreateRequest([criterion]), default);
+        var version = () => service.CreateVersionAsync(1, new(DateOnly.FromDateTime(DateTime.Today), [criterion]), default);
+        if (valid) { await create(); await version(); }
+        else
+        {
+            Assert.Contains("BOOLEAN", (await Assert.ThrowsAsync<BadRequestException>(create)).Message);
+            Assert.Contains("BOOLEAN", (await Assert.ThrowsAsync<BadRequestException>(version)).Message);
+            _repo.Verify(x => x.SaveChangesAsync(It.IsAny<CancellationToken>()), Times.Never);
+        }
+    }
+
     // ═════════════════════════════════════════════════════════════════════════
     // UC12 – Create an Inspection Standard Set
     // ═════════════════════════════════════════════════════════════════════════
@@ -257,13 +281,9 @@ public sealed class InspectionStandardServiceTests
             () => svc.CreateAsync(request, CancellationToken.None));
     }
 
-    // NOTE: In the current service implementation, Rule 10b (BOOLEAN must be IsCritical)
-    // is unreachable for BOOLEAN criteria with empty grade rules because a 'continue'
-    // statement at the top of the per-criterion loop exits early when GradeRules is empty.
-    // This test documents that behavior. A BOOLEAN criterion with IsCritical=false and
-    // no grade rules currently passes validation (does NOT throw).
+    // Regression: the empty-rule shortcut must not bypass the BOOLEAN critical gate.
     [Fact]
-    public async Task UC12_CreateAsync_WhenBooleanCriterionNotCritical_CurrentlySucceeds()
+    public async Task UC12_CreateAsync_WhenBooleanCriterionNotCritical_RejectsBeforePersistence()
     {
         SetupRepoDefaults();
         var svc = CreateService();
@@ -272,9 +292,8 @@ public sealed class InspectionStandardServiceTests
             new("B001", "Boolean", "LAB", "BOOLEAN", null, true, false, [])
         ]);
 
-        // Service allows this due to early continue; no exception expected.
-        var result = await svc.CreateAsync(request, CancellationToken.None);
-        Assert.NotNull(result);
+        await Assert.ThrowsAsync<BadRequestException>(() => svc.CreateAsync(request, CancellationToken.None));
+        _repo.Verify(x => x.SaveChangesAsync(It.IsAny<CancellationToken>()), Times.Never);
     }
 
     [Fact]

@@ -21,8 +21,24 @@ public sealed class AuditLogRepository(AppDbContext dbContext) : IAuditLogReposi
                 (x.Description != null && x.Description.Contains(term)) ||
                 (x.Account != null && (x.Account.FullName.Contains(term) || x.Account.Username.Contains(term))));
         }
-        if (filter.From.HasValue) query = query.Where(x => x.CreatedAt >= filter.From.Value);
-        if (filter.To.HasValue) query = query.Where(x => x.CreatedAt < filter.To.Value.Date.AddDays(1));
+        if (filter.From.HasValue)
+        {
+            var fromUtc = SAW.Domain.Common.VietnamTime.QueryUtc(filter.From.Value);
+            query = query.Where(x => x.CreatedAt >= fromUtc);
+        }
+        if (filter.To.HasValue)
+        {
+            if (SAW.Domain.Common.VietnamTime.IsCalendarQuery(filter.To.Value))
+            {
+                var untilUtc = SAW.Domain.Common.VietnamTime.StartOfDayUtc(DateOnly.FromDateTime(filter.To.Value).AddDays(1));
+                query = query.Where(x => x.CreatedAt < untilUtc);
+            }
+            else
+            {
+                var toUtc = SAW.Domain.Common.VietnamTime.QueryUtc(filter.To.Value);
+                query = query.Where(x => x.CreatedAt <= toUtc);
+            }
+        }
         if (filter.AccountId.HasValue) query = query.Where(x => x.AccountId == filter.AccountId.Value);
         if (!string.IsNullOrWhiteSpace(filter.Actor))
         {

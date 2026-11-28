@@ -33,18 +33,40 @@ public sealed class AdminDashboardRepository(AppDbContext dbContext) : IAdminDas
             .ToList();
 
         var accountsByDay = await dbContext.Accounts.Where(x => x.CreatedAt >= fromDate)
-            .GroupBy(x => x.CreatedAt.Date).Select(x => new { x.Key, Count = x.Count() })
+            .GroupBy(x => x.CreatedAt.AddHours(7).Date).Select(x => new { x.Key, Count = x.Count() })
             .ToDictionaryAsync(x => x.Key, x => x.Count, cancellationToken);
         var batchesByDay = await dbContext.ProductBatches.Where(x => x.CreatedAt >= fromDate)
-            .GroupBy(x => x.CreatedAt.Date).Select(x => new { x.Key, Count = x.Count() })
+            .GroupBy(x => x.CreatedAt.AddHours(7).Date).Select(x => new { x.Key, Count = x.Count() })
             .ToDictionaryAsync(x => x.Key, x => x.Count, cancellationToken);
         var weekly = Enumerable.Range(0, 7).Select(offset =>
         {
-            var date = fromDate.AddDays(offset);
+            var date = SAW.Domain.Common.VietnamTime.ToLocal(fromDate).Date.AddDays(offset);
             return new DailyDashboardActivity(date, accountsByDay.GetValueOrDefault(date), batchesByDay.GetValueOrDefault(date));
         }).ToList();
 
+        // Audit timestamps are UTC; group days by the Vietnam local calendar (UTC+07).
+        var firstLocalDay = DateTime.UtcNow.AddHours(7).Date.AddDays(-6);
+        var firstUtc = firstLocalDay.AddHours(-7);
+        var endUtc = firstLocalDay.AddDays(7).AddHours(-7);
+        var auditCounts = await dbContext.AuditLogs.AsNoTracking()
+            .Where(x => x.CreatedAt >= firstUtc && x.CreatedAt < endUtc)
+            .GroupBy(x => x.CreatedAt.AddHours(7).Date)
+            .Select(g => new
+            {
+                Day = g.Key,
+                LoginSuccessCount = g.Count(x => x.ActionType == "LOGIN_SUCCESS"),
+                LoginFailedCount = g.Count(x => x.ActionType == "LOGIN_FAILED"),
+                OperationCount = g.Count(x => x.ActionType != "LOGIN_SUCCESS" && x.ActionType != "LOGIN_FAILED")
+            }).ToDictionaryAsync(x => x.Day, cancellationToken);
+        var auditActivity = Enumerable.Range(0, 7).Select(offset =>
+        {
+            var day = firstLocalDay.AddDays(offset);
+            auditCounts.TryGetValue(day, out var count);
+            return new DailyAuditActivity(DateOnly.FromDateTime(day), count?.LoginSuccessCount ?? 0,
+                count?.LoginFailedCount ?? 0, count?.OperationCount ?? 0);
+        }).ToList();
+
         return new AdminDashboardResponse(totalAccounts, activeAccounts, pendingAccounts, totalCropTypes, activeCropTypes,
-            totalBatches, pendingBatches, totalSuppliers, totalDistributors, distribution, weekly);
+            totalBatches, pendingBatches, totalSuppliers, totalDistributors, distribution, weekly, auditActivity);
     }
 }

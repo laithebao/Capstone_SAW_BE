@@ -207,7 +207,7 @@ public sealed class InspectionStandardService(IInspectionStandardRepository repo
     ///  2. Mã tiêu chí không trùng trong cùng phiên bản.
     ///  3. DataType phải là NUMBER | TEXT | BOOLEAN.
     ///  4. CriterionGroup phải là SENSORY | LAB | ENVIRONMENT.
-    ///  5. Mỗi tiêu chí phải có ít nhất 1 grade rule (BOOLEAN miễn).
+    ///  5. NUMBER/TEXT cần grade rule; BOOLEAN phải critical và không có grade rule.
     ///  6. Grade trong rule phải thuộc A–E.
     ///  7. Không có 2 rules cùng grade trên cùng 1 tiêu chí.
     ///  8. NUMBER rule: phải có MinValue hoặc MaxValue; Min ≤ Max nếu cả hai có.
@@ -221,7 +221,7 @@ public sealed class InspectionStandardService(IInspectionStandardRepository repo
     /// 13. NUMBER: khoảng [Min, Max] của các grades không được chồng lấp nhau.
     /// 14. CASCADE: Nếu hạng X là ngưỡng từ chối, mọi hạng tệ hơn X (vị trí sau trong A→E) cũng phải là ngưỡng từ chối.
     /// </summary>
-    private static void ValidateCriteria(IReadOnlyList<SaveInspectionCriterionRequest> criteria)
+    public static void ValidateCriteria(IReadOnlyList<SaveInspectionCriterionRequest> criteria)
     {
         // Rule 1: Mã và tên bắt buộc
         if (criteria.Any(x => string.IsNullOrWhiteSpace(x.Code) || string.IsNullOrWhiteSpace(x.Name)))
@@ -251,6 +251,17 @@ public sealed class InspectionStandardService(IInspectionStandardRepository repo
             var code = criterion.Code.Trim().ToUpperInvariant();
             var dataType = criterion.DataType.Trim().ToUpperInvariant();
             var rules = criterion.GradeRules;
+
+            // BOOLEAN is a pass/fail gate, not an A–E grading criterion. Check before
+            // the empty-rule shortcut, so direct API/import cannot bypass the form.
+            if (dataType == "BOOLEAN")
+            {
+                if (!criterion.IsCritical)
+                    throw new BadRequestException($"Tiêu chí '{code}' (BOOLEAN) phải được đánh dấu 'Nghiêm trọng' (IsCritical = TRUE).");
+                if (rules is { Count: > 0 })
+                    throw new BadRequestException($"Tiêu chí '{code}' (BOOLEAN) không được cấu hình quy tắc phân hạng (GradeRules).");
+                continue;
+            }
 
             // Rule 5: BOOLEAN không bắt buộc grade rules (Pass/Fail tự động)
             // NUMBER và TEXT phải có ít nhất 1 grade rule
@@ -287,15 +298,6 @@ public sealed class InspectionStandardService(IInspectionStandardRepository repo
                 if (missingText is not null)
                     throw new BadRequestException($"Tiêu chí '{code}' hạng {missingText.Grade}: phải nhập giá trị chấp nhận được (RequiredTextValue) cho tiêu chí kiểu TEXT.");
             }
-
-            // Rule 10b: BOOLEAN bắt buộc IsCritical = true
-            // Theo Tiêu chuẩn Nhà nước/Quốc tế: tiêu chí Boolean chỉ xuất hiện khi có giới hạn an toàn tuyệt đối
-            // VD: phát hiện Aflatoxin, thuốc trừ sâu cấm, ký sinh trùng... — False = Từ chối lô ngay
-            if (dataType == "BOOLEAN" && !criterion.IsCritical)
-                throw new BadRequestException(
-                    $"Tiêu chí '{code}' (kiểu BOOLEAN) bắt buộc phải được đánh dấu 'Nghiêm trọng'. " +
-                    "Tiêu chí kiểm tra Đạt/Không đạt theo Tiêu chuẩn Quốc gia luôn mang tính chất quyết định: " +
-                    "kết quả Không đạt sẽ tự động Từ chối toàn bộ lô hàng.");
 
             // Rule 10: Tiêu chí Nghiêm trọng phải có ít nhất 1 hạng là ngưỡng từ chối [Bỏ qua BOOLEAN]
             // BOOLEAN Nghiêm trọng không có Grade Rules — engine đánh giá trực tiếp giá trị BooleanValue
@@ -421,7 +423,7 @@ public sealed class InspectionStandardService(IInspectionStandardRepository repo
 
     /// <summary>
     /// Builds an InspectionCriterion entity with multiple CriterionGradeRule children.
-    /// BOOLEAN criteria: grade rules are optional; the engine evaluates BooleanValue directly.
+    /// BOOLEAN criteria: must be critical, without grade rules; the engine evaluates BooleanValue directly.
     /// NUMBER criteria: each grade rule defines a [Min, Max] range.
     /// TEXT criteria: each grade rule defines an accepted RequiredTextValue.
     /// </summary>

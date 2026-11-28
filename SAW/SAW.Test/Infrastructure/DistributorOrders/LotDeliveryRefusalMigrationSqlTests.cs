@@ -18,6 +18,7 @@ public sealed class LotDeliveryRefusalMigrationSqlTests
             await using var db = fixture.Context();
             var migrations = db.GetService<IMigrator>();
             await migrations.MigrateAsync("20261031135256_AddOrderDeliveryRefusal");
+            await using var seed = await HistoricalSeedContext.ForAppliedSchemaAsync(db);
             var batch = await fixture.BatchAsync();
             var second = await fixture.BatchAsync();
             var order = new PurchaseOrder { OrderCode = "LEGACY-FULL-REFUSAL", DeliveryAddress = "Test", OrderStatus = "DELIVERY_REFUSED",
@@ -25,13 +26,13 @@ public sealed class LotDeliveryRefusalMigrationSqlTests
             foreach (var batchId in new[] { batch.ProductBatchId, second.ProductBatchId })
                 order.OrderDetails.Add(new OrderDetail { CropTypeId = fixture.CropTypeId, RequestedProductBatchId = batchId,
                     RequestedQuantity = 1, ApprovedQuantity = 1, RequestedWeightKg = 100, ApprovedWeightKg = 100, Unit = "lot", UnitPrice = 1500000 });
-            db.PurchaseOrders.Add(order); await db.SaveChangesAsync();
+            seed.Add(order); await seed.SaveChangesAsync();
             var imageId = Guid.NewGuid();
             var report = new OrderDeliveryRefusal { PurchaseOrderId = order.PurchaseOrderId, PurchaseOrder = order, Reason = "Original reason",
                 RequestId = Guid.NewGuid(), CreatedByAccountId = fixture.ActorId, CreatedAt = DateTime.UtcNow };
             report.Images.Add(new OrderDeliveryRefusalImage { OrderDeliveryRefusalImageId = imageId, FileName = "original.png", StorageName = "original.png",
                 ContentType = "image/png", Sha256 = new string('A',64), ByteLength = 100, Position = 0 });
-            db.OrderDeliveryRefusals.Add(report); await db.SaveChangesAsync();
+            seed.Add(report); await seed.SaveChangesAsync();
             await migrations.MigrateAsync();
             Assert.Equal(2, await db.OrderDeliveryRefusalLots.CountAsync(l => l.OrderDeliveryRefusalId == report.OrderDeliveryRefusalId));
             Assert.Equal("Original reason", (await db.OrderDeliveryRefusals.AsNoTracking().SingleAsync()).Reason);

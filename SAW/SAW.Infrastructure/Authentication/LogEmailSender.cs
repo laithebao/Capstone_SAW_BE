@@ -12,6 +12,11 @@ public sealed class LogEmailSender(
     IConfiguration configuration,
     ILogger<LogEmailSender> logger) : IEmailSender
 {
+    public Task SendBusinessAsync(string email, string subject, string body, string messageId, CancellationToken cancellationToken)
+    {
+        logger.LogInformation("Development business email suppressed; message {MessageId}", messageId);
+        return Task.CompletedTask;
+    }
     public Task SendEmailVerificationAsync(
         string email,
         string verificationToken,

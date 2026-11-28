@@ -4,7 +4,7 @@ namespace SAW.Application.Features.UserProfiles;
 
 public sealed record UserProfileResponse(
     int AccountId, string Username, string Email, string FullName, string? PhoneNumber,
-    string? AvatarUrl, string RoleCode, DistributorProfileResponse? Distributor);
+    string? AvatarUrl, string RoleCode, DistributorProfileResponse? Distributor, bool IsProfileComplete = true);
 
 public sealed record DistributorProfileResponse(
     int DistributorId, string DistributorCode, string DistributorName, string TaxCode,

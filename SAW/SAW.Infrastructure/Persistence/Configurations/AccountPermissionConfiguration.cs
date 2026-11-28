@@ -13,7 +13,7 @@ public class AccountPermissionConfiguration : IEntityTypeConfiguration<AccountPe
         builder.Property(x => x.AccountId).HasColumnName("AccountID");
         builder.Property(x => x.PermissionId).HasColumnName("PermissionID");
         builder.Property(x => x.IsGranted).HasColumnName("IsGranted").HasDefaultValue(true);
-        builder.Property(x => x.UpdatedAt).HasColumnName("UpdatedAt").HasDefaultValueSql("SYSDATETIME()");
+        builder.Property(x => x.UpdatedAt).HasColumnName("UpdatedAt").HasDefaultValueSql("SYSUTCDATETIME()");
 
         builder.HasOne(x => x.Account)
                .WithMany(a => a.AccountPermissions)

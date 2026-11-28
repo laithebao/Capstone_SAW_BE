@@ -13,7 +13,7 @@ public class SupplierCropTypeConfiguration : IEntityTypeConfiguration<SupplierCr
         builder.Property(x => x.SupplierId).HasColumnName("SupplierID");
         builder.Property(x => x.CropTypeId).HasColumnName("CropTypeID");
         builder.Property(x => x.IsActive).HasColumnName("IsActive").HasDefaultValue(true);
-        builder.Property(x => x.CreatedAt).HasColumnName("CreatedAt").HasDefaultValueSql("SYSDATETIME()");
+        builder.Property(x => x.CreatedAt).HasColumnName("CreatedAt").HasDefaultValueSql("SYSUTCDATETIME()");
 
         builder.HasOne(x => x.Supplier)
                .WithMany(s => s.SupplierCropTypes)

@@ -20,10 +20,19 @@ public sealed partial class StockAdjustmentSqlTests
               (OBJECT_ID('STOCK_ADJUSTMENT_RESOLUTION'),OBJECT_ID('STOCK_ADJUSTMENT_PROPOSAL'),OBJECT_ID('ORDER_AMENDMENT'),OBJECT_ID('GOODS_ISSUE_INVALIDATION'))
               AND (is_disabled=1 OR is_not_trusted=1)
             """).SingleAsync(); Assert.Equal(0, unsafeKeys);
-        var rollback = await Assert.ThrowsAsync<SqlException>(() => db.GetService<IMigrator>().MigrateAsync("20261016190107_AllowDisposedProductBatchStatus"));
-        Assert.Equal(50270, rollback.Number);
-        Assert.Contains("20261017204518_AddStockAdjustmentOrderResolution", await db.Database.GetAppliedMigrationsAsync());
-        Assert.Equal("PENDING", (await ReadEntity(a.Summary.Id)).AdjustmentStatus);
-        Assert.True(await db.StockAdjustmentResolutions.AnyAsync(r => r.StockAdjustmentId == a.Summary.Id));
+        try
+        {
+            var rollback = await Assert.ThrowsAsync<SqlException>(() => db.GetService<IMigrator>().MigrateAsync("20261016190107_AllowDisposedProductBatchStatus"));
+            Assert.Equal(50270, rollback.Number);
+            Assert.Contains("20261017204518_AddStockAdjustmentOrderResolution", await db.Database.GetAppliedMigrationsAsync());
+            Assert.Equal("PENDING", (await ReadEntity(a.Summary.Id)).AdjustmentStatus);
+            Assert.True(await db.StockAdjustmentResolutions.AnyAsync(r => r.StockAdjustmentId == a.Summary.Id));
+        }
+        finally
+        {
+            // EF can commit the Down of later migrations before this older guard
+            // refuses its own Down. Other tests share this disposable fixture.
+            await db.GetService<IMigrator>().MigrateAsync();
+        }
     }
 }

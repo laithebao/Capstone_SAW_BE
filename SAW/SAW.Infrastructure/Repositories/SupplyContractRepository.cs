@@ -1,4 +1,6 @@
 using System.Data;
+using Microsoft.Extensions.Configuration;
+using SAW.Infrastructure.Contracts;
 using Microsoft.EntityFrameworkCore;
 using SAW.Application.Exceptions;
 using SAW.Application.Features.SupplyContracts;
@@ -7,7 +9,7 @@ using SAW.Infrastructure.Persistence;
 
 namespace SAW.Infrastructure.Repositories;
 
-public sealed class SupplyContractRepository(AppDbContext db) : ISupplyContractRepository
+public sealed class SupplyContractRepository(AppDbContext db, IConfiguration? configuration = null) : ISupplyContractRepository
 {
     private static readonly string AttachmentRoot = Path.Combine(AppContext.BaseDirectory, "App_Data", "ContractFiles");
 
@@ -148,6 +150,10 @@ public sealed class SupplyContractRepository(AppDbContext db) : ISupplyContractR
             detail.DeliveryQuantityKg, detail.StartDate, detail.EndDate, detail.DeliveryPeriod, ct);
         return detail with
         {
+            DocumentContent = await db.SupplyContractRevisions.Where(x => x.SupplyContractId == id && x.Revision == detail.Revision).Select(x => x.Content).SingleOrDefaultAsync(ct),
+            DocumentHash = await db.SupplyContractRevisions.Where(x => x.SupplyContractId == id && x.Revision == detail.Revision).Select(x => x.ContentHash).SingleOrDefaultAsync(ct),
+            DocumentSentAt = await db.SupplyContractRevisions.Where(x => x.SupplyContractId == id && x.Revision == detail.Revision).Select(x => (DateTime?)x.SentAt).SingleOrDefaultAsync(ct),
+            CropCode = await db.CropTypes.Where(x => x.CropTypeId == detail.CropTypeId).Select(x => x.CropCode).SingleAsync(ct),
             HasOverdueDelivery = missedDueDate is not null,
             OverdueDeliveryDueDate = missedDueDate
         };
@@ -160,11 +166,11 @@ public sealed class SupplyContractRepository(AppDbContext db) : ISupplyContractR
             .OrderBy(x => x.SupplierName)
             .Select(x => new SupplyContractSupplierOption(
                 x.SupplierId, x.SupplierCode, x.SupplierName,
-                x.SupplierCropTypes.Where(link => link.IsActive && link.CropType.IsActive)
+                x.SupplierCropTypes.Where(link => link.IsActive && link.CropType.IsActive && (link.CropType.CategoryId == null || link.CropType.Category!.IsActive && link.CropType.Category.Parent!.IsActive))
                     .Select(link => link.CropTypeId).ToList()))
             .ToListAsync(ct);
         var crops = await db.CropTypes.AsNoTracking()
-            .Where(x => x.IsActive)
+            .Where(x => x.IsActive && (x.CategoryId == null || x.Category!.IsActive && x.Category.Parent!.IsActive))
             .OrderBy(x => x.CropName)
             .Select(x => new SupplyContractCropTypeOption(
                 x.CropTypeId, x.CropCode, x.CropName, x.CategoryName))
@@ -255,7 +261,7 @@ public sealed class SupplyContractRepository(AppDbContext db) : ISupplyContractR
         if (!supplierExists) throw new NotFoundException("Nhà cung cấp không tồn tại hoặc chưa hoạt động.");
         if (!await db.SupplierCropTypes.AsNoTracking().AnyAsync(x =>
                 x.SupplierId == request.SupplierId && x.CropTypeId == request.CropTypeId
-                && x.IsActive && x.CropType.IsActive, ct))
+                && x.IsActive && x.CropType.IsActive && (x.CropType.CategoryId == null || x.CropType.Category!.IsActive && x.CropType.Category.Parent!.IsActive), ct))
             throw new ConflictException("Nhà cung cấp chưa khai báo loại nông sản này trong hồ sơ.");
         if (!await db.CropTypes.AsNoTracking().AnyAsync(x => x.CropTypeId == request.CropTypeId && x.IsActive, ct))
             throw new NotFoundException("Loại nông sản không tồn tại hoặc đã ngừng hoạt động.");
@@ -277,6 +283,8 @@ public sealed class SupplyContractRepository(AppDbContext db) : ISupplyContractR
             CreatedAt = DateTime.UtcNow
         };
         db.SupplyContracts.Add(contract);
+        db.SupplyContractRevisions.Add(ContractDocument.Build(contract,
+            await db.Suppliers.FindAsync([contract.SupplierId], ct), await db.CropTypes.FindAsync([contract.CropTypeId], ct), configuration));
         await db.SaveChangesAsync(ct);
         return await GetAsync(warehouseManagerAccountId, "WAREHOUSE_MANAGER", contract.SupplyContractId, ct);
     }
@@ -347,6 +355,8 @@ public sealed class SupplyContractRepository(AppDbContext db) : ISupplyContractR
             contract.CancellationReason = null;
             contract.UpdatedAt = DateTime.UtcNow;
 
+            db.SupplyContractRevisions.Add(ContractDocument.Build(contract,
+                await db.Suppliers.FindAsync([contract.SupplierId], ct), await db.CropTypes.FindAsync([contract.CropTypeId], ct), configuration));
             await db.SaveChangesAsync(ct);
             await transaction.CommitAsync(ct);
             return await GetAsync(warehouseManagerAccountId, "WAREHOUSE_MANAGER", id, ct);

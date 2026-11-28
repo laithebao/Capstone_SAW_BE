@@ -16,7 +16,7 @@ public class InspectionStandardVersionConfiguration : IEntityTypeConfiguration<I
         builder.Property(x => x.VersionStatus).HasColumnName("VersionStatus").HasMaxLength(20).HasDefaultValue("DRAFT");
         builder.Property(x => x.EffectiveFrom).HasColumnName("EffectiveFrom");
         builder.Property(x => x.EffectiveTo).HasColumnName("EffectiveTo");
-        builder.Property(x => x.CreatedAt).HasColumnName("CreatedAt").HasDefaultValueSql("SYSDATETIME()");
+        builder.Property(x => x.CreatedAt).HasColumnName("CreatedAt").HasDefaultValueSql("SYSUTCDATETIME()");
 
         builder.HasIndex(x => new { x.InspectionStandardSetId, x.VersionNo })
                .IsUnique().HasDatabaseName("UQ_INSPECTION_STANDARD_VERSION");

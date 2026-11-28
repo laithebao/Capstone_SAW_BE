@@ -10,6 +10,37 @@ public class SupplierRepository : ISupplierRepository
 {
     private readonly AppDbContext _context;
 
+    private async Task<List<SupplierGrowingAreaInputDto>> ResolveAreasAsync(int supplierId, List<SupplierGrowingAreaInputDto> inputs, CancellationToken ct)
+    {
+        if (inputs.Count == 0) throw new ArgumentException("Vui lòng nhập ít nhất một vùng trồng.");
+        var result = new List<SupplierGrowingAreaInputDto>();
+        var names = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        foreach (var input in inputs)
+        {
+            if (input.AreaInHectares.HasValue && (!double.IsFinite(input.AreaInHectares.Value) || input.AreaInHectares <= 0)) throw new ArgumentException("Diện tích phải là số dương.");
+            var area = input.GrowingAreaId > 0 ? await _context.GrowingAreas.SingleOrDefaultAsync(x => x.GrowingAreaId == input.GrowingAreaId && (x.OwnerSupplierId == null || x.OwnerSupplierId == supplierId), ct) : null;
+            if (input.GrowingAreaId > 0 && area is null) throw new ArgumentException("Vùng trồng không tồn tại hoặc không thuộc quyền sử dụng.");
+            var name = (input.AreaName ?? area?.AreaName)?.Trim().Normalize();
+            if (string.IsNullOrWhiteSpace(name) || name.Length > 200 || name.Any(char.IsControl) || !names.Add(name)) throw new ArgumentException("Tên vùng trồng không hợp lệ hoặc bị trùng.");
+            if (area is null || area.AreaName != name && (area.OwnerSupplierId != supplierId || await _context.ProductBatches.AnyAsync(x => x.GrowingAreaId == area.GrowingAreaId, ct)))
+            {
+                area = new GrowingArea { AreaName = name, OwnerSupplierId = supplierId };
+                _context.GrowingAreas.Add(area); await _context.SaveChangesAsync(ct);
+            }
+            else area.AreaName = name;
+            result.Add(new SupplierGrowingAreaInputDto { GrowingAreaId = area.GrowingAreaId, AreaName = name, AreaInHectares = input.AreaInHectares });
+        }
+        return result;
+    }
+
+    private async Task ValidateCropSelections(int supplierId, List<int> ids, CancellationToken ct)
+    {
+        if (ids.Count == 0 || ids.Distinct().Count() != ids.Count) throw new ArgumentException("Chọn ít nhất một nông sản, không được trùng.");
+        var retained = await _context.SupplierCropTypes.Where(x => x.SupplierId == supplierId).Select(x => x.CropTypeId).ToListAsync(ct);
+        var valid = await _context.CropTypes.Where(x => ids.Contains(x.CropTypeId) && (retained.Contains(x.CropTypeId) || x.IsActive && x.Category != null && x.Category.IsActive && x.Category.Parent != null && x.Category.Parent.IsActive)).CountAsync(ct);
+        if (valid != ids.Count) throw new ArgumentException("Nông sản hoặc danh mục đã ngừng hoạt động hoặc không tồn tại.");
+    }
+
     public SupplierRepository(AppDbContext context)
     {
         _context = context;
@@ -44,7 +75,7 @@ public class SupplierRepository : ISupplierRepository
                           ContactPerson = s.ContactPerson,
                           PhoneNumber = s.PhoneNumber ?? a.PhoneNumber,
                           Email = s.Email ?? a.Email,
-                          LegalRepresentative = s.ContactPerson,
+                          LegalRepresentative = s.LegalRepresentative ?? "",
                           SupplierType = s.Note,
                           LogoUrl = a.AvatarUrl,
                           CropTypes = (from sct in _context.Set<SupplierCropType>()
@@ -98,7 +129,7 @@ public class SupplierRepository : ISupplierRepository
 
     public async Task<string> GenerateSupplierCodeAsync(CancellationToken cancellationToken = default)
     {
-        var year = DateTime.UtcNow.Year;
+        var year = SAW.Domain.Common.VietnamTime.Today.Year;
         var prefix = $"NCC-{year}-";
 
         var lastSupplier = await _context.Set<Supplier>()
@@ -133,6 +164,8 @@ public class SupplierRepository : ISupplierRepository
                 await _context.SaveChangesAsync(cancellationToken);
 
                 // 1. VALIDATE & THÊM VÙNG TRỒNG (ĐÃ CỦNG CỐ AN TOÀN)
+                growingAreas = await ResolveAreasAsync(supplier.SupplierId, growingAreas, cancellationToken);
+                await ValidateCropSelections(supplier.SupplierId, cropTypeIds, cancellationToken);
                 if (growingAreas != null && growingAreas.Any())
                 {
                     var inputAreaIds = growingAreas.Select(ga => ga.GrowingAreaId).Distinct().ToList();
@@ -235,6 +268,8 @@ public class SupplierRepository : ISupplierRepository
             try
             {
                 _context.Set<Supplier>().Update(supplier);
+                growingAreas = await ResolveAreasAsync(supplier.SupplierId, growingAreas, cancellationToken);
+                await ValidateCropSelections(supplier.SupplierId, cropTypeIds, cancellationToken);
 
                 // 1. Xóa các liên kết vùng trồng cũ của Supplier
                 var oldGrowingAreas = await _context.Set<SupplierGrowingArea>()

@@ -9,6 +9,7 @@ using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging.Abstractions;
 using Moq;
 using SAW.Application.Features.AiChat;
+using SAW.Application.Extensions;
 using SAW.Application.Features.DistributorOrders;
 using SAW.Infrastructure.AiChat;
 using SAW.Infrastructure.AiChat.Rag;
@@ -35,13 +36,15 @@ public sealed class MafOpenAIIntegrationTests
             ["AiExecution:UseMafForChat"] = chat.ToString(),
             ["AiExecution:UseMafForForecast"] = forecast.ToString()
         }).Build();
-        using var services = new ServiceCollection().AddLogging().AddInfrastructure(configuration).BuildServiceProvider();
+        using var services = new ServiceCollection().AddLogging().AddApplication().AddInfrastructure(configuration).BuildServiceProvider();
         using var scope = services.CreateScope();
 
         scope.ServiceProvider.GetRequiredService<IAiChatModelClient>().Should()
             .BeOfType(chat ? typeof(MafAiChatClient) : typeof(OpenAIChatClient));
         scope.ServiceProvider.GetRequiredService<IForecastModelClient>().Should()
             .BeOfType(forecast ? typeof(MafForecastClient) : typeof(OpenAIForecastClient));
+        scope.ServiceProvider.GetRequiredService<IAiChatService>().Should().BeOfType<PersistentAiChatService>()
+            .And.BeSameAs(scope.ServiceProvider.GetRequiredService<IAiChatHistoryService>());
     }
 
     [Fact]

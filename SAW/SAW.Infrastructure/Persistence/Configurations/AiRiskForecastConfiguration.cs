@@ -20,7 +20,7 @@ public class AiRiskForecastConfiguration : IEntityTypeConfiguration<AiRiskForeca
         builder.Property(x => x.Recommendation).HasColumnName("Recommendation").HasMaxLength(1500);
         builder.Property(x => x.ModelVersion).HasColumnName("ModelVersion").HasMaxLength(100);
         builder.Property(x => x.InputSnapshotJson).HasColumnName("InputSnapshotJson").HasColumnType("nvarchar(max)");
-        builder.Property(x => x.GeneratedAt).HasColumnName("GeneratedAt").HasDefaultValueSql("SYSDATETIME()");
+        builder.Property(x => x.GeneratedAt).HasColumnName("GeneratedAt").HasDefaultValueSql("SYSUTCDATETIME()");
 
         builder.HasOne(x => x.ProductBatch)
                .WithMany(b => b.AiRiskForecasts)
